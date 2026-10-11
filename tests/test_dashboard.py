@@ -45,6 +45,10 @@ def test_server_serves_the_page_and_valid_json(cfg, tmp_path):
         state = json.loads(urllib.request.urlopen(base + "/api/state").read())
         assert [r["name"] for r in state["runs"]] == ["run", "nothing"] and "error" in state["runs"][1]
         assert state["page_version"] == page_version()  # an open tab reloads itself when this changes
+        reply = urllib.request.urlopen(base + "/api/state")
+        assert "frame-ancestors 'none'" in reply.headers["Content-Security-Policy"]
+        assert json.loads(reply.read())["now_ms"] == state["now_ms"]  # served from the five second cache
+        assert str(tmp_path) not in json.dumps(state)  # errors never reveal paths on this machine
         with pytest.raises(urllib.error.HTTPError):
             urllib.request.urlopen(base + "/nope")
     finally:
@@ -119,5 +123,5 @@ def test_one_broken_run_never_blanks_the_others(monkeypatch, cfg):
 
     monkeypatch.setattr(dashboard.data, "bots", lambda *a: (_ for _ in ()).throw(KeyError("learners")))
     state = dashboard.run_state(cfg, time.time_ns() // 1_000_000)
-    assert "KeyError" in state["error"]
+    assert "cannot be read" in state["error"] and "/" not in state["error"]
     assert dashboard.run_names([cfg, cfg, deadly_config(cfg.data_dir.parent / "other")]) == ["run 1", "run 2", "other"]

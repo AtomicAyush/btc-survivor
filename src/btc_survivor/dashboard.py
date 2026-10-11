@@ -10,6 +10,7 @@ import json
 import logging
 import math
 import sqlite3
+import threading
 import time
 from collections import Counter
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -25,6 +26,14 @@ from btc_survivor.config import Config
 log = logging.getLogger(__name__)
 
 PAGE = Path(__file__).with_name("dashboard.html")
+STATE_TTL_S = 5.0  # one computed view is shared by every request for this long, so many viewers cost the same as one
+SECURITY_HEADERS = {
+    "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+                               "connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; "
+                               "frame-ancestors 'none'",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+}
 CHART_POINTS = 400
 RECENT = 25
 
@@ -34,15 +43,16 @@ def run_state(cfg: Config, now_ms: int, name: str | None = None) -> dict:
     name = name or cfg.data_dir.name
     try:
         conn = data.connect(cfg.db_path)
-    except FileNotFoundError as exc:
-        return {"name": name, "error": str(exc)}
+    except FileNotFoundError:
+        return {"name": name, "error": f"run {name} has no database yet, has it been started"}
     except sqlite3.Error as exc:
-        return {"name": name, "error": f"cannot open {cfg.db_path}: {exc}"}
+        log.warning("dashboard could not open %s: %s", cfg.db_path, exc)
+        return {"name": name, "error": f"the database of run {name} cannot be opened, see the dashboard log"}
     try:
         return _state(conn, cfg, name, now_ms)
-    except Exception as exc:  # noqa: BLE001, a report must show the problem rather than drop every run
+    except Exception:  # noqa: BLE001, a report must show the problem rather than drop every run
         log.exception("dashboard could not read %s", cfg.db_path)
-        return {"name": name, "error": f"cannot read {cfg.db_path}: {type(exc).__name__}: {exc}"}
+        return {"name": name, "error": f"the database of run {name} cannot be read, see the dashboard log"}
     finally:
         conn.close()
 
@@ -122,17 +132,26 @@ def run_names(configs: list[Config]) -> list[str]:
 
 def make_handler(configs: list[Config]):
     names = run_names(configs)
+    cache = {"at": -STATE_TTL_S, "body": b""}
+    lock = threading.Lock()
+
+    def state_body() -> bytes:
+        """The JSON view, recomputed at most once per STATE_TTL_S however many requests arrive."""
+        with lock:
+            if time.monotonic() - cache["at"] >= STATE_TTL_S:
+                now = time.time_ns() // 1_000_000
+                state = clean({"now_ms": now, "page_version": page_version(),
+                               "runs": [run_state(c, now, n) for c, n in zip(configs, names)]})
+                cache["body"] = json.dumps(state, allow_nan=False, default=str).encode()
+                cache["at"] = time.monotonic()
+            return cache["body"]
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             if self.path in ("/", "/index.html"):
                 self._send(200, "text/html; charset=utf-8", PAGE.read_bytes())
             elif self.path == "/api/state":
-                now = time.time_ns() // 1_000_000
-                state = clean({"now_ms": now, "page_version": page_version(),
-                               "runs": [run_state(c, now, n) for c, n in zip(configs, names)]})
-                body = json.dumps(state, allow_nan=False, default=str).encode()
-                self._send(200, "application/json", body)
+                self._send(200, "application/json", state_body())
             else:
                 self._send(404, "text/plain", b"not found")
 
@@ -140,6 +159,8 @@ def make_handler(configs: list[Config]):
             self.send_response(code)
             self.send_header("Content-Type", kind)
             self.send_header("Cache-Control", "no-store")
+            for name, value in SECURITY_HEADERS.items():
+                self.send_header(name, value)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
