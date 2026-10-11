@@ -31,3 +31,8 @@ def test_default_learner_finds_a_strong_signal_and_stays_quiet_on_none():
     assert strong.corr > 0.2 and strong.linear > 0.2
     null = run(CFG, 0, 4, 0.0, 0.99)
     assert abs(null.corr) < 0.1 and null.spread_bps < 5.0
+
+
+def test_a_signal_the_features_cannot_carry_is_refused():
+    with pytest.raises(ValueError, match="not reachable"):
+        synthetic(1, 1000, 240, 0.2, 0.9)

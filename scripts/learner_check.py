@@ -60,7 +60,10 @@ def synthetic(seed: int, minutes: int, horizon: int, corr: float, persistence: f
     phi = persistence
     c = sum(phi**k for k in range(1, horizon + 1))
     v = horizon + 2 * sum((horizon - d) * phi**d for d in range(1, horizon))
-    beta = corr * MINUTE_STD_BPS * math.sqrt(horizon) / math.sqrt(max(c * c - corr * corr * v, 1e-12))
+    if corr * corr * v >= c * c:
+        raise ValueError(f"a correlation of {corr} is not reachable with persistence {persistence} at a {horizon} "
+                         f"minute horizon, the most is {c / math.sqrt(v):.3f}")
+    beta = corr * MINUTE_STD_BPS * math.sqrt(horizon) / math.sqrt(c * c - corr * corr * v)
     sign = np.ones(len(z))
     if flip_days:
         sign = np.where((np.arange(len(z)) // int(flip_days * 1440)) % 2 == 0, 1.0, -1.0)
@@ -132,7 +135,11 @@ def main() -> int:
           f"flip every {args.flip_days:g} days")
     for corr in (0.0, 0.05, 0.1, 0.2):
         for persistence in (0.9, 0.99):
-            rs = [run(cfg, s, args.days, corr, persistence, args.bots, args.flip_days) for s in range(args.seeds)]
+            try:
+                rs = [run(cfg, s, args.days, corr, persistence, args.bots, args.flip_days) for s in range(args.seeds)]
+            except ValueError as exc:
+                print(f"signal {corr:.2f} persistence {persistence:.2f}  skipped, {exc}")
+                continue
             mean = {f: float(np.mean([getattr(r, f) for r in rs])) for f in Result.__dataclass_fields__}
             print(f"signal {corr:.2f} persistence {persistence:.2f}  learner {mean['corr']:+.3f} of ideal "
                   f"{mean['ideal']:+.3f}  spread {mean['spread_bps']:.1f} bps  mse vs zero {mean['mse_vs_zero']:.3f}  "

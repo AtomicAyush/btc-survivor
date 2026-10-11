@@ -23,6 +23,8 @@ def differences(cfg):
     ("run_a", {}),
     ("run_b", {"costs.fee_profile": "low_fee_tier"}),
     ("run_c", {"trading.start_equity": 500.0}),
+    ("run_d", {"costs.fee_profile": "low_fee_tier", "time.horizon_minutes": 240, "genes.lr_init": 0.00003,
+               "genes.lr_min": 0.000003, "genes.lr_max": 0.0003}),
 ])
 def test_each_run_changes_only_its_own_settings(name, changes):
     cfg = load_config(ROOT / "configs" / f"{name}.toml")
