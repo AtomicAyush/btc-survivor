@@ -15,8 +15,6 @@ import logging
 import signal
 import sys
 
-import numpy as np
-
 from btc_survivor.clock import MS_PER_MINUTE, LiveClock, iso, next_minute
 from btc_survivor.config import load_config
 from btc_survivor.feed.base import MESSAGE, FeedClient, decode, load_adapter
@@ -24,9 +22,9 @@ from btc_survivor.feed.health import HEALTHY
 from btc_survivor.feed.market import Market
 from btc_survivor.logsetup import setup_logging
 from btc_survivor.recorder import Recorder
+from btc_survivor.seeds import reconnect_rng
 
 log = logging.getLogger("record_feed")
-RECONNECT_TAG = 7001
 
 
 async def record(config_path: str, minutes: float | None) -> None:
@@ -80,8 +78,7 @@ async def record(config_path: str, minutes: float | None) -> None:
         if reason:
             client.request_resync(reason)
 
-    rng = np.random.default_rng([cfg.run.master_seed, RECONNECT_TAG])
-    client = FeedClient(adapter, cfg.feed, sink, rng, clock)
+    client = FeedClient(adapter, cfg.feed, sink, reconnect_rng(cfg.run.master_seed), clock)
 
     async def ticker() -> None:
         while not stop.is_set():
