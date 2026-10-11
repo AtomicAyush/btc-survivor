@@ -472,3 +472,59 @@ def test_one_second_ticks_and_clamped_stamps_give_the_same_rows_as_replay(tmp_pa
     replayed = digest(replay_lines(deadly_config(tmp_path / "unused"), stamped, tmp_path / "replay"))
     assert all(live[table] == replayed[table] for table in TABLES if table != "feed_events")
     assert sqlite3.connect(cfg.db_path).execute("SELECT count(*) FROM trades").fetchone()[0] > 0
+
+
+def test_forecast_rows_score_the_population_and_the_linear_baseline_on_matured_labels(deadly):
+    cfg, engine, db = deadly
+    h = cfg.time.horizon_minutes * MS_PER_MINUTE
+    candles = {r["ts"]: (r["mid"], r["valid"]) for r in db.execute("SELECT ts, mid, valid FROM candles")}
+    rows = db.execute("SELECT ts, predictor, prediction_bps, label_bps FROM forecasts ORDER BY ts, predictor").fetchall()
+    by_ts = {}
+    for r in rows:
+        by_ts.setdefault(r["ts"], {})[r["predictor"]] = r
+    assert len(by_ts) > 60 and all(set(v) == {"linear", "population"} for v in by_ts.values())
+    assert all(candles[ts][1] for ts in by_ts)
+    labelled = [r for r in rows if r["label_bps"] is not None]
+    assert len(labelled) > 100
+    for r in labelled:
+        start = parse_iso(r["ts"])
+        span = [candles[iso(start + k * MS_PER_MINUTE)] for k in range(h // MS_PER_MINUTE + 1)]
+        assert all(valid for _, valid in span)
+        assert r["label_bps"] == pytest.approx(1e4 * math.log(span[-1][0] / span[0][0]))
+    linear = [r["prediction_bps"] for r in rows if r["predictor"] == "linear"]
+    assert np.std(linear[len(linear) // 2:]) > 0  # the baseline really is fitted as labels mature
+    assert engine.linear.n == engine.label_scale.stats.n
+
+
+def test_forecast_values_are_the_learner_mean_and_a_baseline_fitted_on_matured_features(tmp_path):
+    cfg = fast_config(tmp_path)
+    engine = new_engine(cfg)
+    shared, updates, written = {}, [], []
+    work, update, forecasts = engine._shared_work, engine.linear.update, engine._forecasts
+
+    def record_work(boundary, mid):
+        z, matured = work(boundary, mid)
+        shared[boundary] = z
+        return z, matured
+
+    def record_update(z, label):
+        updates.append((engine.next_boundary, z))
+        update(z, label)
+
+    def record_forecasts(boundary, z):
+        before = engine.store.pending
+        forecasts(boundary, z)
+        written.append((boundary, z is not None and engine.label_scale.ready, engine.store.pending - before))
+
+    engine._shared_work, engine.linear.update, engine._forecasts = record_work, record_update, record_forecasts
+    feed(engine, synthetic(3, 1800))
+    horizon = cfg.time.horizon_minutes * MS_PER_MINUTE
+    assert updates and all(z is shared[boundary - horizon] for boundary, z in updates)  # the matured minute's own z
+    assert all(rows == (2 if ready else 0) for _, ready, rows in written) and any(ready for _, ready, _ in written)
+    last = engine.last_healthy_ms
+    expected = np.mean([b.pending_preds[last] for b in engine.population.learners if last in b.pending_preds])
+    engine.store.flush()
+    rows = dict(engine.store.query("SELECT predictor, prediction_bps FROM forecasts WHERE ts = ?", (iso(last),)))
+    assert rows["population"] == pytest.approx(expected)
+    assert rows["linear"] == pytest.approx(engine.linear.predict(shared[last]))
+    engine.store.close()

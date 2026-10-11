@@ -103,6 +103,7 @@ class Population:
         model = MLP(N_FEATURES, cfg.model.hidden_units, params=params)
         child = Bot(cfg, bot_id, slot, parent.generation + 1, born_ms, genes, model, rng,
                     origin="mutated", parent_id=parent.bot_id)
+        child.delay_forced_timer()
         lineage = {
             "bot_id": bot_id, "parent_id": parent.bot_id, "generation": child.generation, "born_ms": born_ms,
             "sigma_weights": sigma_w, "sigma_genes": sigma_g, "margin_factor": margin_factor,

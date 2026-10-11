@@ -369,7 +369,7 @@ def test_warmup_rows_still_carry_the_real_gate_result_and_cost():
 
 
 def test_genes_are_clamped_to_their_bounds():
-    assert Genes(0.0, 1.0).clamped(BASE.genes) == Genes(2.0, 0.01)
+    assert Genes(0.0, 1.0).clamped(BASE.genes) == Genes(2.0, 0.001)
     bot = Bot(config(), 1, 0, 0, M, Genes(0.0, 0.0), MLP(11, 16), np.random.default_rng(1))
     bot.state = ACTIVE
     d = bot.step(ctx(M + HORIZON * MIN), broker()).decision
@@ -463,4 +463,14 @@ def test_newborn_bots_are_seeded_from_the_master_seed():
     b = Bot.newborn(BASE, 5, 0, M)
     c = Bot.newborn(BASE, 6, 0, M)
     assert np.array_equal(a.model.params, b.model.params) and not np.array_equal(a.model.params, c.model.params)
-    assert a.state == WARMUP and a.warmup_minutes == 360 and a.genes == Genes(8.0, 0.001)
+    assert a.state == WARMUP and a.warmup_minutes == 360 and a.genes == Genes(8.0, 0.0001)
+
+
+def test_newborn_forced_timer_starts_at_a_seeded_random_delay():
+    delays = [-Bot.newborn(BASE, i, i % 20, M).minutes_since_open for i in range(1, 401)]
+    limit = round(BASE.trading.force_trade_after_hours * 60)
+    assert all(0 <= d < limit for d in delays) and len(set(delays)) > 250
+    assert np.mean(delays) == pytest.approx(limit / 2, rel=0.1)
+    assert Bot.newborn(BASE, 9, 0, M).minutes_since_open == Bot.newborn(BASE, 9, 0, M).minutes_since_open
+    fresh = Bot(BASE, 1, 0, 0, M, Genes(8.0, 0.0001), MLP(11, 16), np.random.default_rng(1))
+    assert fresh.minutes_since_open == 0  # only the birth paths delay the timer, so a restore keeps its value

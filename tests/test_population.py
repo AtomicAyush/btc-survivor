@@ -160,10 +160,12 @@ def test_mutated_child_copies_the_parent_with_noise_and_starts_fresh():
     assert child.opt.t == 0 and not child.opt.m.any()
     assert child.account.cash == cfg.trading.start_equity and child.account.trades == 0
     assert child.state == WARMUP and child.warmup_minutes == 60
+    assert -cfg.trading.force_trade_after_hours * 60 < child.minutes_since_open < 0
     assert lineage["bot_id"] == 41 and lineage["parent_id"] == parent.bot_id and lineage["generation"] == 4
     assert lineage["born_ms"] == M + 5 and lineage["sigma_weights"] == 0.05 and lineage["sigma_genes"] == 0.20
     assert child.genes.margin_bps == pytest.approx(min(max(parent.genes.margin_bps * lineage["margin_factor"], 2.0), 60.0))
-    assert child.genes.lr == pytest.approx(min(max(parent.genes.lr * lineage["lr_factor"], 0.0001), 0.01))
+    assert child.genes.lr == pytest.approx(min(max(parent.genes.lr * lineage["lr_factor"], cfg.genes.lr_min),
+                                               cfg.genes.lr_max))
     assert lineage["parent_fitness"] == pytest.approx(fitness(parent, FLOOR))
     assert lineage["parent_margin_bps"] == parent.genes.margin_bps and lineage["parent_lr"] == parent.genes.lr
     assert lineage["parent_skill_corr"] == parent.skill.stats().corr

@@ -9,7 +9,7 @@ CFG = load_config(EXAMPLE_CONFIG).genes
 
 
 def test_initial_genes_come_from_the_config():
-    assert initial_genes(CFG) == Genes(8.0, 0.001)
+    assert initial_genes(CFG) == Genes(8.0, 0.0001)
 
 
 def test_mutated_genes_always_stay_within_bounds():

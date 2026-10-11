@@ -16,6 +16,7 @@ from collections import deque
 import numpy as np
 
 from btc_survivor import checkpoint, records
+from btc_survivor.baselines import LinearBaseline
 from btc_survivor.benchmark import Anchor, buy_hold_equity, cash_equity, matched_equity
 from btc_survivor.bot import DEAD, Bot, MinuteContext, StepResult
 from btc_survivor.broker import Broker, Execution
@@ -57,6 +58,7 @@ class Engine:
         self.label_scale = LabelScale(half_life, cfg.features.min_samples)
         self.labels = LabelQueue(cfg.time.horizon_minutes)
         self.window = MaturedWindow(cfg.model.replay_window_minutes, N_FEATURES)
+        self.linear = LinearBaseline(N_FEATURES, half_life)
         self.broker = Broker(cfg.costs, cfg.trading.notional)
         self.pending: dict[int, tuple[int, Bot]] = {}  # bot id to (send order, bot) for every unsettled order
         self._sent = 0
@@ -134,6 +136,9 @@ class Engine:
         engine.window.z, engine.window.label = arrays["window.z"], arrays["window.label"]
         engine.window.minute = arrays["window.minute"].astype(np.int64)
         engine.window.count, engine.window.head = meta["window_count"], meta["window_head"]
+        engine.linear.n, engine.linear.weight = meta["linear_n"], meta["linear_weight"]
+        engine.linear.xx, engine.linear.xy = arrays["linear.xx"], arrays["linear.xy"]
+        engine.linear.coef = arrays["linear.coef"]
         engine._reload_series(meta["valid_total"])
         engine._stored_state = {r["bot_id"]: r["state"] for r in store.query("SELECT bot_id, state FROM bots")}
         for bot in engine.all_bots():
@@ -256,6 +261,7 @@ class Engine:
             if res.stopped or res.died or learner_out:
                 if twin.copy_exit(boundary, book, self.broker) is not None:
                     self._register(twin)
+        self._forecasts(boundary, z)
         for bot in died:
             self._on_death(bot, boundary)
         if minute_index(boundary) % (cfg.persistence.equity_snapshot_every_seconds // 60) == 0:
@@ -272,10 +278,22 @@ class Engine:
         if matured is not None:
             self.window.add(matured)
             self.label_scale.update(matured.label_bps)
+            self.linear.update(matured.z, matured.label_bps)
             self._write_labels(matured)
         if z is not None:
             self.labels.push(boundary, epoch, z, mid)
         return z, matured
+
+    def _forecasts(self, boundary: int, z: np.ndarray | None) -> None:
+        """One row per predictor for the success criteria: the living learners' mean prediction and the linear baseline."""
+        if z is None or not self.label_scale.ready:
+            return
+        preds = [b.pending_preds[boundary] for b in self.population.learners if boundary in b.pending_preds]
+        if not preds:
+            return
+        ts = iso(boundary)
+        self.store.queue(records.INSERT_FORECAST, (ts, "population", float(np.mean(preds))))
+        self.store.queue(records.INSERT_FORECAST, (ts, "linear", self.linear.predict(z)))
 
     def _gap_flatten(self, boundary: int) -> None:
         """After a restart or outage longer than the limit, close every open position, as the market risk is the same.
@@ -313,7 +331,8 @@ class Engine:
             self._decided.append((row["ts"], [row["bot_id"]]))
 
     def _write_labels(self, matured: Matured) -> None:
-        """Copy the matured label onto the decision rows of its minute, for the success criteria."""
+        """Copy the matured label onto the forecast and decision rows of its minute, for the success criteria."""
+        self.store.queue(records.SET_FORECAST_LABEL, (matured.label_bps, iso(matured.minute_ms)))
         while self._decided and self._decided[0][0] < matured.minute_ms:
             self._decided.popleft()
         if self._decided and self._decided[0][0] == matured.minute_ms:
@@ -472,6 +491,9 @@ class Engine:
         arrays.put("window.z", self.window.z)
         arrays.put("window.label", self.window.label)
         arrays.put("window.minute", self.window.minute)
+        arrays.put("linear.xx", self.linear.xx)
+        arrays.put("linear.xy", self.linear.xy)
+        arrays.put("linear.coef", self.linear.coef)
         meta = {
             "now_ms": at, "bots": bots, "learners": [b.bot_id for b in pop.learners],
             "twins": [None if t is None else t.bot_id for t in pop.twins], "dying": [b.bot_id for b in self.dying],
@@ -480,7 +502,8 @@ class Engine:
             "healthy_minutes": self.healthy_minutes, "deaths": self.deaths, "epoch": self.market.health.epoch,
             "anchor": None if self.anchor is None else [self.anchor.ms, self.anchor.ask, self.anchor.mid],
             "standardizer_n": self.standardizer.stats.n, "label_scale_n": self.label_scale.stats.n,
-            "window_count": self.window.count, "window_head": self.window.head,
+            "window_count": self.window.count, "window_head": self.window.head, "linear_n": self.linear.n,
+            "linear_weight": self.linear.weight,
             "valid_total": self.series.valid_total, "flatten_owed": self.flatten_owed,
         }
         return meta, arrays

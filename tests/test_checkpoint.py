@@ -90,7 +90,7 @@ def test_damaged_checkpoints_raise_value_error(damage):
     elif damage == "json":
         meta = meta[:-3]
     elif damage == "format":
-        meta = meta.replace('"format":1', '"format":99')
+        meta = meta.replace(f'"format":{checkpoint.FORMAT_VERSION}', '"format":99')
     else:
         meta = meta.replace(",0,32]", ",0,64]")
     with pytest.raises(ValueError):

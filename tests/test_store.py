@@ -204,6 +204,8 @@ def test_rollback_after_removes_or_reopens_everything_newer_and_keeps_the_rest(t
         rows.append((records.INSERT_BENCHMARK, (ts, 1.0, 1.0, 1.0, 1.0, 1.0, 1, None, 1.0)))
         rows.append((records.INSERT_CHECKPOINT, (ts, 1, "{}", b"")))
         rows.append((records.INSERT_FEED_EVENT, (ts, "stale", None)))
+        rows.append((records.INSERT_FORECAST, (ts, "population", 1.0)))
+        rows.append((records.SET_FORECAST_LABEL, (label, ts)))
     rows += [
         (records.OPEN_TRADE, (1, 1, "long", old, 1.0, 1.0, 0.1, 0.0, 0.0, 0)),
         (records.CLOSE_TRADE, (new, 2.0, 0.1, 0.0, 0.0, 1.0, 0.8, "signal", 1)),
@@ -222,6 +224,7 @@ def test_rollback_after_removes_or_reopens_everything_newer_and_keeps_the_rest(t
     assert col("SELECT bot_id, died_at FROM bots ORDER BY bot_id") == [(1, None), (3, old)]
     assert col("SELECT bot_id FROM lineage") == [(4,)] and col("SELECT bot_id FROM deaths") == [(3,)]
     assert col("SELECT ts, label_bps FROM decisions ORDER BY ts") == [(old, 1.0), (mid, None)]
+    assert col("SELECT ts, label_bps FROM forecasts ORDER BY ts") == [(old, 1.0), (mid, None)]
     assert col("SELECT id, closed_at, pnl_net, exit_reason FROM trades ORDER BY id") == [
         (1, None, None, None), (3, old, 0.8, "signal")]
     for table, column in (("fills", "decided_at"), ("equity_snapshots", "ts"), ("candles", "ts"),

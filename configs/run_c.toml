@@ -1,0 +1,95 @@
+# Run C, the machinery run. Retail fees at 500 dollars for at least 56 days. Settings are fixed before launch, see PLAN section 21.
+# Relative paths are resolved from this folder.
+
+[run]
+master_seed = 12345
+data_dir = "../data/run_c"
+log_level = "INFO"
+
+[feed]
+exchange = "coinbase"
+product = "BTC-USD"
+book_depth_levels = 20
+stale_after_seconds = 5
+reconnect_backoff_start_seconds = 1
+reconnect_backoff_max_seconds = 60
+record_raw_messages = false
+max_clock_skew_seconds = 2.0
+
+[time]
+horizon_minutes = 30                  # 15 or 30
+history_minutes_required = 360        # longest feature window
+warmup_hours_random = 6               # random bots learn without trading
+warmup_hours_inherited = 1            # mutated copies of survivors
+
+[features]
+return_windows_minutes = [5, 15, 30, 60]
+vol_windows_minutes = [30, 120]
+volume_baseline_minutes = 360
+imbalance_levels = 10
+standardizer_half_life_hours = 168    # also used for the label scale
+clip_z = 5.0
+min_samples = 30
+min_window_coverage = 0.8
+
+[model]
+hidden_units = 16
+init_output_scale = 0.1
+batch_size = 8
+replay_window_minutes = 240
+huber_delta = 1.0
+grad_clip = 5.0
+adam_beta1 = 0.9
+adam_beta2 = 0.999
+gate_on_skill = false
+skill_window_samples = 360
+skill_gate_min_corr = 0.0             # used only when gate_on_skill is true
+
+[trading]
+start_equity = 500.0
+notional = 500.0                      # static position size
+stop_loss_pct = 1.0
+allow_short = true
+force_trade_after_hours = 12
+
+[costs]
+fee_profile = "retail_default"        # retail_default, active_retail, low_fee_tier
+taker_fee_bps_retail_default = 90.0   # placeholder, Coinbase US Intro since 16 Sep 2026
+taker_fee_bps_active_retail = 30.0    # placeholder, Coinbase US Advanced 2, 50k USD per 30 days
+taker_fee_bps_low_fee_tier = 5.0      # placeholder, Coinbase US VIP3, 20m USD per 30 days
+latency_ms = 1000
+latency_jitter_ms = 300               # uniform 0 to 300 added to latency_ms
+extra_slippage_bps = 1.0
+short_funding_bps_per_hour = 0.5      # placeholder, top of Kraken BTC margin rollover range
+short_open_fee_bps = 2.0              # placeholder, top of Kraken BTC margin opening fee range
+daily_running_cost = 1.16             # 4.23 percent T bill yield on 10,000 USD, 8 Oct 2026
+
+[genes]
+margin_bps_init = 8.0
+margin_bps_min = 2.0
+margin_bps_max = 60.0
+lr_init = 0.0001                      # see PLAN section 8, fixed on synthetic data only
+lr_min = 0.00001
+lr_max = 0.001
+weight_decay = 0.0001
+
+[population]
+size = 20
+newcomer_fraction = 0.10
+parent_min_age_hours = 24
+parent_min_trades = 20
+mutation_sigma_weights = 0.05
+mutation_sigma_genes = 0.20
+fitness_window_hours = 168
+fitness_std_floor_usd = 1.0
+tournament_size = 3
+
+[controls]
+coin_flip_twins = true                # one coin flip twin per learner, see PLAN section 21
+
+[persistence]
+checkpoint_every_seconds = 300
+equity_snapshot_every_seconds = 300
+max_resume_gap_minutes = 10
+keep_candles_days = 14
+keep_checkpoints = 3

@@ -17,7 +17,7 @@ from helpers import EXAMPLE_CONFIG
 START = 1_791_000_000_000  # a UTC minute boundary
 R = dataclasses.replace
 TABLES = ("meta", "bots", "lineage", "decisions", "trades", "fills", "equity_snapshots", "deaths", "feed_events",
-          "checkpoints", "candles", "benchmark", "runtime_status")
+          "checkpoints", "candles", "benchmark", "forecasts", "runtime_status")
 
 
 def fast_config(data_dir, **sections):

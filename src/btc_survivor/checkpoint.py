@@ -22,7 +22,7 @@ from btc_survivor.genes import Genes
 from btc_survivor.model import MLP
 from btc_survivor.types import Leg, Order
 
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2  # 2 added the linear baseline
 
 
 class Arrays:

@@ -37,6 +37,8 @@ INSERT_CANDLE = ("INSERT INTO candles (ts, open, high, low, close, volume, trade
 INSERT_BENCHMARK = ("INSERT INTO benchmark (ts, btc_mid, buy_hold_equity, matched_equity, living_mean_equity, "
                     "living_median_equity, living, twin_mean_equity, cash_equity) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
 INSERT_FEED_EVENT = "INSERT INTO feed_events (ts, kind, detail) VALUES (?, ?, ?)"
+INSERT_FORECAST = "INSERT INTO forecasts (ts, predictor, prediction_bps) VALUES (?, ?, ?)"
+SET_FORECAST_LABEL = "UPDATE forecasts SET label_bps = ? WHERE ts = ? AND label_bps IS NULL"
 INSERT_CHECKPOINT = "INSERT INTO checkpoints (ts, schema_version, meta, arrays) VALUES (?, ?, ?, ?)"
 PRUNE_CHECKPOINTS = "DELETE FROM checkpoints WHERE id NOT IN (SELECT id FROM checkpoints ORDER BY id DESC LIMIT ?)"
 PRUNE_CANDLES = "DELETE FROM candles WHERE ts < ?"

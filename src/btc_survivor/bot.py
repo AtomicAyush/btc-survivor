@@ -98,7 +98,13 @@ class Bot:
         """A fully random bot with the initial genes."""
         rng = bot_rng(cfg.run.master_seed, bot_id)
         model = MLP.random(N_FEATURES, cfg.model.hidden_units, rng, cfg.model.init_output_scale)
-        return cls(cfg, bot_id, slot, 0, born_ms, initial_genes(cfg.genes), model, rng)
+        bot = cls(cfg, bot_id, slot, 0, born_ms, initial_genes(cfg.genes), model, rng)
+        bot.delay_forced_timer()
+        return bot
+
+    def delay_forced_timer(self) -> None:
+        """Start the forced timer at minus a random delay of up to one timer length, so newborns do not trade in step."""
+        self.minutes_since_open = -int(self.rng.integers(0, max(1, round(self.cfg.trading.force_trade_after_hours * 60))))
 
     def is_phase_minute(self, boundary_ms: int) -> bool:
         horizon = self.cfg.time.horizon_minutes
@@ -205,7 +211,7 @@ class Bot:
             return {**row, "reason": "an order is still pending"}
         if est is None:
             return {**row, "reason": "the visible book cannot fill the notional"}
-        reason = _reason(action, pred, required, gate, used_forced, skill_ok, short_ok, self.minutes_since_open)
+        reason = _reason(action, pred, required, gate, used_forced, skill_ok, short_ok)
         qty = broker.open_qty(book.mid)
         legs = {"open_long": [Leg("open", LONG, qty)], "open_short": [Leg("open", SHORT, qty)],
                 "close": [Leg("close", position)],
@@ -228,9 +234,9 @@ class Bot:
 
 
 def _reason(action: str, pred: float, required: float, gate: bool, forced: bool, skill_ok: bool,
-            short_ok: bool, idle_minutes: int) -> str:
+            short_ok: bool) -> str:
     if forced:
-        return f"forced after {idle_minutes / 60:.1f} h without opening, prediction {pred:.2f} bps"
+        return f"forced by the exploration timer, prediction {pred:.2f} bps"
     if pred < 0 and not short_ok:
         return f"prediction {pred:.2f} bps is negative and shorts are disabled"
     if not skill_ok:

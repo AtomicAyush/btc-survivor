@@ -71,9 +71,9 @@ daily_running_cost = 1.16             # 4.23 percent T bill yield on 10,000 USD,
 margin_bps_init = 8.0
 margin_bps_min = 2.0
 margin_bps_max = 60.0
-lr_init = 0.001
-lr_min = 0.0001
-lr_max = 0.01
+lr_init = 0.0001                      # see PLAN section 8, fixed on synthetic data only
+lr_min = 0.00001
+lr_max = 0.001
 weight_decay = 0.0001
 
 [population]

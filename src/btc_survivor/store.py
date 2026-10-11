@@ -172,6 +172,13 @@ CREATE TABLE IF NOT EXISTS benchmark (
   twin_mean_equity REAL,
   cash_equity REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS forecasts (
+  ts TEXT NOT NULL,
+  predictor TEXT NOT NULL,
+  prediction_bps REAL NOT NULL,
+  label_bps REAL,
+  PRIMARY KEY (ts, predictor)
+);
 CREATE TABLE IF NOT EXISTS runtime_status (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   ts TEXT NOT NULL,
@@ -319,6 +326,8 @@ class Store:
         statements = [
             ("DELETE FROM decisions WHERE ts > ?", (ts,)),
             ("UPDATE decisions SET label_bps = NULL WHERE ts > ?", (labels_from,)),
+            ("DELETE FROM forecasts WHERE ts > ?", (ts,)),
+            ("UPDATE forecasts SET label_bps = NULL WHERE ts > ?", (labels_from,)),
             ("DELETE FROM fills WHERE decided_at > ?", (ts,)),
             ("DELETE FROM equity_snapshots WHERE ts > ?", (ts,)),
             ("DELETE FROM candles WHERE ts > ?", (ts,)),
