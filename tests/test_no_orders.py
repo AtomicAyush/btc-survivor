@@ -26,7 +26,7 @@ FORBIDDEN = [
 def test_no_order_placement_or_credential_code_in_source():
     pattern = re.compile("|".join(FORBIDDEN), re.IGNORECASE)
     hits = []
-    for path in sorted((ROOT / "src").rglob("*.py")):
+    for path in sorted(p for d in ("src", "scripts") for p in (ROOT / d).rglob("*.py")):
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if pattern.search(line):
                 hits.append(f"{path.relative_to(ROOT)}:{number}: {line.strip()}")

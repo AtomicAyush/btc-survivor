@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import re
 import tomllib
 from dataclasses import dataclass
@@ -368,6 +369,9 @@ def _cross_checks(v: dict[str, dict[str, Any]], errors: list[str]) -> None:
         errors.append(f"[run] log_level = {run['log_level']!r} must be one of {', '.join(_LOG_LEVELS)}")
     if not re.fullmatch(r"[a-z][a-z0-9_]*", feed["exchange"]):
         errors.append(f"[feed] exchange = {feed['exchange']!r} must be a lower case module name")
+    elif feed["exchange"] in ("base", "book", "candles", "health", "market") or \
+            importlib.util.find_spec(f"btc_survivor.feed.{feed['exchange']}") is None:
+        errors.append(f"[feed] exchange = {feed['exchange']!r} has no adapter module in btc_survivor.feed")
     if feed["reconnect_backoff_max_seconds"] < feed["reconnect_backoff_start_seconds"]:
         errors.append("[feed] reconnect_backoff_max_seconds must be at least reconnect_backoff_start_seconds")
 

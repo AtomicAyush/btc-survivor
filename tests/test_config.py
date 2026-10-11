@@ -95,6 +95,8 @@ CASES = [
     ("candles kept too briefly", _many(_set("time", "history_minutes_required", 2000), _set("persistence", "keep_candles_days", 1)), "keep_candles_days must keep at least"),
     ("bad log level", _set("run", "log_level", "LOUD"), "log_level = 'LOUD' must be one of"),
     ("bad exchange name", _set("feed", "exchange", "Coin-Base"), "must be a lower case module name"),
+    ("unknown exchange", _set("feed", "exchange", "kraken"), "has no adapter module"),
+    ("feed helper as exchange", _set("feed", "exchange", "book"), "has no adapter module"),
     ("backoff max below start", _set("feed", "reconnect_backoff_max_seconds", 0.5), "reconnect_backoff_max_seconds must be at least"),
     ("beta of one", _set("model", "adam_beta2", 1.0), "[model] adam_beta2 = 1.0 is out of range"),
 ]
