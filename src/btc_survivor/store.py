@@ -59,7 +59,8 @@ CREATE TABLE IF NOT EXISTS decisions (
   gate_passed INTEGER NOT NULL,
   forced INTEGER NOT NULL,
   action TEXT NOT NULL,
-  reason TEXT NOT NULL
+  reason TEXT NOT NULL,
+  label_bps REAL
 );
 CREATE INDEX IF NOT EXISTS decisions_bot_ts ON decisions (bot_id, ts);
 CREATE TABLE IF NOT EXISTS trades (
@@ -167,7 +168,9 @@ CREATE TABLE IF NOT EXISTS benchmark (
   matched_equity REAL NOT NULL,
   living_mean_equity REAL NOT NULL,
   living_median_equity REAL NOT NULL,
-  living INTEGER NOT NULL
+  living INTEGER NOT NULL,
+  twin_mean_equity REAL,
+  cash_equity REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS runtime_status (
   id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -282,15 +285,20 @@ class Store:
 
     def execute_now(self, sql: str, params: Sequence[Any] = ()) -> None:
         """Commit a single write immediately, for rows that never feed back into bot state."""
+        self.commit_now([(sql, params)])
+
+    def commit_now(self, statements: Sequence[tuple[str, Sequence[Any]]]) -> None:
+        """Commit a few writes in their own transaction, leaving the queue untouched."""
         start = time.monotonic()
         self.conn.execute("BEGIN IMMEDIATE")
         try:
-            self.conn.execute(sql, tuple(params))
+            for sql, params in statements:
+                self.conn.execute(sql, tuple(params))
             self.conn.execute("COMMIT")
         except BaseException:
             self._rollback()
             raise
-        _log_if_slow(start, 1)
+        _log_if_slow(start, len(statements))
 
     def query(self, sql: str, params: Sequence[Any] = ()) -> list[sqlite3.Row]:
         return self.conn.execute(sql, tuple(params)).fetchall()
@@ -301,6 +309,37 @@ class Store:
 
     def queue_meta(self, key: str, value: str) -> None:
         self.queue("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, value))
+
+    def rollback_after(self, ts: str, labels_from: str) -> None:
+        """Remove every bot and ledger row written after a checkpoint, in one transaction, keeping feed events.
+
+        Labels matured after ts belong to decisions from labels_from on, so those are cleared too. Used only when the
+        newest checkpoint cannot be read and an older one is restored instead.
+        """
+        statements = [
+            ("DELETE FROM decisions WHERE ts > ?", (ts,)),
+            ("UPDATE decisions SET label_bps = NULL WHERE ts > ?", (labels_from,)),
+            ("DELETE FROM fills WHERE decided_at > ?", (ts,)),
+            ("DELETE FROM equity_snapshots WHERE ts > ?", (ts,)),
+            ("DELETE FROM candles WHERE ts > ?", (ts,)),
+            ("DELETE FROM benchmark WHERE ts > ?", (ts,)),
+            ("DELETE FROM deaths WHERE died_at > ?", (ts,)),
+            ("DELETE FROM lineage WHERE born_at > ?", (ts,)),
+            ("DELETE FROM bots WHERE born_at > ?", (ts,)),
+            ("UPDATE bots SET died_at = NULL WHERE died_at > ?", (ts,)),
+            ("DELETE FROM trades WHERE opened_at > ?", (ts,)),
+            ("UPDATE trades SET closed_at = NULL, exit_price = NULL, fee_close = NULL, slippage_bps_close = NULL, "
+             "pnl_gross = NULL, pnl_net = NULL, exit_reason = NULL WHERE closed_at > ?", (ts,)),
+            ("DELETE FROM checkpoints WHERE ts > ?", (ts,)),
+        ]
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            for sql, params in statements:
+                self.conn.execute(sql, params)
+            self.conn.execute("COMMIT")
+        except BaseException:
+            self._rollback()
+            raise
 
     def _rollback(self) -> None:
         """Roll back only if SQLite has not already done so itself, so the original error is the one raised."""

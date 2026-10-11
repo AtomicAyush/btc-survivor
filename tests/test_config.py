@@ -99,6 +99,8 @@ CASES = [
     ("feed helper as exchange", _set("feed", "exchange", "book"), "has no adapter module"),
     ("backoff max below start", _set("feed", "reconnect_backoff_max_seconds", 0.5), "reconnect_backoff_max_seconds must be at least"),
     ("beta of one", _set("model", "adam_beta2", 1.0), "[model] adam_beta2 = 1.0 is out of range"),
+    ("resume gap under a minute", _set("persistence", "max_resume_gap_minutes", 0.5),
+     "[persistence] max_resume_gap_minutes = 0.5 is out of range"),
 ]
 
 

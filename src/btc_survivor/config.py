@@ -250,7 +250,7 @@ _SPEC: dict[str, dict[str, tuple]] = {
     "persistence": {
         "checkpoint_every_seconds": ("int", 60, 86400, True, True),
         "equity_snapshot_every_seconds": ("int", 60, 86400, True, True),
-        "max_resume_gap_minutes": ("float", 0, 1e6, True, True),
+        "max_resume_gap_minutes": ("float", 1, 1e6, True, True),
         "keep_candles_days": ("int", 1, 3650, True, True),
         "keep_checkpoints": ("int", 1, 1000, True, True),
     },

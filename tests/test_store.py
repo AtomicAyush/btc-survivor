@@ -33,14 +33,14 @@ def test_reopening_an_existing_database_checks_and_keeps_data(tmp_path):
 def test_schema_mismatch_is_reported(tmp_path):
     path = tmp_path / "old.db"
     conn = sqlite3.connect(path)
-    conn.executescript(SCHEMA.replace("  reason TEXT NOT NULL\n);\nCREATE INDEX IF NOT EXISTS decisions_bot_ts",
+    conn.executescript(SCHEMA.replace("  label_bps REAL\n);\nCREATE INDEX IF NOT EXISTS decisions_bot_ts",
                                       "  note TEXT\n);\nCREATE INDEX IF NOT EXISTS decisions_bot_ts"))
     conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),))
     conn.commit()
     conn.close()
     with pytest.raises(StoreError) as info:
         Store.open(path)
-    assert "table decisions is missing column reason" in str(info.value)
+    assert "table decisions is missing column label_bps" in str(info.value)
     assert "table decisions has unexpected column note" in str(info.value)
 
 
@@ -178,3 +178,54 @@ def test_init_db_reports_bad_config(tmp_path, capsys):
     cfg = write_config(tmp_path, data)
     assert main(["--config", str(cfg), "init-db"]) == 2
     assert "notional" in capsys.readouterr().err
+
+
+def test_rollback_after_removes_or_reopens_everything_newer_and_keeps_the_rest(tmp_path):
+    from btc_survivor import records
+
+    store = Store.open(tmp_path / "a.db")
+    old, labels_from, mid, cut, new = (f"2026-01-01T00:0{m}:00.000Z" for m in (0, 3, 4, 5, 9))
+    rows = [
+        (records.INSERT_BOT, (1, 0, None, 0, old, "active", 8.0, 0.001, 1, "random")),
+        (records.SET_BOT_DEAD, (new, 1)),
+        (records.INSERT_BOT, (2, 0, 1, 1, new, "warmup", 8.0, 0.001, 1, "mutated")),
+        (records.INSERT_BOT, (3, 1, None, 0, old, "active", 8.0, 0.001, 1, "random")),
+        (records.SET_BOT_DEAD, (old, 3)),
+        (records.INSERT_LINEAGE, (2, 1, 1, new, 0.05, 0.2, 1.0, 1.0, 8.0, 0.001, 0.0, None)),
+        (records.INSERT_LINEAGE, (4, 3, 1, old, 0.05, 0.2, 1.0, 1.0, 8.0, 0.001, 0.0, None)),
+    ]
+    for ts, label in ((old, 1.0), (mid, 2.0), (new, 3.0)):
+        rows.append((records.INSERT_DECISION, (1, ts, "flat", 1.0, 0.0, 1.0, 1.0, 8.0, 0, 0, "none", "r")))
+        rows.append(("UPDATE decisions SET label_bps = ? WHERE ts = ?", (label, ts)))
+        rows.append((records.INSERT_FILL, (1, None, ts, ts, "open", "buy", 1.0, 1.0, 1.0, 1.0, 1, 0.0, 0.0, 1000,
+                                           "filled", "decision")))
+        rows.append((records.INSERT_SNAPSHOT, (1, ts, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, "flat", None, None, None, 0)))
+        rows.append((records.INSERT_CANDLE, (ts, 1.0, 1.0, 1.0, 1.0, 0.0, 0, 1.0, 1)))
+        rows.append((records.INSERT_BENCHMARK, (ts, 1.0, 1.0, 1.0, 1.0, 1.0, 1, None, 1.0)))
+        rows.append((records.INSERT_CHECKPOINT, (ts, 1, "{}", b"")))
+        rows.append((records.INSERT_FEED_EVENT, (ts, "stale", None)))
+    rows += [
+        (records.OPEN_TRADE, (1, 1, "long", old, 1.0, 1.0, 0.1, 0.0, 0.0, 0)),
+        (records.CLOSE_TRADE, (new, 2.0, 0.1, 0.0, 0.0, 1.0, 0.8, "signal", 1)),
+        (records.OPEN_TRADE, (2, 1, "long", new, 1.0, 1.0, 0.1, 0.0, 0.0, 0)),
+        (records.OPEN_TRADE, (3, 3, "long", old, 1.0, 1.0, 0.1, 0.0, 0.0, 0)),
+        (records.CLOSE_TRADE, (old, 2.0, 0.1, 0.0, 0.0, 1.0, 0.8, "signal", 3)),
+        (records.INSERT_DEATH, (1, new, 0, "fees", 1, 0, 0, 0, 0, 0, 1, 1, 1, 1.0)),
+        (records.INSERT_DEATH, (3, old, 0, "fees", 1, 0, 0, 0, 0, 0, 1, 1, 1, 1.0)),
+    ]
+    store.commit_now(rows)
+    store.rollback_after(cut, labels_from)
+
+    def col(sql):
+        return [tuple(r) for r in store.query(sql)]
+
+    assert col("SELECT bot_id, died_at FROM bots ORDER BY bot_id") == [(1, None), (3, old)]
+    assert col("SELECT bot_id FROM lineage") == [(4,)] and col("SELECT bot_id FROM deaths") == [(3,)]
+    assert col("SELECT ts, label_bps FROM decisions ORDER BY ts") == [(old, 1.0), (mid, None)]
+    assert col("SELECT id, closed_at, pnl_net, exit_reason FROM trades ORDER BY id") == [
+        (1, None, None, None), (3, old, 0.8, "signal")]
+    for table, column in (("fills", "decided_at"), ("equity_snapshots", "ts"), ("candles", "ts"),
+                          ("benchmark", "ts"), ("checkpoints", "ts")):
+        assert col(f"SELECT {column} FROM {table} ORDER BY {column}") == [(old,), (mid,)]
+    assert len(col("SELECT ts FROM feed_events")) == 3  # feed events are never rolled back
+    store.close()
