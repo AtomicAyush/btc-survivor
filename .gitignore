@@ -1,0 +1,32 @@
+# Virtual environments
+.venv/
+.venv*/
+venv/
+env/
+
+# Runtime data and logs
+data/
+logs/
+*.log
+*.db
+*.db-wal
+*.db-shm
+
+# Caches and compiled files
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Build output
+build/
+dist/
+*.egg-info/
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
