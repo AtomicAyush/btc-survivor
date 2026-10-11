@@ -112,27 +112,10 @@ class Bot:
         return walk.avg_price if walk.avg_price is not None else book.mid
 
     def step(self, ctx: MinuteContext, broker: Broker) -> StepResult:
-        cfg, acct, book, now = self.cfg, self.account, ctx.book, ctx.boundary_ms
+        cfg, now = self.cfg, ctx.boundary_ms
         res = StepResult()
-        if self.state == DEAD:
+        if self.state == DEAD or self._upkeep(ctx, broker, res):
             return res
-        acct.charge_rent(cfg.costs.daily_running_cost / MINUTES_PER_DAY)
-        acct.accrue_funding(now, cfg.costs.short_funding_bps_per_hour)
-        self.alive_minutes += 1
-        self.minutes_since_open += 1
-        mark = self.mark_price(book)
-        self.equity = acct.equity(mark)
-        if self.alive_minutes % 60 == 0:
-            self.hourly_equity.append(self.equity)
-
-        if self._check_death(book, now, broker, res):
-            return res
-        if acct.is_open and self.pending_order is None and mark is not None:
-            adverse = (acct.entry_price - mark) if acct.side == LONG else (mark - acct.entry_price)
-            if adverse / acct.entry_price * 100.0 >= cfg.trading.stop_loss_pct:
-                self._send(broker, [Leg("close", acct.side)], now, book.mid, "stop", res)
-                res.stopped = True
-
         if ctx.z is not None and ctx.matured is not None and ctx.label_scale.ready:
             self._learn(ctx)
         horizon_ms = cfg.time.horizon_minutes * MS_PER_MINUTE
@@ -143,8 +126,29 @@ class Bot:
             pred = self.model.predict(ctx.z) * ctx.label_scale.scale
             self.pending_preds[now] = pred
         if pred is not None and self.is_phase_minute(now):
-            res.decision = self._decide(now, book, pred, res, broker)
+            res.decision = self._decide(now, ctx.book, pred, res, broker)
         return res
+
+    def _upkeep(self, ctx: MinuteContext, broker: Broker, res: StepResult) -> bool:
+        """Rent, funding, marking, the death check and the stop loss, shared with the coin flip twins. True on death."""
+        cfg, acct, book, now = self.cfg, self.account, ctx.book, ctx.boundary_ms
+        acct.charge_rent(cfg.costs.daily_running_cost / MINUTES_PER_DAY)
+        acct.accrue_funding(now, cfg.costs.short_funding_bps_per_hour)
+        self.alive_minutes += 1
+        self.minutes_since_open += 1
+        mark = self.mark_price(book)
+        self.equity = acct.equity(mark)
+        if self.alive_minutes % 60 == 0:
+            self.hourly_equity.append(self.equity)
+
+        if self._check_death(book, now, broker, res):
+            return True
+        if acct.is_open and self.pending_order is None and mark is not None:
+            adverse = (acct.entry_price - mark) if acct.side == LONG else (mark - acct.entry_price)
+            if adverse / acct.entry_price * 100.0 >= cfg.trading.stop_loss_pct:
+                self._send(broker, [Leg("close", acct.side)], now, book.mid, "stop", res)
+                res.stopped = True
+        return False
 
     def _check_death(self, book: LocalBook, now: int, broker: Broker, res: StepResult) -> bool:
         """Equity below one more round trip plus a day of rent means death. A pending close becomes the death close."""

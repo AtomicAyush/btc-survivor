@@ -87,6 +87,9 @@ fitness_window_hours = 168
 fitness_std_floor_usd = 1.0
 tournament_size = 3
 
+[controls]
+coin_flip_twins = true                # one coin flip twin per learner, see PLAN section 21
+
 [persistence]
 checkpoint_every_seconds = 300
 equity_snapshot_every_seconds = 300

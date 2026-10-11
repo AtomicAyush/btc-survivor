@@ -119,6 +119,11 @@ class PopulationConfig:
 
 
 @dataclass(frozen=True)
+class ControlsConfig:
+    coin_flip_twins: bool
+
+
+@dataclass(frozen=True)
 class PersistenceConfig:
     checkpoint_every_seconds: int
     equity_snapshot_every_seconds: int
@@ -138,6 +143,7 @@ class Config:
     costs: CostsConfig
     genes: GenesConfig
     population: PopulationConfig
+    controls: ControlsConfig
     persistence: PersistenceConfig
     base_dir: Path
     text: str
@@ -237,6 +243,9 @@ _SPEC: dict[str, dict[str, tuple]] = {
         "fitness_window_hours": ("int", 1, 10**6, True, True),
         "fitness_std_floor_usd": ("float", 0, 1e9, False, True),
         "tournament_size": ("int", 1, 10000, True, True),
+    },
+    "controls": {
+        "coin_flip_twins": ("bool", None, None, True, True),
     },
     "persistence": {
         "checkpoint_every_seconds": ("int", 60, 86400, True, True),
@@ -354,6 +363,7 @@ def parse_config(text: str, base_dir: Path) -> Config:
         costs=CostsConfig(**values["costs"]),
         genes=GenesConfig(**values["genes"]),
         population=PopulationConfig(**values["population"]),
+        controls=ControlsConfig(**values["controls"]),
         persistence=PersistenceConfig(**values["persistence"]),
         base_dir=base_dir,
         text=text,
