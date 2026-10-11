@@ -64,12 +64,13 @@ def _state(conn, cfg: Config, name: str, now_ms: int) -> dict:
     return {
         "name": name, "summary": data.summary(conn, cfg, meta, rows, live, now_ms), "bots": rows,
         "config": {"fee_bps": cfg.costs.taker_fee_bps, "start_equity": cfg.trading.start_equity,
-                   "rent_per_day": cfg.costs.daily_running_cost,
+                   "rent_per_day": cfg.costs.daily_running_cost, "candle_minutes": 1,
+                   "force_hours": cfg.trading.force_trade_after_hours,
                    "notional": cfg.trading.notional, "horizon_minutes": cfg.time.horizon_minutes,
                    "history_minutes": cfg.time.history_minutes_required},
         "history": {"valid": meta["valid_total"] if meta else 0, "labels": meta["label_scale_n"] if meta else 0,
                     "labels_needed": cfg.features.min_samples},
-        "equity_curve": equity_curve(conn), "skill": skill_so_far(conn, cfg.time.horizon_minutes),
+        "equity_curve": equity_curve(conn), "chart_minutes_per_point": chart_step(conn), "skill": skill_so_far(conn, cfg.time.horizon_minutes),
         "decisions": [dict(r) for r in conn.execute(
             "SELECT d.ts, d.bot_id, b.origin, d.action, d.forced, d.prediction_bps, d.required_edge_bps, d.reason "
             "FROM decisions d JOIN bots b USING (bot_id) WHERE d.action != 'none' ORDER BY d.id DESC LIMIT ?",
@@ -82,10 +83,14 @@ def _state(conn, cfg: Config, name: str, now_ms: int) -> dict:
     }
 
 
+def chart_step(conn) -> int:
+    """How many healthy minutes each chart point stands for, one until the run outgrows CHART_POINTS."""
+    return max(1, math.ceil(conn.execute("SELECT count(*) FROM benchmark").fetchone()[0] / CHART_POINTS))
+
+
 def equity_curve(conn) -> list[dict]:
-    """The benchmark table thinned to a few hundred points, oldest first."""
-    count = conn.execute("SELECT count(*) FROM benchmark").fetchone()[0]
-    step = max(1, math.ceil(count / CHART_POINTS))
+    """The benchmark table thinned to a few hundred points, oldest first, always ending at the newest minute."""
+    step = chart_step(conn)
     rows = conn.execute("SELECT ts, btc_mid, buy_hold_equity, matched_equity, living_mean_equity, twin_mean_equity, "
                         "cash_equity FROM benchmark WHERE (rowid - 1) % ? = 0 OR rowid = (SELECT max(rowid) "
                         "FROM benchmark) ORDER BY ts", (step,)).fetchall()

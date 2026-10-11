@@ -105,6 +105,7 @@ button[title], label[title], input[title] { cursor: pointer; }
     <p><b>Forced trades.</b> At these fees a bot's prediction almost never clears the cost of trading, so most trades are forced trades made every 12 hours to keep the bots gathering experience.</p>
     <p><b>Skill.</b> The headline result. It is the correlation between the bots' average prediction and what Bitcoin actually did, scored once per 30 minutes after the first day, with a plain linear model beside it. It is only final on day 28.</p>
     <p><b>Benchmarks.</b> Buy and hold put all the money into Bitcoin at launch. Matched bought only $500 of it. Cash is start money minus rent, the bot that never trades.</p>
+    <p><b>Timing.</b> The market is read as one minute candles. Each bot predicts where Bitcoin will be 30 minutes ahead and decides once every 30 minutes, at its own minute within the half hour. Learning, rent and stop checks happen every healthy minute.</p>
     <p><b>Freshness.</b> The page refreshes every 10 seconds. Bot rows come from a save every 5 minutes, and all times are UTC.</p>
   </div></details></div>
 <main id="main"><p class="empty">Loading the runs.</p></main>
@@ -199,6 +200,9 @@ function view(run) {
       <div class="s">matched ${usd(s.matched)} · cash ${usd(s.cash)} · twins ${usd(s.twin_mean)}</div></div>
     <div class="card"><div class="k" title="Correlation between the bots' average prediction and the actual 30 minute move, one reading per window after the first day. Final on day 28.">Skill so far</div><div class="v">${sk ? signed(sk.corr, 3) : "–"}</div>
       <div class="s">population correlation over ${sk ? sk.windows : 0} windows · linear ${lin ? signed(lin.corr, 3) : "–"} · descriptive until the final day</div></div>
+    <div class="card"><div class="k" title="The time scales the bots work on. These are fixed for the whole run.">Timing</div>
+      <div class="v" style="font-size:15px">${c.candle_minutes} minute candles</div>
+      <div class="s">predicts ${c.horizon_minutes} minutes ahead · each bot decides every ${c.horizon_minutes} minutes · forced trade every ${num(c.force_hours, 0)} hours · chart point every ${run.chart_minutes_per_point === 1 ? "minute" : run.chart_minutes_per_point + " minutes"}</div></div>
   </div>
   <div class="panel"><h2>Equity over time <small>mean learner against the benchmarks, fee ${num(c.fee_bps, 0)} bps</small></h2>
     ${chart(run.equity_curve, c.start_equity)}

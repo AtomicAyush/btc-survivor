@@ -110,6 +110,8 @@ def test_chart_keeps_the_newest_point_and_skill_uses_the_criterion_rows(monkeypa
     curve = dashboard.equity_curve(conn)
     newest = conn.execute("SELECT max(ts) FROM benchmark").fetchone()[0]
     assert len(curve) <= 8 and curve[-1]["ts"] == newest
+    count = conn.execute("SELECT count(*) FROM benchmark").fetchone()[0]
+    assert dashboard.chart_step(conn) == -(-count // 7) > 1  # minutes per point, shown on the Timing card
     monkeypatch.setattr(dashboard, "forecasts", lambda c, h: evaluate.forecasts(c, h, 0))
     skill = dashboard.skill_so_far(conn, cfg.time.horizon_minutes)
     expected = evaluate.criterion_skill(conn, cfg.time.horizon_minutes, 0)
