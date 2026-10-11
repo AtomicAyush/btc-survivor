@@ -20,7 +20,10 @@ These choices change behaviour or results. Each has a recommendation, and sectio
 | Daily running cost | 5 dollars | 1.16 dollars | That is the 4.23 percent three month Treasury yield on 10,000 dollars, so a bot must beat cash |
 | Horizon | 15 or 30 minutes | 30 minutes | The same fee is paid against a move about 1.4 times larger |
 | Fitness formula | net change over the standard deviation of hourly changes | mean hourly change over that standard deviation, multiplied rather than divided by it when negative | The literal formula favours the youngest eligible bots, and among losing bots it ranks the most volatile highest |
-| Start equity versus notional | 10,000 and 500 | keep as written, knowing the first death is likely more than a year away | Section 3 shows the arithmetic, and lowering start equity to 1,000 is the lever for deaths within weeks |
+| Start equity versus notional | 10,000 and 500 | keep as written for the main run, and add a run at 1,000 | At 10,000 the first death is likely more than a year away, so a run at 1,000 is what exercises evolution |
+| Coin flip controls | not in brief | one coin flip twin per learner | A twin trades at the same moments as its learner with a random direction, so a gap between them measures skill rather than luck |
+| Parallel runs | one run | three runs from the same master seed | Run A at retail fees and 10,000, run B at the low fee and 10,000, and run C at retail fees and 1,000 measure survival, skill and evolution separately |
+| Success criteria | not in brief | fixed before launch, in section 21 | With 20 bots and overlapping labels, chance alone produces a bot that looks impressive |
 | Python floor | 3.11 or newer | keep 3.11, with numpy pinned per Python version and the suite run on 3.11 and 3.13 | numpy 2.5 needs Python 3.12, and the Raspberry Pi OS Legacy image still ships 3.11 |
 
 ## 2. Answers to the five questions
@@ -139,10 +142,10 @@ What this means.
 * **The first trade.** On a fresh launch, features need 6 hours of healthy history. The label scale then needs about 30 matured labels, so training starts after about 7 hours. Six hours of warmup follow, so bots become Active after about 13 hours. The forced timer counts from birth, so each bot's first decision after warmup is a forced trade. Expect the first trades about 13 hours after launch, and then one forced round trip per bot every 12 hours.
 * **The gate.** The model starts with predictions of a few bps, because the output layer starts at a tenth of its normal scale. Under the retail profile the required edge is about 190 bps, so the gate will almost never pass. Nearly every trade will be forced, so nearly every bot will be quiet.
 * **The first death.** Under these defaults the first death is likely more than a year away, and because bots are only replaced when they die, evolution will not start in any practical run. Parents would also need 20 closed trades, which a quiet bot takes about 10 days to make.
-* **The lever.** This is a real finding, not a bug, and the logs will show it plainly. It should still be decided on purpose. What changes the timescale is start equity relative to notional. With 1,000 dollars of start equity, a quiet retail bot dies in about 51 days and a churning one in about 2 days.
+* **The lever.** This is a real finding, not a bug, and the logs will show it plainly. What changes the timescale is start equity relative to notional. With 1,000 dollars of start equity, a quiet retail bot dies in about 51 days and a churning one in about 2 days, which is why run C in section 21 starts at 1,000.
 * **What will be visible.** `status` shows each bot's burn rate over the last 24 hours and the days left at that rate, so the timescale is visible while the system runs.
 
-The recommendation is to keep 10,000 and 500 as the brief wrote them, because changing them would be tuning and the brief names 10,000 dollars repeatedly. The death, replacement, mutation and lineage machinery will still be exercised by unit tests and by the replay soak. The soak uses a separate plumbing configuration in its own data folder with small start equity, short parent requirements and a short forced timer, and it is labelled as never a strategy setting.
+The main run keeps 10,000 and 500 as the brief wrote them, because changing them would be tuning and the brief names 10,000 dollars repeatedly. Run C at 1,000 sits beside it rather than replacing it. The death, replacement, mutation and lineage machinery will still be exercised by unit tests and by the replay soak. The soak uses a separate plumbing configuration in its own data folder with small start equity, short parent requirements and a short forced timer, and it is labelled as never a strategy setting.
 
 ## 4. Changes to the brief and chosen readings
 
@@ -178,6 +181,9 @@ The recommendation is to keep 10,000 and 500 as the brief wrote them, because ch
 25. The standardizer and the label scale give each new sample the larger of the exponential weight and 1 over the sample count, so early statistics are not biased (section 8).
 26. A bot trains only in minutes in which a new sample matured, so each gap pauses learning for one horizon (section 8).
 27. A phase minute without a valid feature vector is not a decision tick and writes no row (section 6.3).
+28. Every learner slot also holds a coin flip twin that copies the learner's trade timing with a random direction (section 21).
+29. The baseline that never trades is computed as start equity minus rent rather than simulated (section 21).
+30. Each learner decision row later records the label that matured for it, and a new `evaluate` command checks the success criteria (section 21).
 
 ## 5. Module layout
 
@@ -211,6 +217,7 @@ btc_survivor/
     broker.py          cost estimate, pending orders, latency, book walk fills
     account.py         one bot's books, invariant, death threshold
     bot.py             Warmup, Active, Dead state machine, per bot minute step, decision rule
+    controls.py        coin flip twins that copy their learner's trade timing
     genes.py           margin and learning rate genes, mutation, bounds
     population.py      slots, fitness, eligibility, tournament, replacement
     benchmark.py       buy and hold curves
@@ -222,7 +229,7 @@ btc_survivor/
     replay.py          drive the engine from recordings at full speed
     synthetic.py       synthetic recordings for tests and soak
     cli/
-      status.py  explain.py  lineage.py  export.py
+      status.py  explain.py  lineage.py  export.py  evaluate.py
   tests/               one test file per module, plus integration tests
     fixtures/          small hand written message files
   scripts/
@@ -378,7 +385,7 @@ Here `stop_loss_losses` is the negated gross profit of trades closed by a stop, 
 
 **Mutation.** The child's own seeded generator adds Gaussian noise with `mutation_sigma_weights` to every parameter. It then multiplies the margin and learning rate genes by `exp(N(0, mutation_sigma_genes))` and clamps both to their bounds. Adam state starts fresh. The child gets a new bot id, a fresh 10,000 dollar account, the parent's generation plus one, and inherited warmup. A `lineage` row stores the parent, generation, birth time, both sigmas, both gene factors, the parent's genes, the parent's fitness and the parent's skill correlation. A newcomer gets new random weights, the initial gene values and generation 0.
 
-Bots leave only by dying. `docs/evolution.md` will list possible later additions, such as culling, crossover, a hall of fame and a tiered fee profile, without building them.
+Coin flip twins from section 21 are never parents and never count toward fitness. Bots leave only by dying. `docs/evolution.md` will list possible later additions, such as culling, crossover, a hall of fame, a tiered fee profile and the v2 items in section 21, without building them.
 
 ## 12. Storage schema
 
@@ -400,7 +407,7 @@ CREATE TABLE bots (
   margin_bps REAL NOT NULL,
   lr REAL NOT NULL,
   seed INTEGER NOT NULL,
-  origin TEXT NOT NULL         -- random, mutated
+  origin TEXT NOT NULL         -- random, mutated, control
 );
 CREATE TABLE lineage (
   bot_id INTEGER PRIMARY KEY,
@@ -429,7 +436,8 @@ CREATE TABLE decisions (
   gate_passed INTEGER NOT NULL,
   forced INTEGER NOT NULL,
   action TEXT NOT NULL,            -- open_long, open_short, hold, close, flip, none
-  reason TEXT NOT NULL
+  reason TEXT NOT NULL,
+  label_bps REAL                   -- filled when the label for this minute matures, for the success criteria
 );
 CREATE INDEX decisions_bot_ts ON decisions (bot_id, ts);
 CREATE TABLE trades (
@@ -534,7 +542,9 @@ CREATE TABLE benchmark (
   matched_equity REAL NOT NULL,    -- notional bought at launch, rest held as cash
   living_mean_equity REAL NOT NULL,
   living_median_equity REAL NOT NULL,
-  living INTEGER NOT NULL
+  living INTEGER NOT NULL,
+  twin_mean_equity REAL,           -- coin flip twins, when enabled
+  cash_equity REAL NOT NULL        -- start equity minus rent, the bot that never trades
 );
 CREATE TABLE runtime_status (      -- live only, never written by replay
   id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -571,6 +581,7 @@ Command line, through the `btc_survivor` entry point or `python -m btc_survivor`
 * `explain BOT_ID` prints the life story. That covers birth, origin, parent and generation, genes, key statistics, the five part cost breakdown with a check that it sums, the five worst trades, decision counts by action including forced ones, and for a dead bot the cause of death with the numbers behind it.
 * `lineage BOT_ID` prints the ancestry chain back to a random ancestor, with each ancestor's lifespan, final or current equity and cause of death.
 * `export --out DIR` writes CSV files of bots, trades, fills, decisions, equity snapshots, deaths, lineage and the benchmark.
+* `evaluate` prints the success criteria from section 21 for this run, computed from the database.
 * `init-db` creates an empty database, or checks an existing one against the expected schema version and tables.
 * `replay --out DIR FILE [FILE ...]` runs recordings through the pipeline into a new or empty folder given by `--out`, never into `data_dir`. Its help text states that replay results are never used to choose, tune or rank strategies.
 
@@ -670,6 +681,9 @@ fitness_window_hours = 168
 fitness_std_floor_usd = 1.0           # new
 tournament_size = 3                   # new
 
+[controls]
+coin_flip_twins = true                # new, one twin per learner slot
+
 [persistence]
 checkpoint_every_seconds = 300
 equity_snapshot_every_seconds = 300
@@ -712,17 +726,17 @@ Each phase ends with the full suite green, one single line commit on `feat/initi
 3. **Data.** Feed interface, Coinbase adapter, the full book, candles, health, recorder and `synthetic.py`. Tests with synthetic and hand written messages covering gaps, crossed books, silences and skew. `scripts/record_feed.py` then runs in the background on the development Mac, keyless and public only, writing to `data/raw`. It gives real data for replay and soak, and it measures a weekday busy hour message rate and how often the feed leaves Healthy. Both go into the phase summary, and the recorder stops after Phase 10.
 4. **Learning.** Features, standardizer, labels, model with the gradient check, AdamW, skill statistics, and the synthetic pattern and noise tests.
 5. **Bot.** State machine, the per bot minute step, the decision rule, cost estimate and threshold, forced exploration, stop loss and warmup, with every branch tested at the bot level.
-6. **Evolution.** Genes, population, fitness, tournament, mutation and lineage, with tests.
-7. **Runtime.** Engine, runner, benchmark, persistence points, checkpoints, resume, the dying list, signals and the replay harness. Tests for restart, short and long gaps, long live outages, and determinism. A short live smoke run on the development Mac checks the feed, health and persistence. Trading paths are exercised by replay, because the first live trade comes about 13 hours after launch. Suite on 3.11 and 3.13.
-8. **Command line.** `status`, `explain`, `lineage` and `export`, tested against a seeded database, plus `scripts/plot_results.py` and `requirements-plot.txt`.
-9. **Docs and deploy.** Every document in the layout, each section ending with links, the systemd unit and the Raspberry Pi guide, plus the documentation test. The last step fills `docs/RESULTS_TEMPLATE.md` with a run header (start date, seed, fee profile, horizon, rent, hardware) and an empty table per generation with date, generation, born, alive, dead, mean equity, top cause of death, mean skill correlation, and population against buy and hold.
-10. **Soak.** `scripts/soak_test.py` replays long recordings with the plumbing configuration from section 3. It uses real recordings joined end to end with reconnect markers, plus a synthetic one spanning several days with many full size snapshot resyncs. It reports current memory over time and passes only if memory at the end is no more than 5 MB above memory at the end of the first hour, CPU per message, invariant checks, mutated births and the highest generation reached. If Docker is available it also runs once in a Linux arm64 container. The live system also runs on the development Mac for as long as time allows, with two drills. One kills the process with `kill -9` and restarts it. The other pauses it with SIGSTOP for longer than `stale_after_seconds` to force the stale and reconnect path. A true network cut would affect the whole development Mac, so it needs the owner's approval first. The drills check the resume event, that no rent was charged for downtime, and that the invariants hold. The suite runs on 3.11 and 3.13. The final summary lists every done criterion from the brief, how it was checked, and which ones only the target Raspberry Pi can confirm, starting with the 24 hour run.
+6. **Evolution and controls.** Genes, population, fitness, tournament, mutation, lineage and the coin flip twins, with tests.
+7. **Runtime.** Engine, runner, benchmark with the cash baseline and twin averages, labels written back to decision rows, persistence points, checkpoints, resume, the dying list, signals and the replay harness. Tests for restart, short and long gaps, long live outages, and determinism. A short live smoke run on the development Mac checks the feed, health and persistence. Trading paths are exercised by replay, because the first live trade comes about 13 hours after launch. Suite on 3.11 and 3.13.
+8. **Command line.** `status`, `explain`, `lineage`, `export` and `evaluate`, tested against a seeded database, plus `scripts/plot_results.py` and `requirements-plot.txt`.
+9. **Docs and deploy.** Every document in the layout, each section ending with links, a systemd template unit that runs one service per config file, the configs for runs A, B and C, and the Raspberry Pi guide, plus the documentation test. The last step fills `docs/RESULTS_TEMPLATE.md` with a run header (start date, seed, fee profile, horizon, rent, hardware), the success criteria from section 21 with empty result rows for days 7, 14 and 28, and an empty table per generation with date, generation, born, alive, dead, mean equity, twin mean equity, top cause of death, mean skill correlation, and population against buy and hold and the cash baseline.
+10. **Soak.** `scripts/soak_test.py` replays long recordings with the plumbing configuration from section 3. It uses real recordings joined end to end with reconnect markers, plus a synthetic one spanning several days with many full size snapshot resyncs. It reports current memory over time and passes only if memory at the end is no more than 5 MB above memory at the end of the first hour, CPU per message, invariant checks, mutated births and the highest generation reached. If Docker is available it also runs once in a Linux arm64 container. The live system also runs on the development Mac for as long as time allows, as runs A, B and C side by side, with two drills. One kills the process with `kill -9` and restarts it. The other pauses it with SIGSTOP for longer than `stale_after_seconds` to force the stale and reconnect path. A true network cut would affect the whole development Mac, so it needs the owner's approval first. The drills check the resume event, that no rent was charged for downtime, and that the invariants hold. The suite runs on 3.11 and 3.13. The final summary lists every done criterion from the brief, how it was checked, and which ones only the target Raspberry Pi can confirm, starting with the 24 hour run.
 
 ## 19. Packaging and platform
 
 * `requires-python = ">=3.11"`. `numpy==2.4.6` on Python 3.11, because numpy 2.5 dropped 3.11, and `numpy==2.5.3` on 3.12 and newer, selected with environment markers. The benchmarks used 2.5.4, but it was released on the day of this plan, so the previous patch release is pinned and the Phase 10 soak measures with the pinned version. Also `websockets==17.2`, and `pytest==9.1.1` in a test extra. `matplotlib==3.11.2` goes only in `requirements-plot.txt`.
 * The Pi target is Raspberry Pi OS Lite 64 bit, the current Trixie release with Python 3.13, in a virtual environment. The Bookworm based Legacy image with Python 3.11 is also supported.
-* Recommended systemd settings are `Restart=always`, `RestartSec=5`, `KillSignal=SIGTERM`, `TimeoutStopSec=60`, `After=network-online.target time-sync.target`, `Wants=network-online.target`, and `Environment=PYTHONUNBUFFERED=1 OPENBLAS_NUM_THREADS=1`. `WorkingDirectory` and `User` are placeholders. The guide explains enabling `systemd-time-wait-sync.service`. Without it, `time-sync.target` does not wait for a real clock.
+* The unit is a template, `btc_survivor@.service`, so `btc_survivor@main`, `btc_survivor@skill` and `btc_survivor@evolution` run the three configs as separate services. Recommended settings are `Restart=always`, `RestartSec=5`, `KillSignal=SIGTERM`, `TimeoutStopSec=60`, `After=network-online.target time-sync.target`, `Wants=network-online.target`, and `Environment=PYTHONUNBUFFERED=1 OPENBLAS_NUM_THREADS=1`. `WorkingDirectory` and `User` are placeholders. The guide explains enabling `systemd-time-wait-sync.service`. Without it, `time-sync.target` does not wait for a real clock.
 * The Pi guide also covers SD card wear, booting from a USB SSD, how to check write durations on the SD card, the Pi kernel's default of no memory cgroup (which makes `MemoryMax` ineffective), checking the board's clock speed, and cooling. A throttled Pi 4 can run noticeably slower. It ends with a checklist for the 24 hour run on the target Raspberry Pi covering the same 5 MB memory bound, a pulled network cable, and a kill and restart.
 
 ## 20. Honest limits and risks
@@ -734,11 +748,38 @@ Each phase ends with the full suite green, one single line commit on `feat/initi
 * **Keyless feeds may be dropped more often.** Coinbase recommends keys "for connection reliability". Reconnects and resyncs are expected, logged and tested, and each one discards up to a horizon of pending labels.
 * **Snapshot memory on the Pi.** The 4.5 MB snapshot is the largest memory event. Linux memory behaviour after many resyncs was not measured. If the Pi soak shows peaks too close to 150 MB, the fixes are the Kraken adapter with its 2 KB snapshot or a streaming parse. Either change needs the owner's approval first.
 * **CPU in busy markets.** The pessimistic estimate at an assumed 100 messages a second is about at the 25 percent target. Phase 3 measures a real busy hour.
-* **Few deaths under the defaults.** Section 3 explains why. The project will still be correct, but evolution is unlikely to show anything live within a year at 10,000 dollars of start equity.
+* **Few deaths under the defaults.** Section 3 explains why. At 10,000 dollars of start equity evolution is unlikely to show anything live within a year, which is why run C starts at 1,000.
+* **Three runs share one machine.** Each process stays within the per process targets, but together they use about three times the memory and feed CPU of one run.
 * **All Pi performance numbers are estimates** from published benchmarks and measurements on the development Mac, until they run on the target Raspberry Pi.
 * **Market statistics are from a short period.** The probes ran during a quiet weekend hour. Busy markets will show more messages, wider spreads and more impact. The cost model reads the live book every time, so it adapts.
 
-## 21. References
+## 21. Controls, parallel runs and success criteria
+
+**Coin flip twins.** Every learner slot also holds a twin with its own account and no network. Whenever the learner's decision opens, closes or flips, the twin does the same at the same moment, choosing long or short with a fair coin from its own seeded generator. A twin pays the same fees, slippage, latency, funding and rent, has its own stop loss and death check, and does nothing when its learner holds or does nothing. Twins are never parents and never count toward fitness, and a dead twin is replaced by a fresh twin in the same slot. Because a learner and its twin trade at the same moments, the only difference between them is the direction, so a gap between their results measures prediction skill rather than timing luck. Setting `coin_flip_twins = false` runs the population without them.
+
+**The cash baseline.** The bot that never trades is not simulated. Its equity is start equity minus rent for the healthy minutes since launch, recorded in the benchmark table next to buy and hold.
+
+**Three runs.** Each run is a separate process with its own config file and data folder. All three use the same master seed, so they start from identical bots.
+
+| Run | Fee profile | Start equity | Question it answers |
+| --- | --- | --- | --- |
+| A main | `retail_default`, 90 bps | 10,000 | can a bot survive real retail costs |
+| B skill | `low_fee_tier`, 5 bps | 10,000 | can a bot predict anything at all |
+| C evolution | `retail_default`, 90 bps | 1,000 | do selection and mutation work when deaths come within weeks |
+
+**Success criteria, fixed before launch.** Each run lasts at least 28 days of healthy data. Results are written up at days 7, 14 and 28, and no setting changes during a run. Every run is reported whatever it shows. The best single bot is never evidence on its own, because among 20 bots chance alone produces one that looks impressive.
+
+1. **Skill.** Every learner decision row gets the label that matured for it. Over the run, all learner rows with a label are pooled and the correlation between prediction and label is computed. One bot's labels do not overlap, but different bots overlap each other, so the effective sample size is taken as the number of distinct 30 minute windows, which is 48 a day. Skill passes when the correlation exceeds 2.33 divided by the square root of that count, a one sided test at the 1 percent level. For 28 days that threshold is about 0.064.
+2. **Beats coin flips.** Each closed learner trade is paired with its twin's trade from the same decision, and pairs where either side has no trade are left out. It passes when the mean difference in net profit per pair is positive and more than 2.33 standard errors from zero.
+3. **Survival.** Deaths, causes and lifespans of learners and twins are reported for each run, without a pass threshold.
+4. **Evolution works.** In run C, by day 28, at least one mutated child has been born and the lineage reaches generation 2. This checks the machinery, not the strategy.
+5. **Context.** Buy and hold, the exposure matched benchmark and the cash baseline are reported next to every result as context, not as pass criteria.
+
+The `evaluate` command computes criteria 1, 2 and 4 from the database, and `docs/RESULTS_TEMPLATE.md` holds the tables for writing them up.
+
+**Kept for v2.** Variable position sizing, imbalance measured within 5, 10 and 25 bps of the mid instead of over the top 10 levels, longer horizons, and trading only in volatile hours are recorded in `docs/evolution.md` as later work. Sizing only makes sense once criterion 1 or 2 passes.
+
+## 22. References
 
 * [Coinbase Advanced Trade WebSocket channels](https://docs.cdp.coinbase.com/coinbase-app/advanced-trade-apis/websocket/websocket-channels)
 * [Coinbase Advanced Trade WebSocket rate limits](https://docs.cdp.coinbase.com/coinbase-app/advanced-trade-apis/websocket/websocket-rate-limits)
