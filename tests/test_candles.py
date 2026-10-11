@@ -70,3 +70,16 @@ def test_window_ending_after_the_last_minute_is_invalid_there():
     s.append(M, 1.0, 1.0, True)
     _, _, valid = s.window(s.last_index + 1, 2)
     assert valid.tolist() == [True, False]
+
+
+def test_healthy_minute_count_is_kept_per_minute():
+    s = MinuteSeries(4)
+    s.append(M, 1.0, 1.0, True)
+    s.append(M + MIN, 1.0, 1.0, False)
+    s.append(M + 2 * MIN, 1.0, 1.0, True)
+    base = M // MIN
+    assert [s.valid_total_at(base + i) for i in range(3)] == [1, 1, 2]
+    s.append(M + 1000 * MIN, 1.0, 1.0, True)  # a long jump
+    assert s.valid_total == 3 and s.valid_total_at(base + 1000) == 3
+    assert s.valid_total_at(base + 999) == 2  # skipped minutes carry the count from before the jump
+    assert s.valid_total_at(base + 2) == 0  # older than the ring

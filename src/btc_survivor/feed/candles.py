@@ -69,6 +69,8 @@ class MinuteSeries:
         self.volume = np.zeros(capacity)
         self.valid = np.zeros(capacity, dtype=bool)
         self.last_index: int | None = None
+        self.valid_total = 0  # healthy minutes ever appended, for the initial history requirement
+        self.cum_valid = np.zeros(capacity, dtype=np.int64)  # valid_total as of each minute
 
     def append(self, boundary_ms: int, mid: float | None, volume: float, valid: bool) -> None:
         """Record one minute. Minutes skipped since the last call are recorded as invalid."""
@@ -78,6 +80,8 @@ class MinuteSeries:
                 raise ValueError("minutes must be appended in increasing order")
             for missing in range(max(self.last_index + 1, index - self.capacity + 1), index):
                 self._write(missing, None, 0.0, False)
+        if valid and mid is not None:
+            self.valid_total += 1
         self._write(index, mid, volume, valid)
         self.last_index = index
 
@@ -87,6 +91,15 @@ class MinuteSeries:
         self.mid[slot] = mid if ok else np.nan
         self.volume[slot] = volume if ok else 0.0
         self.valid[slot] = ok
+        self.cum_valid[slot] = self.valid_total
+
+    def valid_total_at(self, index: int) -> int:
+        """How many healthy minutes had been seen by the given minute, or 0 if it is older than the ring."""
+        if self.last_index is None or index <= self.last_index - self.capacity:
+            return 0
+        if index >= self.last_index:
+            return self.valid_total
+        return int(self.cum_valid[index % self.capacity])
 
     def window(self, end_index: int, length: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Mid, volume and validity for the length minutes ending at end_index, oldest first.
