@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BTC Survivor</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --ink: #16181d; --muted: #667085; --line: #e3e6eb;
+  --accent: #2f6fde; --good: #1a8a4a; --bad: #c4372f; --warn: #b7791f; --chip: #eef1f5;
+  --c1: #2f6fde; --c2: #e07b00; --c3: #1a8a4a; --c4: #8a5cd6; --c5: #b0457a;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1115; --panel: #171a20; --ink: #e7e9ee; --muted: #98a1b2; --line: #2a2f38;
+    --accent: #6b9bff; --good: #4cc27c; --bad: #ff6b61; --warn: #f0b049; --chip: #222731;
+    --c1: #6b9bff; --c2: #ffa53d; --c3: #4cc27c; --c4: #b28cff; --c5: #f07bb4;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+header { position: sticky; top: 0; z-index: 2; background: var(--panel); border-bottom: 1px solid var(--line);
+  padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+header h1 { font-size: 16px; margin: 0 8px 0 0; letter-spacing: .2px; }
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.tab { border: 1px solid var(--line); background: var(--chip); color: var(--ink); border-radius: 999px;
+  padding: 5px 12px; cursor: pointer; font: inherit; }
+.tab.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.updated { margin-left: auto; color: var(--muted); font-size: 12px; display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+.live { width: 8px; height: 8px; border-radius: 50%; background: var(--good); box-shadow: 0 0 0 0 var(--good); animation: beat 2s ease-out infinite; }
+.live.off { background: var(--bad); animation: none; }
+@keyframes beat { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--good) 60%, transparent); } 100% { box-shadow: 0 0 0 7px transparent; } }
+@media (prefers-reduced-motion: reduce) { .live { animation: none; } }
+main { max-width: 1280px; margin: 0 auto; padding: 16px; }
+.banner { border: 1px solid var(--warn); color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent);
+  border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.card, .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.card .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .4px; }
+.card .v { font-size: 22px; font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.card .s { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.bar { height: 6px; border-radius: 3px; background: var(--chip); overflow: hidden; margin-top: 8px; }
+.bar > i { display: block; height: 100%; background: var(--accent); }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+.panel { margin-bottom: 16px; }
+.panel h2 { font-size: 14px; margin: 0 0 10px; display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+.panel h2 small { color: var(--muted); font-weight: 400; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; color: var(--muted); font-size: 12px; margin-top: 6px; }
+.legend span::before { content: ""; display: inline-block; width: 10px; height: 3px; margin-right: 6px;
+  vertical-align: middle; background: var(--c); }
+svg { width: 100%; height: 240px; display: block; }
+.scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+th { color: var(--muted); font-weight: 500; font-size: 12px; position: sticky; top: 0; background: var(--panel); }
+td.l, th.l { text-align: left; }
+td.reason { text-align: left; white-space: normal; color: var(--muted); min-width: 180px; max-width: 360px; }
+.chip { display: inline-block; padding: 1px 8px; border-radius: 999px; background: var(--chip); font-size: 12px; }
+.chip.active { color: var(--good); } .chip.dying, .chip.dead { color: var(--bad); } .chip.warmup { color: var(--warn); }
+.pos { color: var(--good); } .neg { color: var(--bad); } .muted { color: var(--muted); }
+.two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.panel { min-width: 0; }
+@media (max-width: 860px) { .two { grid-template-columns: 1fr; } }
+.toggle { margin-left: auto; color: var(--muted); font-size: 12px; font-weight: 400; }
+.empty { color: var(--muted); padding: 8px 0; }
+.help { max-width: 1280px; margin: 16px auto 0; padding: 0 16px; }
+.help details { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; }
+.help summary { cursor: pointer; font-weight: 600; }
+.help .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 6px 24px; margin-top: 10px; }
+.help p { margin: 4px 0; color: var(--muted); }
+.help b { color: var(--ink); }
+[title] { cursor: help; }
+button[title], label[title], input[title] { cursor: pointer; }
+</style>
+</head>
+<body>
+<header>
+  <h1>BTC Survivor</h1>
+  <div class="tabs" id="tabs"></div>
+  <div class="updated"><span class="live" id="live"></span><span id="updated">connecting</span></div>
+</header>
+<div class="help"><details id="help"><summary>How to read this page</summary>
+  <div class="grid">
+    <p><b>Runs.</b> Each tab is a separate experiment. A has retail fees and $10,000 per bot, B has a 5 bps fee and $10,000, and C has retail fees and $500 so deaths come within weeks. All three start from identical bots.</p>
+    <p><b>Learners and twins.</b> Each run has 20 small learning bots. Each one has a coin flip twin that trades at the same moments but picks long or short by coin toss, so comparing the two separates skill from luck.</p>
+    <p><b>Money.</b> Every bot starts with paper money, pays real fees on a fixed $500 trade and a little rent each healthy minute, and dies when it cannot afford one more round trip and a day of rent. A dead bot is replaced in the same minute.</p>
+    <p><b>Feed.</b> Bots only act in healthy minutes, when the Coinbase data is connected, fresh and consistent. Recovering or stale means everything is paused.</p>
+    <p><b>Stage.</b> A launch collects 6 hours of history, waits for 30 minute outcomes to mature so predictions can be graded, trains every bot through a warmup, and only then lets them trade.</p>
+    <p><b>Forced trades.</b> At these fees a bot's prediction almost never clears the cost of trading, so most trades are forced trades made every 12 hours to keep the bots gathering experience.</p>
+    <p><b>Skill.</b> The headline result. It is the correlation between the bots' average prediction and what Bitcoin actually did, scored once per 30 minutes after the first day, with a plain linear model beside it. It is only final on day 28.</p>
+    <p><b>Benchmarks.</b> Buy and hold put all the money into Bitcoin at launch. Matched bought only $500 of it. Cash is start money minus rent, the bot that never trades.</p>
+    <p><b>Freshness.</b> The page refreshes every 10 seconds. Bot rows come from a save every 5 minutes, and all times are UTC.</p>
+  </div></details></div>
+<main id="main"><p class="empty">Loading the runs.</p></main>
+<script>
+"use strict";
+const REFRESH_MS = 10000;
+let state = null;
+let pageVersion = null;
+let lastOk = null;
+let nextAt = Date.now();
+let current = null;
+let showTwins = false;
+try { current = localStorage.getItem("run"); showTwins = localStorage.getItem("twins") === "1"; } catch (e) {}
+
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const usd = (v, d = 2) => v == null ? "–" : (v < 0 ? "-$" : "$") + num(Math.abs(v), d);
+const num = (v, d = 2) => v == null ? "–" : Number(v).toLocaleString(undefined, {minimumFractionDigits: d, maximumFractionDigits: d});
+const pct = v => v == null ? "–" : (100 * v).toFixed(0) + "%";
+const signed = (v, d = 2) => v == null ? "–" : (v > 0 ? "+" : "") + num(v, d);
+const cls = v => v == null || v === 0 ? "" : v > 0 ? "pos" : "neg";
+const ago = s => s == null ? "" : s < 90 ? `${Math.round(s)} s ago` : s < 5400 ? `${Math.round(s / 60)} min ago` : `${(s / 3600).toFixed(1)} h ago`;
+const time = ts => ts ? ts.replace("T", " ").slice(5, 16) : "";
+
+async function load() {
+  nextAt = Date.now() + REFRESH_MS;
+  try {
+    const r = await fetch("/api/state", {cache: "no-store"});
+    const fresh = await r.json();
+    if (pageVersion && fresh.page_version !== pageVersion) { location.reload(); return; }
+    pageVersion = fresh.page_version;
+    state = fresh;
+    lastOk = Date.now();
+  } catch (e) {
+    lastOk = null;
+  }
+  render();
+  tick();
+}
+
+function tick() {
+  const live = document.getElementById("live"), label = document.getElementById("updated");
+  const wait = Math.max(0, Math.ceil((nextAt - Date.now()) / 1000));
+  if (lastOk == null) {
+    live.className = "live off";
+    label.textContent = state ? `cannot reach the dashboard server, retrying in ${wait} s` : "cannot reach the dashboard server";
+  } else {
+    live.className = "live";
+    label.textContent = `live · updated ${new Date(lastOk).toISOString().slice(11, 19)} UTC · next in ${wait} s`;
+  }
+}
+
+function render() {
+  if (!state) return;
+  const names = state.runs.map(r => r.name);
+  if (!names.includes(current)) current = names[0];
+  document.getElementById("tabs").innerHTML = state.runs.map(r =>
+    `<button class="tab ${r.name === current ? "on" : ""}" data-run="${esc(r.name)}">${esc(r.name)}</button>`).join("");
+  document.querySelectorAll(".tab").forEach(b => b.onclick = () => {
+    current = b.dataset.run; try { localStorage.setItem("run", current); } catch (e) {} render();
+  });
+  const run = state.runs.find(r => r.name === current);
+  const scrolled = [...document.querySelectorAll("#main .scroll")].map(el => el.scrollLeft);
+  document.getElementById("main").innerHTML = run.error ? `<div class="banner">${esc(run.error)}</div>` : view(run);
+  document.querySelectorAll("#main .scroll").forEach((el, i) => { el.scrollLeft = scrolled[i] || 0; });
+  const t = document.getElementById("twins");
+  if (t) t.onchange = () => { showTwins = t.checked; try { localStorage.setItem("twins", showTwins ? "1" : "0"); } catch (e) {} render(); };
+}
+
+function view(run) {
+  const s = run.summary, c = run.config;
+  const feedColor = s.feed_state === "healthy" ? "var(--good)" : s.feed_state === "stopped" ? "var(--muted)" : "var(--warn)";
+  const learners = run.bots.filter(b => b.kind === "learner");
+  const active = learners.filter(b => b.state === "active").length;
+  const histPct = Math.min(1, run.history.valid / c.history_minutes);
+  const labelPct = Math.min(1, run.history.labels / run.history.labels_needed);
+  const warmPct = learners.length ? active / learners.length : 0;
+  const stageBar = histPct < 1 ? histPct : labelPct < 1 ? labelPct : warmPct;
+  const sk = run.skill.population, lin = run.skill.linear;
+  return `
+  ${s.warnings.map(w => `<div class="banner">${esc(w)}</div>`).join("")}
+  <div class="cards">
+    <div class="card"><div class="k" title="Whether the live Coinbase data is trustworthy. Bots only act in healthy minutes.">Feed</div>
+      <div class="v"><span class="dot" style="background:${feedColor}"></span>${esc(s.feed_state)}</div>
+      <div class="s">BTC ${s.price ? usd(s.price) : "unknown"} ${s.price ? "· " + ago(s.price_age_s) : ""}</div></div>
+    <div class="card"><div class="k" title="History, then outcomes maturing, then training warmup, then trading. The bar shows the current step.">Stage</div><div class="v" style="font-size:15px">${esc(s.stage)}</div>
+      <div class="bar"><i style="width:${(100 * stageBar).toFixed(0)}%"></i></div>
+      <div class="s">${num(s.healthy_days, 2)} healthy days since launch</div></div>
+    <div class="card"><div class="k" title="The average money of the living learners, against what each one started with.">Average learner</div><div class="v">${usd(s.mean_equity)}</div>
+      <div class="s">${s.living} learners alive, each started with ${usd(c.start_equity, 0)} · ${s.deaths} deaths so far</div></div>
+    <div class="card"><div class="k" title="Simple alternatives started with the same money. Buy and hold put all of it into Bitcoin at launch, matched bought only $500 of it, cash only paid rent.">Buy and hold</div><div class="v">${usd(s.buy_hold)}</div>
+      <div class="s">matched ${usd(s.matched)} · cash ${usd(s.cash)} · twins ${usd(s.twin_mean)}</div></div>
+    <div class="card"><div class="k" title="Correlation between the bots' average prediction and the actual 30 minute move, one reading per window after the first day. Final on day 28.">Skill so far</div><div class="v">${sk ? signed(sk.corr, 3) : "–"}</div>
+      <div class="s">population correlation over ${sk ? sk.windows : 0} windows · linear ${lin ? signed(lin.corr, 3) : "–"} · descriptive until the final day</div></div>
+  </div>
+  <div class="panel"><h2>Equity over time <small>mean learner against the benchmarks, fee ${num(c.fee_bps, 0)} bps</small></h2>
+    ${chart(run.equity_curve, c.start_equity)}
+    <div class="legend"><span style="--c:var(--c1)">mean learner</span><span style="--c:var(--c4)">twin mean</span>
+      <span style="--c:var(--c2)">buy and hold</span><span style="--c:var(--c5)">matched</span><span style="--c:var(--c3)">cash</span></div></div>
+  <div class="panel"><h2>Bots <small>from the checkpoint ${ago(s.checkpoint_age_s)}, positions marked at the live price</small>
+    <label class="toggle"><input type="checkbox" id="twins" ${showTwins ? "checked" : ""}> show coin flip twins</label></h2>
+    <div class="scroll">${botTable(run.bots.filter(b => showTwins || b.kind === "learner"))}</div></div>
+  <div class="two">
+    <div class="panel"><h2>Recent decisions <small>opens, closes, flips and holds</small></h2><div class="scroll">${decisions(run.decisions)}</div></div>
+    <div class="panel"><h2>Recent fills</h2><div class="scroll">${fills(run.fills)}</div></div>
+  </div>
+  <div class="panel"><h2>Feed events</h2><div class="scroll">${events(run.events)}</div></div>`;
+}
+
+function chart(rows, start) {
+  if (rows.length < 2) return `<p class="empty">The curve starts after the first two healthy minutes.</p>`;
+  const keys = [["living_mean_equity", "var(--c1)"], ["twin_mean_equity", "var(--c4)"], ["buy_hold_equity", "var(--c2)"],
+    ["matched_equity", "var(--c5)"], ["cash_equity", "var(--c3)"]];
+  const vals = rows.flatMap(r => keys.map(([k]) => r[k]).filter(v => v != null));
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  const minSpan = 0.01 * start;  // never stretch moves smaller than 1 percent of start money to full height
+  if (hi - lo < minSpan) { const mid = (hi + lo) / 2; lo = mid - minSpan / 2; hi = mid + minSpan / 2; }
+  const digits = hi - lo < 50 ? 2 : 0;
+  const main = document.getElementById("main");
+  const W = Math.max(300, Math.min(1250, (main ? main.clientWidth : 1000) - 30)), H = 240, P = 52, x = i => P + (W - P - 8) * (rows.length < 2 ? 0 : i / (rows.length - 1)),
+    y = v => 8 + (H - 30) * (1 - (v - lo) / (hi - lo));
+  const ticks = [lo, (lo + hi) / 2, hi].map(v => `<text x="${P - 6}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${usd(v, digits)}</text>
+    <line x1="${P}" x2="${W - 8}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/>`).join("");
+  const lines = keys.map(([k, col]) => {
+    const pts = rows.map((r, i) => r[k] == null ? null : `${x(i).toFixed(1)},${y(r[k]).toFixed(1)}`).filter(Boolean);
+    return pts.length ? `<polyline fill="none" stroke="${col}" stroke-width="2" points="${pts.join(" ")}"/>` : "";
+  }).join("");
+  const first = time(rows[0].ts), last = time(rows[rows.length - 1].ts);
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Equity over time">${ticks}${lines}
+    <text x="${P}" y="${H - 4}" font-size="11" fill="var(--muted)">${first}</text>
+    <text x="${W - 8}" y="${H - 4}" font-size="11" fill="var(--muted)" text-anchor="end">${last}</text></svg>`;
+}
+
+function stateChip(b) {
+  if (b.state === "warmup" && b.warmup_minutes) {
+    return `<span class="chip warmup">warmup ${pct(Math.min(1, b.trained_minutes / b.warmup_minutes))}</span>`;
+  }
+  return `<span class="chip ${esc(b.state)}">${esc(b.state)}</span>`;
+}
+
+function botTable(bots) {
+  if (!bots.length) return `<p class="empty">No bots yet. The first checkpoint is written a few minutes after launch.</p>`;
+  bots.sort((a, b) => (a.kind === b.kind ? 0 : a.kind === "learner" ? -1 : 1) || a.slot - b.slot);
+  return `<table><thead><tr><th>id</th><th class="l" title="A learner predicts and decides. A twin copies its learner's timing with a coin flip direction.">kind</th>
+    <th title="0 is an original bot, 1 is the child of a survivor, 2 a grandchild">gen</th>
+    <th class="l" title="Warmup bots learn but cannot trade yet. Active bots can trade. Dying bots ran out of money and are closing their last position.">state</th>
+    <th title="Money now, with any open position valued at the live price">equity</th><th title="Gain or loss since this bot was born">P&amp;L</th>
+    <th title="Completed round trips">trades</th><th title="Share of round trips that made money after costs">win</th><th title="Total fees paid">fees</th>
+    <th class="l" title="Flat, or long or short at the entry price">position</th>
+    <th title="Correlation of this bot's recent predictions with what actually happened">skill</th>
+    <th title="Hours until this bot must make its next forced trade, counting warmup">forced in</th>
+    <th title="How long its money lasts at its loss rate over the last day">days left</th>
+    <th class="l" title="Its latest decision. Hover a row's entry for the reasoning.">last decision</th></tr></thead><tbody>${bots.map(b => `<tr>
+    <td>${b.bot_id}</td><td class="l">${b.kind}</td><td>${b.generation}</td><td class="l">${stateChip(b)}</td>
+    <td>${usd(b.equity)}</td><td class="${cls(b.pnl)}">${b.pnl == null ? "–" : (b.pnl > 0 ? "+" : "") + usd(b.pnl)}</td><td>${b.trades}</td><td>${pct(b.win_rate)}</td>
+    <td>${usd(b.fees)}</td><td class="l">${esc(b.position)}${b.entry_price ? ` <span class="muted">@ ${num(b.entry_price)}</span>` : ""}</td>
+    <td>${b.skill_corr == null ? "–" : signed(b.skill_corr, 3)}</td><td>${b.forced_in_hours == null ? "–" : num(b.forced_in_hours, 1) + " h"}</td>
+    <td>${b.days_left == null ? "–" : num(b.days_left, 0)}</td>
+    <td class="reason" title="${esc(b.last_reason)}">${b.last_action ? `<b>${esc(b.last_action)}</b> ${esc(time(b.last_decision_ts))}` : "–"}</td></tr>`).join("")}</tbody></table>`;
+}
+
+function decisions(rows) {
+  if (!rows.length) return `<p class="empty">No trading decisions yet. Learners trade after warmup.</p>`;
+  return `<table><thead><tr><th class="l">time UTC</th><th>bot</th><th class="l">action</th><th>prediction</th><th>needed</th><th class="l">reason</th></tr></thead><tbody>
+    ${rows.map(r => `<tr><td class="l">${esc(time(r.ts))}</td><td>${r.bot_id}${r.origin === "control" ? " <span class=\"muted\">twin</span>" : ""}</td>
+    <td class="l">${esc(r.action)}${r.forced ? " <span class=\"chip\">forced</span>" : ""}</td><td>${signed(r.prediction_bps, 1)} bps</td>
+    <td>${num(r.required_edge_bps, 0)} bps</td><td class="reason">${esc(r.reason)}</td></tr>`).join("")}</tbody></table>`;
+}
+
+function fills(rows) {
+  if (!rows.length) return `<p class="empty">No fills yet.</p>`;
+  return `<table><thead><tr><th class="l">time UTC</th><th>bot</th><th class="l">leg</th><th class="l">side</th><th>price</th><th>fee</th><th class="l">status</th></tr></thead><tbody>
+    ${rows.map(r => `<tr><td class="l">${esc(time(r.filled_at || r.decided_at))}</td><td>${r.bot_id}</td><td class="l">${esc(r.leg)}</td>
+    <td class="l">${esc(r.side)}</td><td>${num(r.price)}</td><td>${num(r.fee)}</td>
+    <td class="l">${r.status === "filled" ? esc(r.reason) : `<span class="neg">${esc(r.status)} ${esc(r.reason)}</span>`}</td></tr>`).join("")}</tbody></table>`;
+}
+
+function events(rows) {
+  if (!rows.length) return `<p class="empty">No feed events yet.</p>`;
+  return `<table><thead><tr><th class="l">time UTC</th><th class="l">event</th><th class="l">detail</th></tr></thead><tbody>
+    ${rows.map(r => `<tr><td class="l">${esc(time(r.ts))}</td><td class="l">${esc(r.kind)}</td><td class="reason">${esc(r.detail)}</td></tr>`).join("")}</tbody></table>`;
+}
+
+const help = document.getElementById("help");
+try { help.open = localStorage.getItem("help") !== "closed"; } catch (e) { help.open = true; }
+help.addEventListener("toggle", () => { try { localStorage.setItem("help", help.open ? "open" : "closed"); } catch (e) {} });
+
+load();
+setInterval(() => { if (!document.hidden && Date.now() >= nextAt) load(); else tick(); }, 1000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
+window.addEventListener("resize", render);
+</script>
+</body>
+</html>

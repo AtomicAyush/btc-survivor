@@ -23,6 +23,9 @@ test = ["pytest==9.1.1"]
 [project.scripts]
 btc_survivor = "btc_survivor.__main__:main"
 
+[tool.setuptools.package-data]
+btc_survivor = ["dashboard.html"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

@@ -1,0 +1,2 @@
+# Laptop only, for scripts/plot_results.py. Never installed on the Raspberry Pi.
+matplotlib==3.10.7
