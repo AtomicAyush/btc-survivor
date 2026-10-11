@@ -50,6 +50,21 @@ main { max-width: 1280px; margin: 0 auto; padding: 16px; }
 .legend span::before { content: ""; display: inline-block; width: 10px; height: 3px; margin-right: 6px;
   vertical-align: middle; background: var(--c); }
 svg { width: 100%; height: 240px; display: block; }
+.chartbox { position: relative; }
+.chartbox svg { touch-action: pan-y; cursor: crosshair; }
+.chartbox svg:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.tip { position: absolute; top: 6px; pointer-events: none; background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  padding: 8px 10px; font-size: 12px; min-width: 190px; box-shadow: 0 6px 18px color-mix(in srgb, var(--ink) 14%, transparent); z-index: 1; }
+.tip .t { color: var(--muted); margin-bottom: 4px; }
+.lines { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px 18px; margin-top: 12px; }
+.lines div { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 2px 8px; align-items: start; font-size: 12.5px; line-height: 1.45; }
+.lines i { grid-row: span 2; height: 3px; margin-top: 8px; background: var(--c); border-radius: 2px; }
+.lines b { font-weight: 600; }
+.lines span { color: var(--muted); }
+.reading { margin: 12px 0 0; font-size: 12.5px; color: var(--muted); line-height: 1.5; max-width: 100ch; }
+.reading b { color: var(--ink); font-weight: 600; }
+.tip .r { display: flex; justify-content: space-between; gap: 14px; font-variant-numeric: tabular-nums; line-height: 1.6; }
+.tip .r i { display: inline-block; width: 10px; height: 3px; margin-right: 6px; vertical-align: middle; background: var(--c); }
 .scroll { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 th, td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
@@ -154,6 +169,7 @@ function render() {
   const scrolled = [...document.querySelectorAll("#main .scroll")].map(el => el.scrollLeft);
   document.getElementById("main").innerHTML = run.error ? `<div class="banner">${esc(run.error)}</div>` : view(run);
   document.querySelectorAll("#main .scroll").forEach((el, i) => { el.scrollLeft = scrolled[i] || 0; });
+  attachHover();
   const t = document.getElementById("twins");
   if (t) t.onchange = () => { showTwins = t.checked; try { localStorage.setItem("twins", showTwins ? "1" : "0"); } catch (e) {} render(); };
 }
@@ -186,8 +202,7 @@ function view(run) {
   </div>
   <div class="panel"><h2>Equity over time <small>mean learner against the benchmarks, fee ${num(c.fee_bps, 0)} bps</small></h2>
     ${chart(run.equity_curve, c.start_equity)}
-    <div class="legend"><span style="--c:var(--c1)">mean learner</span><span style="--c:var(--c4)">twin mean</span>
-      <span style="--c:var(--c2)">buy and hold</span><span style="--c:var(--c5)">matched</span><span style="--c:var(--c3)">cash</span></div></div>
+    ${lineGuide(run)}</div>
   <div class="panel"><h2>Bots <small>from the checkpoint ${ago(s.checkpoint_age_s)}, positions marked at the live price</small>
     <label class="toggle"><input type="checkbox" id="twins" ${showTwins ? "checked" : ""}> show coin flip twins</label></h2>
     <div class="scroll">${botTable(run.bots.filter(b => showTwins || b.kind === "learner"))}</div></div>
@@ -198,10 +213,15 @@ function view(run) {
   <div class="panel"><h2>Feed events</h2><div class="scroll">${events(run.events)}</div></div>`;
 }
 
+const SERIES = [["living_mean_equity", "var(--c1)", "mean learner"], ["twin_mean_equity", "var(--c4)", "twin mean"],
+  ["buy_hold_equity", "var(--c2)", "buy and hold"], ["matched_equity", "var(--c5)", "matched"], ["cash_equity", "var(--c3)", "cash"]];
+let CH = null;  // the drawn chart's rows and scales, so the hover readout can map the pointer to a point
+let hoverAt = null;  // the hovered point as a fraction across the plot, kept through refreshes
+
 function chart(rows, start) {
+  CH = null;
   if (rows.length < 2) return `<p class="empty">The curve starts after the first two healthy minutes.</p>`;
-  const keys = [["living_mean_equity", "var(--c1)"], ["twin_mean_equity", "var(--c4)"], ["buy_hold_equity", "var(--c2)"],
-    ["matched_equity", "var(--c5)"], ["cash_equity", "var(--c3)"]];
+  const keys = SERIES;
   const vals = rows.flatMap(r => keys.map(([k]) => r[k]).filter(v => v != null));
   let lo = Math.min(...vals), hi = Math.max(...vals);
   const minSpan = 0.01 * start;  // never stretch moves smaller than 1 percent of start money to full height
@@ -217,9 +237,86 @@ function chart(rows, start) {
     return pts.length ? `<polyline fill="none" stroke="${col}" stroke-width="2" points="${pts.join(" ")}"/>` : "";
   }).join("");
   const first = time(rows[0].ts), last = time(rows[rows.length - 1].ts);
-  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Equity over time">${ticks}${lines}
+  CH = {rows, x, y, W, H, P};
+  return `<div class="chartbox" id="chartbox"><svg viewBox="0 0 ${W} ${H}" role="img" tabindex="0"
+    aria-label="Equity over time. Move the pointer or use the arrow keys to read exact values.">${ticks}${lines}
     <text x="${P}" y="${H - 4}" font-size="11" fill="var(--muted)">${first}</text>
-    <text x="${W - 8}" y="${H - 4}" font-size="11" fill="var(--muted)" text-anchor="end">${last}</text></svg>`;
+    <text x="${W - 8}" y="${H - 4}" font-size="11" fill="var(--muted)" text-anchor="end">${last}</text><g id="hover"></g></svg>
+    <div class="tip" id="tip" hidden></div></div>`;
+}
+
+function pointAt(fraction) {
+  const span = CH.W - CH.P - 8;
+  const i = Math.round(((fraction * CH.W) - CH.P) / span * (CH.rows.length - 1));
+  return Math.max(0, Math.min(CH.rows.length - 1, i));
+}
+
+function drawHover(i) {
+  const box = document.getElementById("chartbox");
+  if (!box || !CH) return;
+  const svg = box.querySelector("svg"), tip = document.getElementById("tip"), row = CH.rows[i], px = CH.x(i);
+  const dots = SERIES.filter(([k]) => row[k] != null).map(([k, col]) =>
+    `<circle cx="${px}" cy="${CH.y(row[k])}" r="4" fill="${col}" stroke="var(--panel)" stroke-width="2"/>`).join("");
+  document.getElementById("hover").innerHTML =
+    `<line x1="${px}" x2="${px}" y1="8" y2="${CH.H - 22}" stroke="var(--muted)" stroke-dasharray="3 3"/>${dots}`;
+  tip.innerHTML = `<div class="t">${esc(row.ts.replace("T", " ").slice(0, 16))} UTC${row.btc_mid ? ` · BTC ${usd(row.btc_mid)}` : ""}</div>` +
+    SERIES.filter(([k]) => row[k] != null).map(([k, col, name]) =>
+      `<div class="r"><span><i style="--c:${col}"></i>${name}</span><span>${usd(row[k])}</span></div>`).join("");
+  tip.hidden = false;
+  const m = svg.getScreenCTM(), width = box.getBoundingClientRect().width;
+  const left = m ? px * m.a + m.e - box.getBoundingClientRect().left : px / CH.W * width;
+  tip.style.left = (left + 14 + tip.offsetWidth > width ? Math.max(0, left - 14 - tip.offsetWidth) : left + 14) + "px";
+}
+
+function clearHover() {
+  hoverAt = null;
+  const g = document.getElementById("hover"), tip = document.getElementById("tip");
+  if (g) g.innerHTML = "";
+  if (tip) tip.hidden = true;
+}
+
+function attachHover() {
+  const box = document.getElementById("chartbox");
+  if (!box || !CH) return;
+  const svg = box.querySelector("svg");
+  const follow = e => {
+    const m = svg.getScreenCTM();
+    if (!m) return;
+    const point = svg.createSVGPoint();
+    point.x = e.clientX;
+    point.y = e.clientY;
+    hoverAt = Math.max(0, Math.min(1, point.matrixTransform(m.inverse()).x / CH.W));
+    drawHover(pointAt(hoverAt));
+  };
+  svg.addEventListener("pointermove", follow);
+  svg.addEventListener("pointerdown", follow);
+  svg.addEventListener("pointerleave", e => { if (e.pointerType === "mouse") clearHover(); });
+  svg.addEventListener("blur", clearHover);
+  svg.addEventListener("keydown", e => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const last = CH.rows.length - 1;
+    const i = hoverAt == null ? last : pointAt(hoverAt);
+    const next = Math.max(0, Math.min(last, i + (e.key === "ArrowRight" ? 1 : -1)));
+    hoverAt = CH.x(next) / CH.W;
+    drawHover(next);
+  });
+  if (hoverAt != null) drawHover(pointAt(hoverAt));
+}
+
+function lineGuide(run) {
+  const c = run.config, sameAsBuyHold = c.notional >= c.start_equity;
+  const items = [
+    ["var(--c1)", "Mean learner", `The average money of the ${run.summary.living || 20} learning bots. How are the bots doing?`],
+    ["var(--c4)", "Twin mean", "The average money of the coin flip twins. They trade at the same moments and pay the same costs, but a coin picks long or short. The same bots without a brain."],
+    ["var(--c2)", "Buy and hold", `All ${usd(c.start_equity, 0)} put into Bitcoin at launch, one fee paid, never sold. What did Bitcoin itself do?`],
+    ["var(--c5)", "Matched", sameAsBuyHold ? `Bought ${usd(c.notional, 0)} of Bitcoin at launch and never sold. In this run that is all the money, so it is the same line as buy and hold.`
+      : `Bought only ${usd(c.notional, 0)} of Bitcoin at launch, one trade's worth, and kept the rest as cash. What would holding one ${usd(c.notional, 0)} position have done?`],
+    ["var(--c3)", "Cash", `Start money minus rent of ${usd(c.rent_per_day)} a day, never trading. What does doing nothing cost?`],
+  ];
+  return `<div class="lines">${items.map(([col, name, text]) => `<div><i style="--c:${col}"></i><b>${name}</b><span>${text}</span></div>`).join("")}</div>
+    <p class="reading"><b>Blue against purple</b> is the comparison that matters. Both pay the same costs at the same times, so a lasting gap means the learners pick direction better than a coin.
+    <b>Blue against green</b> shows whether trading beats sitting still, and at retail fees it will not. <b>Orange and pink</b> only show what Bitcoin did. Move the pointer over the chart to read exact values.</p>`;
 }
 
 function stateChip(b) {

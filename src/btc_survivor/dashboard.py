@@ -54,6 +54,7 @@ def _state(conn, cfg: Config, name: str, now_ms: int) -> dict:
     return {
         "name": name, "summary": data.summary(conn, cfg, meta, rows, live, now_ms), "bots": rows,
         "config": {"fee_bps": cfg.costs.taker_fee_bps, "start_equity": cfg.trading.start_equity,
+                   "rent_per_day": cfg.costs.daily_running_cost,
                    "notional": cfg.trading.notional, "horizon_minutes": cfg.time.horizon_minutes,
                    "history_minutes": cfg.time.history_minutes_required},
         "history": {"valid": meta["valid_total"] if meta else 0, "labels": meta["label_scale_n"] if meta else 0,
