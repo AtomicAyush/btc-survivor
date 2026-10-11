@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "btc-survivor"
+version = "0.1.0"
+description = "A population of tiny neural nets that paper trade Bitcoin on live keyless market data"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Ayush Kansal" }]
+requires-python = ">=3.11"
+dependencies = [
+    "numpy==2.4.6; python_version < '3.12'",
+    "numpy==2.5.3; python_version >= '3.12'",
+    "websockets==17.2",
+]
+
+[project.optional-dependencies]
+test = ["pytest==9.1.1"]
+
+[project.scripts]
+btc_survivor = "btc_survivor.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

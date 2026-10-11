@@ -30,3 +30,6 @@ dist/
 .DS_Store
 .idea/
 .vscode/
+
+# Local configuration copied from config.example.toml
+config.toml
