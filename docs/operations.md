@@ -10,6 +10,8 @@ This guide covers running BTC Survivor day to day on the MacBook that hosts the 
 * `data/run_a/stdout.log` is everything the process prints. It holds the same lines as the log file and is never rotated.
 * `data/dashboard.log` is the dashboard's output.
 * `data/raw` holds raw feed recordings, and `data/record_feed.log` holds the recorder's minute lines.
+* `data/soak` holds one folder per soak run, as the soak section below explains.
+* `data/drill` holds the separate drill run, with its own config, database and `stdout.log`.
 
 Nothing under `data/` is tracked by git. A consistent copy of a live database can be taken without stopping the run.
 
@@ -188,31 +190,91 @@ df -h .
 
 The schema and its retention rules are in [section 12 of the plan](../PLAN.md#12-storage-schema).
 
-## Kill and pause drills
+## The soak test
 
-Phase 10 runs two drills on the live system, to show that a hard crash and a frozen process both recover. Each adds a gap to the run it is done on, with the costs listed above, so each is done once, on purpose, and noted in the results. Set `RUN` to the chosen run first, run C in this example.
+`scripts/soak_test.py` replays every recording in `data/raw`, joined end to end, and then 120 hours of synthetic data through the real engine. It uses `configs/soak_plumbing.toml`, which is plumbing only and never a strategy setting. That file differs from the example only in its 4 dollar start equity and notional, its 1 hour forced timer, its parent requirements of 2 hours and 2 trades and its data folder, so deaths, mutated births and new generations happen within a few replayed days. The synthetic part resyncs about every two hours with a full size book snapshot of about 4.5 MB, and after 24 synthetic hours it drops the connection for 15 minutes, longer than `max_resume_gap_minutes`, so the gap flatten closes real positions. Replay results are never used to choose, tune, or rank strategies.
 
 ```bash
-RUN=run_c
-
-# kill drill, then restart after a chosen pause
-kill -9 "$(pgrep -f "configs/$RUN.toml run")"
-nohup .venv311/bin/python -m btc_survivor --config configs/$RUN.toml run >> data/$RUN/stdout.log 2>&1 &
-
-# pause drill, longer than stale_after_seconds
-PID=$(pgrep -f "configs/$RUN.toml run")
-kill -STOP "$PID"
-sleep 30
-kill -CONT "$PID"
+nice -n 19 .venv311/bin/python scripts/soak_test.py
+nice -n 19 .venv/bin/python scripts/soak_test.py --out data/soak/python313_run
 ```
 
-After the kill drill the log shows a `resume` event with `restored the checkpoint from`, and when the process was down for more than 10 minutes a second `resume` event at the first healthy minute with `restart_flatten`. After the pause drill the run finds either a silent socket, which goes stale and reconnects, or a backlog of old messages, whose timestamps trip `clock_skew`. Either way the feed passes through recovering and turns healthy after a full clean minute, and a pause longer than 10 minutes also flattens with `gap_flatten`. Both drills check the same three things.
+* The soak only reads `data/raw`. The newest recording, which the recorder may still be writing, is first copied up to its current size into the output folder and read to its last complete line.
+* Each run writes into a new folder under `data/soak`, named after its UTC start time unless `--out` names another new or empty folder. `report.json` holds the verdict and every number, `memory.csv` has one row per replayed hour, `soak.log` is the engine's log, and `db` is the replay database, which `explain` and `lineage` can read through a copy of the plumbing config whose `data_dir` points there.
+* The script reads the recordings and generates the synthetic data itself and pipes every line to a child process that holds only the engine, so the child's memory is what a live run holds. At the end of every replayed hour the child waits while the script reads its resident memory from outside.
+* The exit code is 0 when the soak passed, 1 when it failed and 3 when it was inconclusive.
 
-* The `resume` events are present and say what was restored or flattened.
-* The rent column of `status` grows by 1.16 dollars a day only for healthy minutes, so the downtime adds nothing.
-* `grep -c 'invariant violation' data/$RUN/stdout.log` prints 0.
+The plan's memory rule is that resident memory at the end is no more than 5 MB above memory at the end of the first replayed hour. Only a Linux reading from `/proc` decides it, because that is the number the live heartbeat shows on Linux. macOS keeps freed pages resident and gives them back in bursts, so on the Mac one run swings by tens of megabytes from hour to hour, and the verdict there is `inconclusive` unless the memory in use grew past the limit too. Memory in use is what the C allocator has handed out plus CPython's small object blocks, read inside the child. `report.json` also gives the largest growth among all later readings, how many of them were over the limit, the slope over the last replayed day, and on macOS the physical footprint. Memory in use that stays flat while resident memory moves means the allocators are holding freed memory, not that anything leaks.
 
-A true network cut affects the whole Mac and every run at once, so it is done only with explicit approval. The first night's sleep already took all four runs through the outage path. The drills are listed in [section 18 of the plan](../PLAN.md#18-build-phases).
+For CPU, the figure to compare with the 25 percent target is `engine_share_of_one_core_at_live_speed`, the engine's CPU time over the replayed time. The report also splits engine time into minute steps, database writes, full size snapshots and all other messages. A synthetic book update changes about 98 price levels where a real one changes about 10, so a synthetic message costs about three times a real one. None of these figures include the websocket and TLS work of a live process, which `ps` shows at about 1.3 to 1.8 percent of one core for each run on the Mac.
+
+The first full runs on 12 October replayed 132.2 hours, 12.2 of them real, with 3.4 million messages and 86 full size snapshots, once under Python 3.11.16 with numpy 2.4.6 and once under Python 3.13.1 with numpy 2.5.3.
+
+| Measure | Python 3.11 | Python 3.13 |
+| --- | --- | --- |
+| resident memory after the first hour and at the end | 90.1 and 106.7 MB | 94.2 and 99.6 MB |
+| physical footprint after the first hour and at the end | 76.4 and 69.8 MB | 78.6 and 62.5 MB |
+| memory in use after the first hour and at the end | 32.3 and 33.2 MB | 33.9 and 36.5 MB |
+| largest resident growth over the first hour | 37.1 MB | 36.2 MB |
+| peak resident memory | 127.2 MB | 130.4 MB |
+| engine share of one core at live speed | 0.043 percent | 0.035 percent |
+| one healthy minute step | 1.29 ms | 1.22 ms |
+| one full size snapshot | 22.5 ms | 18.8 ms |
+
+Both verdicts were `inconclusive`. Memory in use stayed within 2.6 MB of the first hour with a slope near zero over the last replayed day, and CPython's small object arenas rose from 28 or 29 to at most 41 during the bursts of reconnects in the real night and never rose again through 61 synthetic resyncs. So nothing grows without bound, but freed memory stays mapped after a burst. CPython maps its arenas the same way on Linux, so the roughly 11 MB they added after the first hour is likely to count there too, and the Linux run may fail the rule even though memory in use is flat. That run decides it. Resident memory peaked during those real bursts. That peak is about 50 MB lower than in a first soak whose replay process also read the recordings, but still above the 89 to 91 MB peaks of the live runs, which is why section 20 of the plan names the Kraken adapter or a streaming parse as the fixes if the Pi shows too little headroom under 150 MB. The books held throughout, with 61,680 engine checks at equity snapshots, 5,320 hourly checks and 7 ledger checks on the database, all without a failure. The replay saw 160 deaths, 103 from fees and 57 from rent, 73 mutated births with a lineage row each, generation 4 at most, and one synthetic outage after which `gap_flatten` closed 20 open positions.
+
+A run in a Linux arm64 container is still owed. Docker Desktop is installed on the Mac but not running, and starting it beside the live runs needs the owner's approval. Once it runs, this command repeats the soak under Python 3.13 with the pinned numpy, with the project mounted read only and only `data/soak` writable.
+
+```bash
+docker run --rm --platform linux/arm64 --cpus 2 --memory 2g \
+  -v "$PWD":/repo:ro -v "$PWD/data/soak":/repo/data/soak \
+  -e PYTHONPATH=/repo/src -e PYTHONDONTWRITEBYTECODE=1 -w /repo \
+  python:3.13-slim-trixie \
+  sh -c 'pip install --quiet --root-user-action=ignore numpy==2.5.3 websockets==17.2 && python scripts/soak_test.py'
+```
+
+Its memory reading comes from `/proc`, so its verdict is `passed` or `failed`. The 24 hour run on the Pi, with the checklist in [raspberry_pi.md](raspberry_pi.md#checklist-for-the-first-24-hours-on-the-pi), has the final word. The soak is specified in [section 18 of the plan](../PLAN.md#18-build-phases).
+
+## Kill and pause drills
+
+Phase 10 ran its drills on a separate drill run, never on runs A to D. A drill run has its own process, config and data folder, so killing or pausing it costs the live runs nothing. Its config is a copy of a run's config with only `data_dir` changed, and that path must be absolute, because a relative `data_dir` is resolved from the config's own folder, which here is `data/drill`. The `sh` wrapper writes the exit code into `stdout.log` when the process ends, so even a detached run records how it stopped.
+
+```bash
+mkdir -p data/drill
+sed "s|^data_dir = .*|data_dir = \"$PWD/data/drill/db\"|" configs/run_a.toml > data/drill/drill.toml
+.venv311/bin/python -m btc_survivor --config data/drill/drill.toml init-db
+nohup sh -c 'nice -n 19 .venv311/bin/python -m btc_survivor --config data/drill/drill.toml run; echo "exit=$? at $(date -u +%FT%TZ)"' >> data/drill/stdout.log 2>&1 &
+PID=$(pgrep -f '^.venv311/bin/python -m btc_survivor --config data/drill/drill.toml run')
+
+# kill drill, then start it again with the same nohup line after a short or a long pause
+kill -9 "$PID"
+
+# pause drill, longer than stale_after_seconds
+kill -STOP "$PID"; sleep 35; kill -CONT "$PID"
+
+# clean stop, after which the wrapper logs exit=0
+kill -TERM "$PID"
+```
+
+Each drill checks three things. The `resume` events are present and say what was restored or flattened. Rent grows by 1.16 dollars a day only for healthy minutes, which the checkpoints and the benchmark rows show, because each healthy minute adds one benchmark row and its cash baseline falls by one minute of rent. And `grep -c 'invariant violation' data/drill/stdout.log` prints 0.
+
+The drills on 12 October used a drill run with run A's settings and a fresh database.
+
+* A `kill -9` with 61 seconds down. The restart logged `resume restored the checkpoint from` with the checkpoint of `04:00:30`, the feed was healthy again at `04:04`, and the 4 minute gap flattened nothing. The healthy minute at `04:01` was rolled back with the rows that had not been committed, so 2 healthy minutes were charged rent over 5 minutes on the clock.
+* A 35 second SIGSTOP. The feed logged `stale no messages`, reconnected, took a new snapshot and was healthy again at `04:10`, and the stale and recovering minutes were charged no rent.
+* A restart after 45 minutes stopped, and a `kill -9` that kept the run down for 16 minutes, apart from one start that was killed again before it turned healthy. Each logged a second `resume` event at its first healthy minute, 48.0 and 19.0 minutes after the last one, with `restart_flatten sent 0 closing orders`. Between the checkpoints of `05:05:30` and `05:25:30` only the healthy minutes `05:24` and `05:25` were charged rent.
+* A SIGTERM. The log ended with `stopped cleanly, last checkpoint`, the write ahead log was left empty, and the wrapper logged `exit=0`, where each `kill -9` had logged `exit=137`.
+* Every checkpoint and equity snapshot balanced, and no `invariant_violation` event appeared. Runs A to D logged a healthy heartbeat every minute throughout.
+
+No drill bot held a position, so no restart has yet flattened one live. The soak's synthetic outage and the tests cover that path. Once the live bots trade, the kill drill is repeated on a drill run resumed from a read only copy of a live database and started more than 10 minutes after the copy's last checkpoint, so `restart_flatten` closes real positions while the live run itself is never touched.
+
+```bash
+mkdir -p data/drill_c/db
+sqlite3 -readonly data/run_c/btc_survivor.db ".backup data/drill_c/db/btc_survivor.db"
+sed "s|^data_dir = .*|data_dir = \"$PWD/data/drill_c/db\"|" configs/run_c.toml > data/drill_c/drill.toml
+```
+
+A true network cut affects the whole Mac and every run at once, so it is done only with explicit approval, and on the Pi the checklist pulls the cable instead. The first night's sleep already took all four runs through the outage path. The drills are listed in [section 18 of the plan](../PLAN.md#18-build-phases).
 
 ## Python and TLS
 

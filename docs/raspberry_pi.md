@@ -179,6 +179,7 @@ Two more points. Never start the same run on both machines, because two processe
 Before trusting the Pi with the runs, check these over the first day.
 
 * Memory at the end of 24 hours is no more than 5 MB above memory at the end of the first hour, read from the heartbeat lines.
+* Before the runs move, `python scripts/soak_test.py` runs once on the Pi. Its memory reading comes from `/proc`, so its verdict is `passed` or `failed`, and its peak shows how much room the largest snapshots leave under 150 MB, as [operations.md](operations.md#the-soak-test) explains.
 * Average CPU per run stays under 25 percent of one core, and `vcgencmd get_throttled` still prints `throttled=0x0`.
 * No `slow database write`, `slow minute step` or `invariant_violation` appears in the journal.
 * Pull the network cable for about a minute and plug it back in. The feed goes stale, reconnects and returns to Healthy. The feed events include `stale`, `disconnected`, `connected`, `snapshot`, `recovering` and `healthy`, the journal shows the `reconnecting in` lines, and no rent is charged for the outage.
