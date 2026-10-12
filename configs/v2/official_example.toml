@@ -1,0 +1,42 @@
+# A placeholder for the official figures that btc_survivor_v2 tape-check reads, PLAN_V2 section 4.9. It holds no figure.
+# Copy it to data/v2/checks/official_YYYY_MM_DD.toml, named by the New York session date, and fill it by hand the next
+# morning from Nasdaq's public historical quote page, opened in an ordinary browser. That folder is gitignored, and a
+# filled copy never goes into the repository. The tape check refuses every zero below, so each one must be replaced.
+#
+# consolidated_label is true when the page labels its volume as consolidated. When it is false, also copy each
+# symbol's volume from a second consolidated display into second_volume. The two must agree within 5 percent, and
+# volume is the figure the check uses. The symbols must be exactly those of [stock_feed] symbols in the run config.
+
+consolidated_label = true
+
+[symbols.AAPL]
+volume = 0               # the day's consolidated share volume
+close = 0.0              # the official close
+
+[symbols.MSFT]
+volume = 0
+close = 0.0
+
+[symbols.NVDA]
+volume = 0
+close = 0.0
+
+[symbols.AMZN]
+volume = 0
+close = 0.0
+
+[symbols.GOOGL]
+volume = 0
+close = 0.0
+
+[symbols.META]
+volume = 0
+close = 0.0
+
+[symbols.TSLA]
+volume = 0
+close = 0.0
+
+[symbols.QQQ]
+volume = 0
+close = 0.0

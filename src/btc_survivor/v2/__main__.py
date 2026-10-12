@@ -1,25 +1,59 @@
 """The btc_survivor_v2 command line of PLAN_V2 section 3. By default every subcommand prints only counts, pass or
 fail verdicts, hashes and timings, and --detail adds rows for the owner's own terminal. Subcommands of later phases
-are registered now and fail with exit code 2 until their phase builds them."""
+are registered now and fail with exit code 2 until their phase builds them, as init-db does for a stock run config
+until Phase 16.
+
+    btc_survivor_v2 init-db configs/v2/news.toml
+    btc_survivor_v2 news configs/v2/news.toml [--dry-run]
+    btc_survivor_v2 news-status [--days 7] [--detail [--samples 50]]
+    btc_survivor_v2 tape-check data/v2/raw_stocks data/v2/checks/official_YYYY_MM_DD.toml [--detail]
+"""
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from collections.abc import Callable
 from pathlib import Path
 
 from btc_survivor import __version__
 from btc_survivor.replay import NEVER_FOR_SELECTION
-from btc_survivor.v2 import local_secrets, localcheck, output, redact
+from btc_survivor.v2 import local_secrets, localcheck, news_status, output, redact
+from btc_survivor.v2.config import ConfigError, config_kind, load_news_config
 from btc_survivor.v2.local_secrets import SecretsError
 from btc_survivor.v2.localcheck import LocalCheckError
+from btc_survivor.v2.news import db as news_db
+from btc_survivor.v2.news import runner as news_runner
+from btc_survivor.v2.news.db import NewsDbError
+from btc_survivor.v2.sessions import CalendarError
+from btc_survivor.v2.stocks import tapecheck
+from btc_survivor.v2.stocks.tapecheck import TapeCheckError
+
+EXPECTED = (SecretsError, LocalCheckError, ConfigError, NewsDbError, TapeCheckError, CalendarError, OSError)
 
 
 def cmd_not_built(args: argparse.Namespace) -> int:
     """Refuse a subcommand whose phase has not been built yet."""
     print(f"error: {args.command} is not built yet", file=sys.stderr)
     return 2
+
+
+def cmd_init_db(args: argparse.Namespace) -> int:
+    """Create news.db from a news config, or check an existing one, under umask 077 so every folder it makes is the
+    owner's alone, printing only the verdict. A stock run database comes with the stock engine in Phase 16."""
+    if config_kind(args.config) != "news":
+        print("error: init-db for a stock run config is not built yet", file=sys.stderr)
+        return 2
+    config = load_news_config(args.config)
+    umask = os.umask(0o077)
+    try:
+        created = news_db.init_db(config)
+    finally:
+        os.umask(umask)
+    output.emit(output.Report("init db", (("verdict", True), ("kind", output.Word("news")),
+                                          ("database", output.Word("created" if created else "checked")))))
+    return 0
 
 
 def cmd_check_secrets(args: argparse.Namespace) -> int:
@@ -72,13 +106,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
-    _command(sub, "init-db", "create a run or news database with its meta.kind", positionals=("CONFIG",))
+    _command(sub, "init-db", "create a run or news database with its meta.kind", handler=cmd_init_db,
+             positionals=("CONFIG",))
     _command(sub, "stocks", "run the stock process for both runs", positionals=("S1", "S2"))
-    _command(sub, "news", "run the news process", positionals=("CONFIG",))
-    news_status = _command(sub, "news-status", "print the week one and data quality report", detail=True)
-    news_status.add_argument("--samples", type=int, default=0, help="sampled headlines, only with --detail")
-    _command(sub, "tape-check", "print the tape verdict from a raw recording alone",
-             positionals=("RECORDING", "OFFICIAL"), detail=True)
+    news_runner.add_arguments(_command(sub, "news", "run the news process", handler=news_runner.run,
+                                       description=news_runner.DESCRIPTION))
+    news_status.add_arguments(_command(sub, "news-status", "print the week one and data quality report",
+                                       handler=news_status.run, description=news_status.DESCRIPTION))
+    tapecheck.add_arguments(_command(sub, "tape-check", "print the tape verdict from a raw recording alone",
+                                     handler=tapecheck.run, description=tapecheck.DESCRIPTION))
     _command(sub, "evaluate", "print the criteria of PLAN_V2 section 11", positionals=("S1", "S2"), detail=True)
     _command(sub, "status", "print the state of both runs", positionals=("S1", "S2"), detail=True)
     _command(sub, "export", "write CSV files under data/v2/exports", positionals=("CONFIG",))
@@ -101,8 +137,8 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return args.handler(args)
-    except (SecretsError, LocalCheckError, OSError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
+    except EXPECTED as exc:
+        print(f"error: {redact.redact(str(exc))}", file=sys.stderr)
         return 2
 
 

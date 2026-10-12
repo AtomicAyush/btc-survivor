@@ -121,6 +121,7 @@ def test_a_recording_still_being_written_is_read_up_to_its_last_flush(tmp_path):
         raw.flush()
         assert file_holds([FAKE[FINNHUB].encode()], path)
         assert not file_holds([FAKE[ANTHROPIC].encode()], path)
+        fh.close()
 
 
 def test_every_member_of_a_gzip_file_is_read(tmp_path):

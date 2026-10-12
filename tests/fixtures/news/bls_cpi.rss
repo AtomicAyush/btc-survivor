@@ -1,0 +1,41 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <id>https://www.bls.gov/feed/cpi.rss</id>
+  <title>Consumer Price Index</title>
+  <subtitle>Fixture copy of the shape of the BLS release feed, with fictional text</subtitle>
+  <updated>2026-09-11T07:50:40.968-04:00</updated>
+  <logo>https://www.bls.gov/images/bls_emblem_trans.png</logo>
+  <icon>https://www.bls.gov/favicon.ico</icon>
+  <author>
+    <name>BLS</name>
+    <uri>https://www.bls.gov</uri>
+  </author>
+  <rights>Public Domain</rights>
+  <entry>
+    <title>Fixture CPI release headline for August 2026</title>
+    <link href="https://www.bls.gov/news.release/archives/cpi_09112026.htm"/>
+    <id>cpi-2026_09_11__07_50_40</id>
+    <content>A fictional summary of the August 2026 release, written by hand for the parser tests,   with
+      extra white space.</content>
+    <published>2026-09-11T07:50:40.968-04:00</published>
+    <updated>2026-09-11T07:50:40.968-04:00</updated>
+    <category>News Release</category>
+  </entry>
+  <entry>
+    <title>Fixture CPI release headline for July 2026</title>
+    <link href="https://www.bls.gov/news.release/archives/cpi_08122026.htm"/>
+    <id>cpi-2026_08_12__07_51_16</id>
+    <content>Another fictional summary.</content>
+    <published>2026-08-12T07:51:16.21-04:00</published>
+    <updated>2026-08-12T07:51:16.21-04:00</updated>
+    <category>News Release</category>
+  </entry>
+  <entry>
+    <title>Fixture CPI release headline for January 2026</title>
+    <link href="https://www.bls.gov/news.release/archives/cpi_02112026.htm"/>
+    <content>An entry without an id, keyed by its link instead.</content>
+    <published>2026-02-11T07:50:02-05:00</published>
+    <updated>2026-02-11T07:50:02-05:00</updated>
+    <category>News Release</category>
+  </entry>
+</feed>

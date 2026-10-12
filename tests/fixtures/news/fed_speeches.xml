@@ -1,0 +1,26 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+<rss version="2.0">
+    <channel>
+        <title>FRB: Speeches</title>
+        <link><![CDATA[https://www.federalreserve.gov/feeds/feeds.htm]]></link>
+        <description><![CDATA[Speeches by Federal Reserve Board members]]></description>
+        <language>en</language>
+        <item>
+            <title>Example, A Fixture Speech on Payment Systems</title>
+            <link><![CDATA[https://www.federalreserve.gov/newsevents/speech/example20261008a.htm]]></link>
+            <guid><![CDATA[https://www.federalreserve.gov/newsevents/speech/example20261008a.htm]]></guid>
+            <description><![CDATA[Speech At a fixture economic forum, Istanbul, T&uuml;rkiye,
+ sponsored by  a fictional   organization]]></description>
+            <category>Speech</category>
+            <pubDate><![CDATA[Thu, 8 Oct 2026 08:30:00 GMT]]></pubDate>
+        </item>
+        <item>
+            <title>Example, Fixture Testimony on Supervision</title>
+            <link><![CDATA[https://www.federalreserve.gov/newsevents/testimony/example20261001a.htm]]></link>
+            <guid><![CDATA[https://www.federalreserve.gov/newsevents/testimony/example20261001a.htm]]></guid>
+            <description><![CDATA[Testimony Before a fixture committee]]></description>
+            <category>Testimony</category>
+            <pubDate><![CDATA[Thu, 1 Oct 2026 14:00:00 GMT]]></pubDate>
+        </item>
+    </channel>
+</rss>

@@ -1,0 +1,68 @@
+[
+  {
+    "category": "company",
+    "datetime": 1791812700,
+    "headline": "Apple fixture headline about a supplier meeting",
+    "id": 140000105,
+    "image": "",
+    "related": "AAPL",
+    "source": "Fixture Wire",
+    "summary": "A fictional summary written by hand for the parser tests.",
+    "url": "https://news.example.com/fixture/140000105"
+  },
+  {
+    "category": "company",
+    "datetime": 1791808200,
+    "headline": "Apple &amp; Microsoft fixture headline on a cloud partnership",
+    "id": 140000104,
+    "image": "https://images.example.com/fixture/140000104.jpg",
+    "related": "AAPL, msft,AAPL",
+    "source": "Example Business Daily",
+    "summary": "  A second fictional   summary,\n spread over a line break.  ",
+    "url": "https://news.example.com/fixture/140000104"
+  },
+  {
+    "category": "company",
+    "datetime": 1791803130,
+    "headline": "Fixture analysts discuss the iPhone cycle",
+    "id": 140000103,
+    "image": "",
+    "related": "AAPL",
+    "source": "Fixture Wire",
+    "summary": null,
+    "url": "javascript:void(0)"
+  },
+  {
+    "category": "company",
+    "datetime": 1791800000,
+    "headline": "An entry whose id is text, which the parse drops",
+    "id": "140000102",
+    "image": "",
+    "related": "AAPL",
+    "source": "Fixture Wire",
+    "summary": "Dropped.",
+    "url": "https://news.example.com/fixture/140000102"
+  },
+  {
+    "category": "company",
+    "datetime": 1791799000,
+    "headline": "   ",
+    "id": 140000101,
+    "image": "",
+    "related": "AAPL",
+    "source": "Fixture Wire",
+    "summary": "An entry without a headline, which the parse drops.",
+    "url": "https://news.example.com/fixture/140000101"
+  },
+  {
+    "category": "company",
+    "headline": "Fixture item without a datetime",
+    "id": 140000100,
+    "image": "",
+    "related": "",
+    "source": "Example Business Daily",
+    "summary": "Kept with no vendor time.",
+    "url": "https://news.example.com/fixture/140000100"
+  },
+  "not an object"
+]

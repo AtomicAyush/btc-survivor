@@ -1,0 +1,41 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+<rss version="2.0">
+    <channel>
+        <title>FRB: Press Release - All Releases</title>
+        <link><![CDATA[https://www.federalreserve.gov/feeds/feeds.htm]]></link>
+        <description><![CDATA[All press releases from the Federal Reserve Board]]></description>
+        <language>en</language>
+        <item>
+            <title>Federal Reserve Board announces a fixture survey release</title>
+            <link><![CDATA[https://www.federalreserve.gov/newsevents/pressreleases/other20261009a.htm]]></link>
+            <guid><![CDATA[https://www.federalreserve.gov/newsevents/pressreleases/other20261009a.htm]]></guid>
+            <description><![CDATA[Federal Reserve Board announces a fixture survey release]]></description>
+            <category>Other Announcements</category>
+            <pubDate><![CDATA[Fri, 9 Oct 2026 14:00:00 GMT]]></pubDate>
+        </item>
+        <item>
+            <title>Federal Reserve Board announces termination of an enforcement action with Example Fixture Bank</title>
+            <link><![CDATA[https://www.federalreserve.gov/newsevents/pressreleases/enforcement20261008a.htm]]></link>
+            <guid><![CDATA[https://www.federalreserve.gov/newsevents/pressreleases/enforcement20261008a.htm]]></guid>
+            <description><![CDATA[Federal Reserve Board announces termination of an enforcement action with Example Fixture Bank]]></description>
+            <category>Enforcement Actions</category>
+            <pubDate><![CDATA[Thu, 8 Oct 2026 20:30:00 GMT]]></pubDate>
+        </item>
+        <item>
+            <title>Federal Reserve issues FOMC statement</title>
+            <link><![CDATA[https://www.federalreserve.gov/newsevents/pressreleases/monetary20260916a.htm]]></link>
+            <guid><![CDATA[https://www.federalreserve.gov/newsevents/pressreleases/monetary20260916a.htm]]></guid>
+            <description><![CDATA[Federal Reserve issues FOMC statement]]></description>
+            <category>Monetary Policy</category>
+            <pubDate><![CDATA[Wed, 16 Sep 2026 18:00:00 GMT]]></pubDate>
+        </item>
+        <item>
+            <title>Agencies issue a fixture statement on bank capital</title>
+            <link><![CDATA[https://www.federalreserve.gov/newsevents/pressreleases/bcreg20260915a.htm]]></link>
+            <guid><![CDATA[https://www.federalreserve.gov/newsevents/pressreleases/bcreg20260915a.htm]]></guid>
+            <description><![CDATA[Agencies issue a fixture statement on bank capital]]></description>
+            <category>Banking and Consumer Regulatory Policy</category>
+            <pubDate><![CDATA[Tue, 15 Sep 2026 15:00:00 GMT]]></pubDate>
+        </item>
+    </channel>
+</rss>

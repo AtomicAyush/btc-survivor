@@ -1,0 +1,57 @@
+[
+  {
+    "category": "general",
+    "datetime": 1791816000,
+    "headline": "Fixture markets wrap as Treasury yields edge lower",
+    "id": 140000205,
+    "image": "",
+    "related": "",
+    "source": "Fixture Wire",
+    "summary": "A fictional general news summary for the parser tests.",
+    "url": "https://news.example.com/fixture/140000205"
+  },
+  {
+    "category": "general",
+    "datetime": 1791815460,
+    "headline": "Fixture report on chip stocks ahead of earnings season",
+    "id": 140000204,
+    "image": "",
+    "related": "",
+    "source": "Example Business Daily",
+    "summary": "Another fictional summary.",
+    "url": "https://news.example.com/fixture/140000204"
+  },
+  {
+    "category": "general",
+    "datetime": 1791814800,
+    "headline": "Fixture survey of factory managers",
+    "id": 140000203,
+    "image": "",
+    "related": "",
+    "source": "Fixture Wire",
+    "summary": "A third fictional summary.",
+    "url": "https://news.example.com/fixture/140000203"
+  },
+  {
+    "category": "general",
+    "datetime": 1791813720,
+    "headline": "Fixture outlook for the holiday shopping season",
+    "id": 140000202,
+    "image": "",
+    "related": "",
+    "source": "Example Business Daily",
+    "summary": "A fourth fictional summary.",
+    "url": "https://news.example.com/fixture/140000202"
+  },
+  {
+    "category": "general",
+    "datetime": 1791812700,
+    "headline": "Fixture note on shipping rates",
+    "id": 140000201,
+    "image": "",
+    "related": "",
+    "source": "Fixture Wire",
+    "summary": "A fifth fictional summary.",
+    "url": "https://news.example.com/fixture/140000201"
+  }
+]
