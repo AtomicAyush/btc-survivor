@@ -96,7 +96,7 @@ See [section 2.2 of the plan](../PLAN.md#22-do-the-fee-placeholders-match-and-wh
 
 ## Shorts, the opening fee and funding
 
-Kraken's short selling page says Coinbase US does not offer spot margin shorting. That is a competitor's statement which could not be verified with Coinbase, so it is treated as likely rather than certain. A realistic US retail short therefore means Kraken margin or a perpetual style future, and the modelled short leg is a composite of the active profile's Coinbase spot taker fee and Kraken style margin charges. Both charges are marked as placeholders and were checked against Kraken's published pages on 10 and 11 October 2026.
+Kraken's short selling page says Coinbase US does not offer spot margin shorting. That is a competitor's statement which could not be verified with Coinbase, so it is treated as likely rather than certain. A realistic US retail short therefore means Kraken margin or a perpetual style future, and the modelled short leg is a composite of the active profile's Coinbase spot taker fee and Kraken style margin charges, a mix of two venues that no single account would pay. Both charges are marked as placeholders and were checked against Kraken's published pages on 10 and 11 October 2026. Together they add 2.25 bps to a 30 minute short's round trip, 184.25 bps against 182 for a long at the retail fee, and 4 bps to a 4 hour short in run D, so the mix barely moves costs, and the skill test uses no costs at all.
 
 * `short_open_fee_bps` is 2.0, the top of Kraken's 1 to 2 bps charge to open a BTC margin position. It is charged once on the notional of each short open, booked as funding, and included in the cost estimate for a short. On 500 dollars it is 0.10 dollars. For a 30 minute short it is larger than the hourly charge, so leaving it out would be kinder than the venue it models.
 * `short_funding_bps_per_hour` is 0.5, the top of Kraken's rollover range of 0.01 to 0.02 percent per 4 hours, which is 0.25 to 0.5 bps per hour. On perpetual futures in 2025 and 2026 shorts were usually paid rather than charged, on average about 0.05 to 0.08 bps per hour, so 0.5 is conservative. On 500 dollars it is 0.025 dollars an hour.
@@ -160,6 +160,24 @@ realized_gross_pnl == -(stop_loss_losses + other_trading_losses)
 ```
 
 The third line splits a bot's losses into the five parts that decide its cause of death, and the fourth ties the realized gross profit to the stop loss and trading loss totals, so no closed trade is missing from either. A live violation is logged at ERROR and written as an `invariant_violation` feed event, which the dashboard lists with the other recent feed events, and the run continues so the evidence is kept. `tests/test_account.py` checks all four lines after every step of 5,000 seeded random sequences of opens, closes, flips, stops, rent, funding and deaths. See [`account.py`](../src/btc_survivor/account.py) and [`tests/test_account.py`](../tests/test_account.py).
+
+## No principal is reserved
+
+Because opening a position moves only the fee and any short opening charge out of cash, no principal or margin is set aside for it. The broker's checks before a fill look at the book, the position and the quantity and never at the bot's funds, every open uses the same fixed notional, and the only funds check anywhere is the one the config loader makes at start up, that `notional` is no larger than `start_equity`. Negative cash at death becomes a recorded writeoff. In runs A, B and D a notional of 500 dollars against about 9,400 dollars or more of equity is harmless, and the largest notional over equity at any open of runs A and B was 0.05 times on 12 October 2026. In run C, with 500 dollars of start equity and a 500 dollar notional, the exposure grows as fees eat the equity.
+
+`scripts/run_c_analysis.py` works out the path of a run C bot that trades only when forced and never gains or loses on the market, from the config alone, with its first open 19 hours after launch and one every 12 hours. An open resets the forced timer in its own decision minute, the timer is due after 720 healthy minutes, and 720 is a whole number of 30 minute horizons, so the bot is already on its phase minute when the timer comes due and forced opens come exactly 12 healthy hours apart. Only a gap in the feed adds a wait. The external review's verifier assumed 12.25 hours, which puts each day in the table below 0.3 to 0.5 days later, and `--period-hours 12.25` reproduces his figures. Days are days of healthy data, and equity after the open counts the open's 4.50 dollar fee and its 1 bp of extra slippage.
+
+| Notional over equity after the open | Healthy day | Equity after the open in dollars |
+| --- | --- | --- |
+| 2 times | 13.8 | 242.85 |
+| 5 times | 21.3 | 97.65 |
+| 10 times | 23.8 | 49.25 |
+| 24.7 times, at the open before the last | 25.3 | 20.21 |
+| 47.5 times, 33.2 times before the fee, at the last open | 25.8 | 10.53, from 15.08 before the open |
+
+The death threshold of 10.26 dollars caps a bot that is still alive at 48.7 times. In this arithmetic the last open leaves the bot 10.53 dollars, just above its threshold, so it holds the position for its 30 minutes at 47.5 times its equity and dies on day 25.8 when the close fee takes it below. Nothing like a margin call exists, so the death rule is the only check on a bot's funds. At 20 dollars of equity a 1 percent stop costs 5 dollars, a quarter of equity, and a 4 percent gap would cost all of it, although a forced position is held only about 30 minutes in every 12 hours. A spot account with no margin could not open even run C's first trade, because 500 dollars plus a 4.50 dollar fee is more than the 500 it holds. Under an illustrative 5 times margin cap a quiet bot would stop trading near day 22 and live on rent until day 92.7 instead of dying on day 25.8, so run C's death schedule depends on this leverage, and its dollar paths are not what a 500 dollar retail account would see.
+
+The same script prints the notional over equity at every recorded open, before and after its fee, with `--every-open` for one line per open, and the recorded death days beside the days a 5 times cap, or any cap given with `--cap`, would have allowed. The first 13 learner opens in run C, by 12 October 2026, were all at about 1 times, at most 1.01 times after the fee. These figures are descriptive and change nothing in the runs. The disclosure is in [the honesty and limits page](honesty_and_limits.md#run-c-trades-on-unreserved-leverage), and the tables are in [RESULTS_TEMPLATE.md](RESULTS_TEMPLATE.md#run-c-analyses).
 
 ## Paper orders never consume liquidity
 

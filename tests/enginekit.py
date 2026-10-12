@@ -46,6 +46,13 @@ def deadly_config(data_dir):
                        costs={"fee_profile": "test", "taker_fees_bps": {"test": 900.0}})
 
 
+def selecting_config(data_dir):
+    """Every round trip costs about 8 percent of start equity, so deaths, births and parents with a skill
+    correlation all come within three hours."""
+    return fast_config(data_dir, trading={"start_equity": 100.0, "notional": 100.0},
+                       costs={"fee_profile": "test", "taker_fees_bps": {"test": 400.0}})
+
+
 @functools.lru_cache(maxsize=8)
 def synthetic(seed: int, seconds: int, faults: tuple[Fault, ...] = (), start: int = START) -> tuple:
     return tuple(SyntheticFeed(seed, start).lines(seconds, faults))

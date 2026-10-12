@@ -181,7 +181,11 @@ def render(r: dict) -> str:
              "1. Skill, population forecast against the matured label, one row per window after the first day",
              f"   correlation {_f(pop['corr'], '+.4f')} over {pop['n']} windows, Newey West t {_f(pop['t'], '+.2f')}, "
              f"needs t above 2.33, {'PASS' if pop['passed'] else 'not passed'}",
-             f"   detectable with 90 percent power at this length, a correlation of about {_f(pop['detectable'], '.3f')}",
+             f"   one sided 95 percent upper bound on the correlation {_f(pop['upper_95'], '+.4f')}, "
+             f"the correlation plus 1.645 Newey West errors of {_f(pop['se'], '.4f')}",
+             f"   detectable with 90 percent power at this length, a correlation of about "
+             f"{_f(pop['detectable_nw'], '.3f')} from the realised Newey West error, "
+             f"{_f(pop['detectable'], '.3f')} if the windows were independent",
              f"   squared error against predicting zero {_f(sk['vs_zero']['mse_ratio'], '.4f')}, "
              f"Diebold Mariano t {_f(sk['vs_zero']['t'], '+.2f')} (positive favours the population)",
              f"   squared error against the linear baseline {_f(sk['vs_linear']['mse_ratio'], '.4f')}, "

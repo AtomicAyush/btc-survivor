@@ -122,6 +122,9 @@ def test_chart_keeps_the_newest_point_and_skill_uses_the_criterion_rows(monkeypa
     conn.close()
     assert skill["population"]["windows"] == expected["skill"]["n"] > 10
     assert skill["population"]["corr"] == pytest.approx(expected["skill"]["corr"])
+    for key in ("t", "upper_95", "detectable_nw"):  # the same numbers evaluate prints beside the pass rule
+        assert skill["population"][key] == pytest.approx(expected["skill"][key])
+    assert skill["population"]["passed"] == expected["skill"]["passed"]
 
 
 def test_one_broken_run_never_blanks_the_others(monkeypatch, cfg):
@@ -600,6 +603,40 @@ def test_the_page_offers_the_explorer():
     assert "<b>Decisions explorer.</b>" in page
     assert "a twin's is the side its coin chose" in page and "never shows forced" in page  # how twins are scored
     assert 'id="dx-hint"' in page and "DX_CHECK" in page  # a half typed time is held back, not sent
+
+
+def test_the_page_says_what_forced_trades_are_for_and_whom_the_average_covers():
+    """Learning does not depend on trading, the average learner covers the living only, and the self financing value
+    and the skill bounds sit beside them, written so a page served by an older server still renders."""
+    import re
+
+    from btc_survivor.dashboard import PAGE
+    from docstyle import prose_problems
+
+    page = PAGE.read_text()
+    assert "gathering experience" not in page
+    assert "Learners train on every matured label whether or not they trade" in page
+    assert "Forced trades exist so costs, twins, deaths and parent eligibility can be measured" in page
+    assert "Average living learner" in page and "living learners only, refilled at deaths" in page
+    assert ">Self financing<" in page and "sf.value_per_slot" in page and "sf.outside_money" in page
+    assert '"restart the dashboard server to show it"' in page  # an older server sends no self_financing
+    assert "sk.t !== undefined" in page and "sk.upper_95" in page and "sk.detectable_nw" in page
+    assert '"mean learner"' not in page and "Mean learner" not in page
+    help_text = page[page.index('<div class="help">'):page.index("</details>")]
+    paragraphs = [re.sub(r"<[^>]+>", "", p) for p in re.findall(r"<p>(.*?)</p>", help_text, re.S)]
+    assert len(paragraphs) >= 14 and prose_problems("\n".join(paragraphs)) == []
+
+
+def test_run_state_carries_the_self_financing_value(cfg):
+    from btc_survivor.cli import data
+    from btc_survivor.cli.self_financing import value_at
+
+    state = run_state(cfg, time.time_ns() // 1_000_000)
+    conn = data.connect(cfg.db_path)
+    try:
+        assert state["self_financing"] == value_at(conn, cfg) and state["self_financing"]["births"] > 0
+    finally:
+        conn.close()
 
 
 def test_the_page_names_its_own_icon():

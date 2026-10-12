@@ -158,8 +158,9 @@ table.dx tr.dxrow > td { padding: 4px 10px 14px; text-align: left; white-space: 
     <p><b>Money.</b> Every bot starts with paper money, pays real fees on a fixed $500 trade and a little rent each healthy minute, and dies when it cannot afford one more round trip and a day of rent. A dead bot is replaced in the same minute.</p>
     <p><b>Feed.</b> Bots only act in healthy minutes, when the Coinbase data is connected, fresh and consistent. Recovering or stale means everything is paused.</p>
     <p><b>Stage.</b> A launch collects 6 hours of history, waits for 30 minute outcomes to mature so predictions can be graded, trains every bot through a warmup, and only then lets them trade.</p>
-    <p><b>Forced trades.</b> At these fees a bot's prediction almost never clears the cost of trading, so most trades are forced trades made every 12 hours to keep the bots gathering experience.</p>
-    <p><b>Skill.</b> The headline result. It is the correlation between the bots' average prediction and what Bitcoin actually did, scored once per 30 minutes after the first day, with a plain linear model beside it. It is only final on day 28.</p>
+    <p><b>Forced trades.</b> At these fees a bot's prediction almost never clears the cost of trading, so most trades are forced trades made every 12 hours. They are not how the bots learn. Learners train on every matured label whether or not they trade, so a trade adds no training data. Forced trades exist so costs, twins, deaths and parent eligibility can be measured.</p>
+    <p><b>Skill.</b> The headline result. It is the correlation between the bots' average prediction and what Bitcoin actually did, scored once per 30 minutes after the first day, with a plain linear model beside it. The second line gives the Newey West t statistic, which must be above 2.33 to pass, the one sided 95 percent upper bound on the correlation, which adds 1.645 Newey West errors to it, and the correlation the test would find with 90 percent power at the error it really has. A test that does not pass rules out correlations above that upper bound, and when volatility clusters the bound can sit above 0.1. It is only final on day 28.</p>
+    <p><b>Average learner and self financing.</b> The average learner covers the living learners only. A dead learner's slot is refilled in the same minute by a newborn holding full start money, so after deaths that average is topped up with new money. The self financing card counts every learner ever born, the living at their newest equity snapshot and the dead at their final equity less any writeoff, charges each birth its start money, and gives the outside money the births needed beyond what the dead returned. It shows the value per founding slot and its return beside buy and hold and cash. Before the first death the two cards nearly agree. They can differ a little because the average learner card reads the newest checkpoint and marks open positions at the live price, while the self financing card reads the newest equity snapshots, and either can be up to five minutes old.</p>
     <p><b>Benchmarks.</b> Buy and hold put all the money into Bitcoin at launch. Matched bought only $500 of it. Cash is start money minus rent, the bot that never trades.</p>
     <p><b>Timing.</b> The market is read as one minute candles. Each bot predicts where Bitcoin will be one horizon ahead, 30 minutes in runs A to C and 4 hours in run D, and decides once per horizon at its own minute. Learning, rent and stop checks happen every healthy minute.</p>
     <p><b>Freshness.</b> The page refreshes every 10 seconds. Bot rows come from the newest save, made every 5 minutes with every decision and fill since the one before, and the Bots header says when that was. The price and the feed state are written once a minute, so they can be a little over a minute old, and the price card says how old the price is.</p>
@@ -219,6 +220,7 @@ const span = m => m >= 60 && m % 60 === 0 ? `${m / 60} hour${m === 60 ? "" : "s"
 const usd = (v, d = 2) => v == null ? "–" : (v < 0 ? "-$" : "$") + num(Math.abs(v), d);
 const num = (v, d = 2) => v == null ? "–" : Number(v).toLocaleString(undefined, {minimumFractionDigits: d, maximumFractionDigits: d});
 const pct = v => v == null ? "–" : (100 * v).toFixed(0) + "%";
+const pcts = v => v == null ? "–" : (v > 0 ? "+" : "") + (100 * v).toFixed(2) + "%";
 const signed = (v, d = 2) => v == null ? "–" : (v > 0 ? "+" : "") + num(v, d);
 const cls = v => v == null || v === 0 ? "" : v > 0 ? "pos" : "neg";
 const ago = s => s == null ? "" : s < 90 ? `${Math.round(s)} s ago` : s < 5400 ? `${Math.round(s / 60)} min ago` : `${(s / 3600).toFixed(1)} h ago`;
@@ -320,7 +322,7 @@ function view(run) {
   const labelPct = Math.min(1, run.history.labels / run.history.labels_needed);
   const warmPct = learners.length ? active / learners.length : 0;
   const stageBar = histPct < 1 ? histPct : labelPct < 1 ? labelPct : warmPct;
-  const sk = run.skill.population, lin = run.skill.linear;
+  const sk = run.skill.population, lin = run.skill.linear, sf = run.self_financing;
   return `
   ${s.warnings.map(w => `<div class="banner">${esc(w)}</div>`).join("")}
   <div class="cards">
@@ -330,17 +332,21 @@ function view(run) {
     <div class="card"><div class="k" title="History, then outcomes maturing, then training warmup, then trading. The bar shows the current step.">Stage</div><div class="v" style="font-size:15px">${esc(s.stage)}</div>
       <div class="bar"><i style="width:${(100 * stageBar).toFixed(0)}%"></i></div>
       <div class="s">${num(s.healthy_days, 2)} healthy days since launch</div></div>
-    <div class="card"><div class="k" title="The average money of the living learners, against what each one started with.">Average learner</div><div class="v">${usd(s.mean_equity)}</div>
-      <div class="s">${s.living} learners alive, each started with ${usd(c.start_equity, 0)} · ${s.deaths} deaths so far</div></div>
+    <div class="card"><div class="k" title="The average money of the learners alive now, against what each one started with. A dead learner's slot is refilled at full start money, so after deaths this is topped up with new money. The self financing card counts every learner ever born.">Average living learner</div><div class="v">${usd(s.mean_equity)}</div>
+      <div class="s">living learners only, refilled at deaths · ${s.living} alive, each started with ${usd(c.start_equity, 0)} · ${s.deaths} deaths so far</div></div>
+    <div class="card"><div class="k" title="Every learner ever born, the living at their newest equity snapshot and the dead at their final equity less any writeoff, with each birth paid for at full start money, per founding slot. Outside money is what the births needed beyond what the dead returned.">Self financing</div><div class="v">${sf ? usd(sf.value_per_slot) : "–"}</div>
+      <div class="s">${sf ? `per slot over all ${sf.born} learners ever born, ${pcts(sf.return)} · outside money ${usd(sf.outside_money)} · buy and hold ${pcts(sf.buy_hold_return)} · cash ${pcts(sf.cash_return)}`
+        : sf === null ? "no equity snapshot yet" : "restart the dashboard server to show it"}</div></div>
     <div class="card"><div class="k" title="Simple alternatives started with the same money. Buy and hold put all of it into Bitcoin at launch, matched bought only $500 of it, cash only paid rent.">Buy and hold</div><div class="v">${usd(s.buy_hold)}</div>
       <div class="s">matched ${usd(s.matched)} · cash ${usd(s.cash)} · twins ${usd(s.twin_mean)}</div></div>
-    <div class="card"><div class="k" title="Correlation between the bots' average prediction and the actual 30 minute move, one reading per window after the first day. Final on day 28.">Skill so far</div><div class="v">${sk ? signed(sk.corr, 3) : "–"}</div>
-      <div class="s">population correlation over ${sk ? sk.windows : 0} windows · linear ${lin ? signed(lin.corr, 3) : "–"} · descriptive until the final day</div></div>
+    <div class="card"><div class="k" title="Correlation between the bots' average prediction and the actual 30 minute move, one reading per window after the first day. Final on day 28. The Newey West t statistic passes above 2.33. The upper bound is one sided at 95 percent, the correlation plus 1.645 Newey West errors. Detectable is the correlation the test would find with 90 percent power at its realised Newey West error.">Skill so far</div><div class="v">${sk ? signed(sk.corr, 3) : "–"}</div>
+      <div class="s">population correlation over ${sk ? sk.windows : 0} windows · linear ${lin ? signed(lin.corr, 3) : "–"} · descriptive until the final day</div>
+      ${sk && sk.t !== undefined ? `<div class="s">t ${signed(sk.t, 2)}, ${sk.passed ? "above" : "not above"} the 2.33 it needs · upper bound ${signed(sk.upper_95, 3)} at 95% · detectable ${num(sk.detectable_nw, 3)}</div>` : ""}</div>
     <div class="card"><div class="k" title="The time scales the bots work on. These are fixed for the whole run.">Timing</div>
       <div class="v" style="font-size:15px">${c.candle_minutes} minute candles</div>
       <div class="s">predicts ${span(c.horizon_minutes)} ahead · each bot decides every ${span(c.horizon_minutes)} · forced trade every ${num(c.force_hours, 0)} hours · chart point every ${run.chart_minutes_per_point === 1 ? "minute" : run.chart_minutes_per_point + " minutes"}</div></div>
   </div>
-  <div class="panel"><h2>Equity over time <small>mean learner against the benchmarks, fee ${num(c.fee_bps, 0)} bps</small></h2>
+  <div class="panel"><h2>Equity over time <small>mean living learner against the benchmarks, fee ${num(c.fee_bps, 0)} bps</small></h2>
     ${chart(run.equity_curve, c.start_equity)}
     ${lineGuide(run)}</div>
   <div class="panel"><h2>Bots <small>${s.checkpoint_age_s == null ? "no checkpoint yet"
@@ -354,7 +360,7 @@ function view(run) {
   <div class="panel"><h2>Feed events</h2><div class="scroll">${events(run.events)}</div></div>`;
 }
 
-const SERIES = [["living_mean_equity", "var(--c1)", "mean learner"], ["twin_mean_equity", "var(--c4)", "twin mean"],
+const SERIES = [["living_mean_equity", "var(--c1)", "mean living learner"], ["twin_mean_equity", "var(--c4)", "twin mean"],
   ["buy_hold_equity", "var(--c2)", "buy and hold"], ["matched_equity", "var(--c5)", "matched"], ["cash_equity", "var(--c3)", "cash"]];
 let CH = null;  // the drawn chart's rows and scales, so the hover readout can map the pointer to a point
 let hoverAt = null;  // the hovered point as a fraction across the plot, kept through refreshes
@@ -449,7 +455,7 @@ function attachHover() {
 function lineGuide(run) {
   const c = run.config, sameAsBuyHold = c.notional >= c.start_equity;
   const items = [
-    ["var(--c1)", "Mean learner", `The average money of the ${run.summary.living || 20} learning bots. How are the bots doing?`],
+    ["var(--c1)", "Mean living learner", `The average money of the ${run.summary.living || 20} living learners. A dead learner's slot is refilled at full start money, so after deaths this line is topped up with new money, and the Self financing card counts every learner ever born. How are the living bots doing?`],
     ["var(--c4)", "Twin mean", "The average money of the coin flip twins. They trade at the same moments and pay the same costs, but a coin picks long or short. The same bots without a brain."],
     ["var(--c2)", "Buy and hold", `All ${usd(c.start_equity, 0)} put into Bitcoin at launch, one fee paid, never sold. What did Bitcoin itself do?`],
     ["var(--c5)", "Matched", sameAsBuyHold ? `Bought ${usd(c.notional, 0)} of Bitcoin at launch and never sold. In this run that is all the money, so it is the same line as buy and hold.`

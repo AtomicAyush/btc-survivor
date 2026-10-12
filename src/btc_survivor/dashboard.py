@@ -25,7 +25,7 @@ from pathlib import Path
 
 import numpy as np
 
-from btc_survivor.cli import data
+from btc_survivor.cli import data, self_financing
 from btc_survivor.cli.evaluate import SKILL_LAGS, forecasts
 from btc_survivor.cli.stats import diebold_mariano, skill_test
 from btc_survivor.clock import MS_PER_DAY, MS_PER_HOUR, MS_PER_MINUTE, iso, parse_iso
@@ -117,6 +117,7 @@ def _state(conn, cfg: Config, name: str, now_ms: int) -> dict:
     rows = data.bots(conn, cfg, meta, live, now_ms)
     return {
         "name": name, "summary": data.summary(conn, cfg, meta, rows, live, now_ms), "bots": rows,
+        "self_financing": self_financing.value_at(conn, cfg),
         "config": {"fee_bps": cfg.costs.taker_fee_bps, "start_equity": cfg.trading.start_equity,
                    "rent_per_day": cfg.costs.daily_running_cost, "candle_minutes": 1,
                    "force_hours": cfg.trading.force_trade_after_hours,
@@ -152,12 +153,18 @@ def equity_curve(conn) -> list[dict]:
 
 
 def skill_so_far(conn, horizon: int) -> dict:
-    """Descriptive skill on the same rows and with the same statistics as criterion 1. Only the final day counts."""
+    """Descriptive skill on the same rows and with the same statistics as criterion 1. Only the final day counts.
+
+    Beside the correlation come its Newey West t statistic, which passes above 2.33, the one sided 95 percent upper
+    bound and the correlation detectable with 90 percent power from the realised Newey West error, as evaluate prints.
+    """
     out = {}
     for name, rows in forecasts(conn, horizon).items():
         pred = np.array([p for p, _ in rows.values()])
         label = np.array([y for _, y in rows.values()])
-        out[name] = {"windows": len(pred), "corr": skill_test(pred, label, SKILL_LAGS)["corr"],
+        test = skill_test(pred, label, SKILL_LAGS)
+        out[name] = {"windows": len(pred), "corr": test["corr"], "t": test["t"], "passed": test["passed"],
+                     "upper_95": test["upper_95"], "detectable_nw": test["detectable_nw"],
                      "mse_vs_zero": diebold_mariano(label - pred, label, SKILL_LAGS)["mse_ratio"]}
     return out
 

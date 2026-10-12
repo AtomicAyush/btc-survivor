@@ -77,6 +77,12 @@ def test_evaluate_reports_every_criterion_and_the_arithmetic(run):
     assert result["survival"]["learners"]["causes"] == {"fees": result["survival"]["learners"]["deaths"]}
     text = evaluate.render(result)
     assert "descriptive, the final day is day 28" in text and "Outcomes fixed by arithmetic" in text
+    skill = result["skill"]["skill"]
+    assert skill["upper_95"] == pytest.approx(skill["corr"] + 1.645 * skill["se"])
+    assert skill["detectable_nw"] == pytest.approx(3.61 * skill["se"]) and skill["passed"] == (skill["t"] > 2.33)
+    assert f"one sided 95 percent upper bound on the correlation {skill['upper_95']:+.4f}" in text
+    assert f"a correlation of about {skill['detectable_nw']:.3f} from the realised Newey West error" in text
+    assert f"{skill['detectable']:.3f} if the windows were independent" in text and "needs t above 2.33" in text
 
 
 def test_commands_run_from_the_command_line(run, tmp_path, capsys):

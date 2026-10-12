@@ -39,7 +39,7 @@ def main() -> int:
     for points in by_bot.values():
         top.plot(*zip(*points), color="0.75", linewidth=0.7)
     times = [when(r["ts"]) for r in bench]
-    for key, label in (("living_mean_equity", "mean learner"), ("twin_mean_equity", "twin mean"),
+    for key, label in (("living_mean_equity", "mean living learner"), ("twin_mean_equity", "twin mean"),
                        ("buy_hold_equity", "buy and hold"), ("cash_equity", "cash")):
         values = [float(r[key]) if r[key] else None for r in bench]
         top.plot(times, values, label=label, linewidth=1.6)

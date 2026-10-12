@@ -56,3 +56,35 @@ def test_t_quantile_uses_the_table_at_few_degrees_of_freedom():
 
     assert [t_quantile_99(df) for df in (1, 2, 3)] == pytest.approx([31.821, 6.965, 4.541], abs=0.01)
     assert t_quantile_99(9) > t_quantile_99(10) > t_quantile_99(11)
+
+
+def test_skill_test_reports_the_upper_bound_and_detectable_correlation_beside_an_unchanged_pass_rule():
+    """The 95 percent upper bound is corr plus 1.645 Newey West errors and the detectable correlation is 3.61 errors,
+    while passing still means t above 2.33 and nothing else."""
+    rng = np.random.default_rng(3)
+    for strength in (0.0, 0.05, 0.2):
+        x = rng.normal(size=1500)
+        r = skill_test(x, strength * x + rng.normal(size=1500), 12)
+        assert r["se"] > 0 and r["t"] == pytest.approx(r["corr"] / r["se"])
+        assert r["upper_95"] == pytest.approx(r["corr"] + 1.645 * r["se"])
+        assert r["detectable_nw"] == pytest.approx(3.61 * r["se"])
+        assert r["detectable"] == pytest.approx(3.61 / math.sqrt(1500))
+        assert r["passed"] == (r["t"] > 2.33) and r["n"] == 1500
+    empty = skill_test(np.zeros(10), rng.normal(size=10), 12)
+    assert empty["upper_95"] is None and empty["detectable_nw"] is None and empty["se"] is None
+
+
+def test_clustered_volatility_raises_the_detectable_correlation_above_the_independent_one():
+    """When forecast and label share volatility clusters the Newey West error exceeds one over root n, so a failed
+    test leaves larger correlations open than 3.61 over root n suggests. This is the external review's claim 6."""
+    rng = np.random.default_rng(2026)
+    n, phi, sd = 1280, 0.97, 0.5
+    h = np.zeros(n)
+    eps = rng.normal(0, sd * math.sqrt(1 - phi * phi), n)
+    for i in range(1, n):
+        h[i] = phi * h[i - 1] + eps[i]
+    sig = np.exp(h)
+    e, z = rng.normal(size=n), rng.normal(size=n)
+    r = skill_test(sig * (0.1 * e + math.sqrt(0.99) * z), sig * e, 12)
+    assert r["detectable_nw"] > 1.2 * r["detectable"]
+    assert r["upper_95"] > r["corr"]

@@ -8,6 +8,7 @@ import numpy as np
 
 ONE_SIDED_1PCT = 2.33
 POWER_90 = 1.28
+UPPER_95 = 1.645  # the one sided 95 percent normal quantile, for the upper confidence bound on the correlation
 
 
 def newey_west_se(u: np.ndarray, lags: int) -> float:
@@ -21,16 +22,24 @@ def newey_west_se(u: np.ndarray, lags: int) -> float:
 
 
 def skill_test(pred: np.ndarray, label: np.ndarray, lags: int) -> dict:
-    """Correlation of forecast and label as the mean product of their z scores, with a Newey West t statistic."""
+    """Correlation of forecast and label as the mean product of their z scores, with a Newey West t statistic.
+
+    The pass rule is t above ONE_SIDED_1PCT and nothing else. Beside it come the Newey West standard error, the one
+    sided 95 percent upper confidence bound, corr plus UPPER_95 errors, and two detectable correlations with 90
+    percent power. detectable assumes independent windows, 3.61 over the square root of n, while detectable_nw uses
+    the realised Newey West error, which is larger when volatility clusters in both forecast and label.
+    """
     n = len(pred)
     if n < 3 or pred.std() == 0 or label.std() == 0:
-        return {"n": n, "corr": None, "t": None, "passed": False, "detectable": None}
+        return {"n": n, "corr": None, "t": None, "passed": False, "detectable": None, "se": None, "upper_95": None,
+                "detectable_nw": None}
     u = (pred - pred.mean()) / pred.std() * (label - label.mean()) / label.std()
     corr = float(u.mean())
     se = newey_west_se(u, lags)
     t = corr / se if se > 0 else 0.0
     return {"n": n, "corr": corr, "t": t, "passed": t > ONE_SIDED_1PCT,
-            "detectable": (ONE_SIDED_1PCT + POWER_90) / math.sqrt(n)}
+            "detectable": (ONE_SIDED_1PCT + POWER_90) / math.sqrt(n), "se": se, "upper_95": corr + UPPER_95 * se,
+            "detectable_nw": (ONE_SIDED_1PCT + POWER_90) * se}
 
 
 def diebold_mariano(errors_a: np.ndarray, errors_b: np.ndarray, lags: int) -> dict:
