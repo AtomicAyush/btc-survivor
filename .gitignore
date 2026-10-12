@@ -33,3 +33,7 @@ dist/
 
 # Local configuration copied from config.example.toml
 config.toml
+
+# Secrets, which live only in ~/.config/btc_survivor
+secrets.env
+*.env

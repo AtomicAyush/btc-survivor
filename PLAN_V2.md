@@ -1427,7 +1427,7 @@ threads = 1
 
 ## 16. Build phases with tests
 
-Each phase ends with the full suite green on Python 3.11 and 3.13, one single line commit carrying only the owner's name, a push of `feat/v2-stocks` to the private repository, and a short summary. Before existing code changes, the modules and tests that depend on it are listed. No test needs the network, randomized tests use seeded generators, no test puts a secret value inside an assert expression, and the suite never runs with `showlocals`.
+Each phase ends with the full suite green on Python 3.11 and 3.13, one single line commit carrying only the owner's name, a push of `feat/v2-stocks` to the private repository, and a short summary. Before existing code changes, the modules and tests that depend on it are listed. No test needs the network, randomized tests use seeded generators, no test puts a secret value inside an assert expression, and the suite never runs with `showlocals`. Version 2 test files carry the prefix `test_v2_` so they never collide with a version 1 file, so the `test_store` of Phase 16 lives in `tests/test_v2_store.py`, while `test_v1_untouched`, `test_v1_isolation` and the amended version 1 tests keep their names.
 
 **Critical path.** Phase 14 may be built, and the collector started, in parallel with the Phase 13 live gate, because collection does not depend on the tape verdict. Phase 16 waits for a consolidated verdict.
 

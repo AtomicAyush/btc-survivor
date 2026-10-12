@@ -6,7 +6,7 @@ from helpers import ROOT
 LINKED_DOCS = [ROOT / "README.md", ROOT / "CONTRIBUTING.md", *sorted((ROOT / "docs").glob("*.md"))]
 
 
-@pytest.mark.parametrize("path", [*LINKED_DOCS, ROOT / "PLAN.md"], ids=lambda p: p.name)
+@pytest.mark.parametrize("path", [*LINKED_DOCS, ROOT / "PLAN.md", ROOT / "PLAN_V2.md"], ids=lambda p: p.name)
 def test_prose_rules(path):
     problems = prose_problems(path.read_text(encoding="utf-8"))
     assert not problems, f"{path.name}\n" + "\n".join(problems)

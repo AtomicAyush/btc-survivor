@@ -19,9 +19,16 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest==9.1.1"]
+v2news = [
+    "anthropic==1.8.0",
+    "pydantic==2.13.5",
+    "onnxruntime==1.30.0",
+    "tokenizers==0.23.2",
+]
 
 [project.scripts]
 btc_survivor = "btc_survivor.__main__:main"
+btc_survivor_v2 = "btc_survivor.v2.__main__:main"
 
 [tool.setuptools.package-data]
 btc_survivor = ["dashboard.html"]
@@ -31,4 +38,5 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+# The short traceback style never prints the arguments of each frame, so a failure cannot show a secret held in one.
+addopts = "-q --tb=short"

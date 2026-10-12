@@ -1,0 +1,175 @@
+# The news process, collection and scoring for both stock runs. Settings are fixed before launch, see PLAN_V2 section 15.
+# Relative paths are resolved from this folder. Any change after launch alters the news config hash and fails news health.
+
+[news]
+kind = "news"
+data_dir = "../../data/v2/news"
+secrets_file = "~/.config/btc_survivor/secrets.env"
+master_seed = 12345                       # report samples
+universe = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "QQQ"]
+schedule_tz = "America/New_York"          # only to pick cadences
+http_timeout_seconds = 10
+max_response_bytes = 8000000
+backlog_gap_seconds = 600                 # added to the longer cadence of the two polls, plus budget waits
+backlog_exempt_kinds = ["8k"]
+max_vendor_age_hours = 24                 # stale_vendor on both routes
+clock_skew_max_seconds = 5
+clock_skew_samples = 20
+failure_backoff_cap_seconds = 900
+heartbeat_seconds = 30
+outage_cadence_multiple = 3
+outage_floor_seconds = 300
+score_wait_seconds = 600                  # or twice the measured burst time if longer
+burst_items = 300
+keep_filtered_days = 30
+keep_polls_days = 14
+keep_dups_days = 14
+keep_heartbeat_days = 14
+rest_lock_file = "~/.config/btc_survivor/finnhub_rest.lock"
+
+[finnhub]
+enabled = true
+company_symbols = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA"]
+general_category = "general"
+max_calls_per_minute = 30                 # key limit 60
+min_call_spacing_seconds = 1.1            # key limit 30 a second
+regular_window_et = ["09:30", "16:00"]
+extended_window_et = ["04:00", "20:00"]
+regular_poll_seconds = 60
+extended_poll_seconds = 120
+overnight_poll_seconds = 600
+lookback_days = 1
+headline_max_chars = 300
+summary_max_chars = 600
+rate_limit_pause_seconds = 60
+send_to_llm = true                        # the owner's decision of section 13.1, false sends Finnhub items to FinBERT alone
+
+[edgar]
+enabled = true
+ciks = { AAPL = 320193, MSFT = 789019, NVDA = 1045810, AMZN = 1018724, GOOGL = 1652044, META = 1326801, TSLA = 1318605 }
+forms = ["8-K", "8-K/A"]
+filing_window_et = ["06:00", "22:00"]
+atom_poll_seconds = 30
+submissions_poll_seconds = 60
+off_window_poll_seconds = 900
+max_requests_per_second = 2
+max_requests_per_minute = 60
+block_pause_seconds = 900
+main_doc_max_chars = 4000
+exhibit_max_chars = 12000
+
+[fed]
+enabled = true
+feeds = ["press_all", "press_monetary", "speeches"]
+monetary_link_pattern = "/pressreleases/monetary"
+press_window_et = ["07:00", "19:00"]
+press_poll_seconds = 60
+speeches_window_et = ["07:00", "21:00"]
+speeches_poll_seconds = 600
+speeches_off_hours_poll_seconds = 3600
+off_hours_poll_seconds = 900
+fomc_fast_window_et = ["13:58", "14:20"]
+fomc_fast_poll_seconds = 15
+summary_max_chars = 1000
+monetary_body_max_chars = 8000
+max_requests_per_minute = 10
+block_pause_seconds = 900
+
+[bls]
+enabled = true
+feeds = ["cpi", "empsit", "ppi", "jolts"]
+window_et = ["07:00", "19:00"]
+poll_seconds = 1800
+off_hours_poll_seconds = 7200
+release_fast_poll_seconds = 15
+release_fast_before_minutes = 1
+release_fast_after_minutes = 15
+summary_max_chars = 1500
+max_requests_per_minute = 10
+block_pause_seconds = 900
+
+[dedupe]
+hash_window_hours = 24
+near_dup_window_hours = 24
+near_dup_jaccard = 0.8
+near_dup_min_tokens = 4
+
+[prefilter]
+macro_strip_pattern = '\b(NASDAQ|NYSE|NYSEARCA)\s*:\s*[A-Z.]+'
+alias_excludes_macro = true
+
+[calendar]                                # ET times copied from federalreserve.gov and bls.gov before launch, polling only
+                                          # every date through 31 Mar 2027, never changed after launch
+fomc_statement = ["2026-10-28T14:00", "2026-12-09T14:00"]   # unverified until copied, the 2027 dates added before launch
+cpi = []                                  # filled before launch
+empsit = []
+ppi = []
+jolts = []
+
+[llm]                                     # Haiku, on every routed item
+enabled = true
+model = "claude-haiku-5-5"                # the only accepted value
+effort = "low"                            # the only accepted value
+thinking = "disabled"                     # the only accepted value
+scorer_name = "haiku_v1"
+prompt_file = "prompt_v1.txt"
+prompt_sha256 = ""                        # pinned at build
+schema_file = "schema_v1.json"
+schema_sha256 = ""                        # pinned at build
+request_timeout_seconds = 60
+max_tokens = 4096
+flush_max_items = 20
+flush_after_seconds = 60
+max_items_per_call = 25
+long_form_kinds = ["8k", "fed_monetary"]
+alone_kinds = ["8k", "fed_press", "fed_monetary", "fed_speech", "bls_release"]   # one item per call
+max_queue_age_seconds = 300
+headline_max_chars = 300
+text_max_chars = 700
+long_form_max_chars = 24000
+max_input_tokens = 20000                  # exact count, or bytes over 3 without one
+max_calls_per_batch = 24
+max_requeues = 1                          # a missing item only, never a failed call
+rate_limit_pause_minutes = 15
+refusal_pause_share = 0.2
+refusal_window_calls = 50
+probe_file = "probes_v1.json"
+probe_time_utc = "06:00"
+probe_alert_direction_agreement = 0.8     # probes run on Haiku only
+
+[llm.sonnet]                              # the comparison scorer, official items only
+enabled = true
+model = "claude-sonnet-5-5"               # the only accepted value, and Opus is never accepted
+effort = "low"                            # the only accepted value
+thinking = "disabled"                     # the only accepted value
+scorer_name = "sonnet_v1"
+kinds = ["8k", "fed_press", "fed_monetary", "fed_speech", "bls_release"]
+max_tokens = 1024                         # one item with up to 10 impacts
+cache_control = false                     # Sonnet cache prices are not in the research
+
+[llm.caps]                                # one ledger and one cap for both models
+ledger_file = "~/.config/btc_survivor/llm_ledger.db"
+ledger_lock_file = "~/.config/btc_survivor/llm_ledger.lock"
+monthly_usd = 20.00                       # equal to the Console workspace limit, and no daily cap
+daily_alert_share = 0.25                  # a warning above 5 dollars in one UTC day, never a stop
+reserve_overhead_tokens = 1000            # byte bound only, checked against real overhead in Phase 15
+
+[llm.prices]                              # Anthropic pricing page, read 11 Oct 2026
+haiku_input_per_mtok = 0.10
+haiku_output_per_mtok = 0.50
+haiku_cache_write_multiplier = 1.25
+haiku_cache_read_multiplier = 0.10
+sonnet_input_per_mtok = 2.00
+sonnet_output_per_mtok = 10.00
+long_prompt_threshold_tokens = 100000     # Haiku, never reached under the 20,000 token guard
+
+[finbert]
+model_file = "../../data/models/finbert/model.onnx"
+model_sha256 = ""                         # pinned at export
+tokenizer_file = "../../data/models/finbert/tokenizer.json"
+tokenizer_sha256 = ""
+manifest_file = "../../data/models/finbert/manifest.json"
+source_revision = ""                      # the pinned commit of ProsusAI/finbert
+window_tokens = 510
+max_windows = 16
+threads = 1
