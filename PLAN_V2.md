@@ -19,7 +19,7 @@ The owner has already decided the following.
 * Finnhub headlines and summaries go to the Anthropic API for that scoring. Finnhub's terms bar sharing its data with third parties without written approval, sending headlines to the Anthropic API arguably counts, and the realistic consequence is that Finnhub could suspend the free key, which also carries the price feed. The owner accepts that risk, and a written request to Finnhub would remove the doubt, as section 13.1 and question 3 set out.
 * `claude-sonnet-5-5` also scores the official items and nothing else, SEC `8-K` filings with their exhibits, Federal Reserve releases and speeches and BLS releases, about 5 to 20 a day, with the same prompt and schema, as a separate stream and predictor that measures whether a stronger model predicts better than Haiku on those items. Opus is not used.
 * Spend has one cap, 20 dollars a month in code on one ledger shared by both models, matching the 20 dollar monthly limit the owner set on the dedicated Anthropic Console workspace, and it is paid from the included API credits of the owner's Max plan. There is no daily cap. A day whose spend passes a quarter of the monthly cap raises a warning on the log and the private dashboard and stops nothing.
-* Stock prices and anything derived from them never enter an assistant session, a separate rule that rests on exchange data licensing, as section 13.3 sets out.
+* Stock prices and anything derived from them may enter the assistant session that builds and checks this system, by the owner's decision of 12 October 2026, which lifted an earlier rule. The risk the owner accepts is the one of the headline decision, that Finnhub could suspend the free key, as section 13.3 sets out.
 * The Finnhub key, the Anthropic key and the contact address are in `~/.config/btc_survivor/secrets.env`, outside the repository, as `FINNHUB_API_KEY`, `ANTHROPIC_API_KEY` and `CONTACT_EMAIL`. They are never printed or committed, and the contact address never appears in the repository or on any page.
 * Every dashboard stays local only, for version 1 and version 2 alike. The version 1 dashboard on `127.0.0.1:8050` and the version 2 dashboard on `127.0.0.1:8060` are never tunnelled, shared or published, so no public page exists and no stock data, news or anything derived from them leaves this machine through a page.
 * The end goal is a bot with broad market knowledge and current affairs that sizes its trades by confidence. Version 2 is the next honest step, the skill stage of the road map in section 11.7, and keeps a fixed 30 minute horizon and a fixed 500 dollar notional. Variable sizing and holding periods chosen from predictions belong to the later profit stage, which switches on only once a predictor passes the skill test.
@@ -54,7 +54,7 @@ Vendor facts, prices, limits and licensing come from the vendor research of Sund
 | News timing | not applicable | visible when the stock process receives a score, decaying from when scoring finished | no vendor or article time places anything in time |
 | Health | Coinbase feed health | price health per symbol for prices, epochs and labels, and news health, meaning the news pipeline is alive, gating rent, learning, decisions and new labels in both runs | never trade or learn on stale data, and S1 and S2 share their minutes |
 | Confirmatory test | run A skill at day 28 | the pooled correlation of the news score with the next 30 minute return over 8 symbols, sessions 2 to 40, one sided at 1 percent, clustered by minute, with a detectable correlation from about 0.075 to about 0.12 as the macro share rises, and a failure reported with its one sided 95 percent upper bound | the one question version 2 adds |
-| Dashboards and assistants | a local page | both dashboards local only on `127.0.0.1` with no tunnel, and no stock price or anything derived from one enters an assistant session, so every command prints aggregates unless the owner passes `--detail` | exchange data licensing covers prices and everything derived from them |
+| Dashboards and assistants | a local page | both dashboards local only on `127.0.0.1` with no tunnel, every command printing aggregates unless `--detail` is passed, and stock data allowed in the assistant session by the owner's decision of 12 October 2026 | the dashboards stay private, and the owner accepts the licensing risk of section 13.3 |
 | Secrets | none | one reader of a mode 600 file outside the repository, redaction on every log handler and recorded line | the Finnhub token travels in the websocket URL |
 | Variable sizing and exits | road map step 4 | still out, with a fixed 500 dollar notional and a fixed 30 minute horizon, until the profit stage of section 11.7 | no predictor has passed a skill test |
 
@@ -262,7 +262,7 @@ A symbol minute is usable when the symbol is healthy and news health held. Rent,
 
 One session gates the build in Phase 13, the first full regular session, not an early close, whose raw recording shows no disconnected time from `04:00` to `20:00` ET.
 
-**The official figures.** The next morning the owner opens Nasdaq's public historical quote page for each symbol in an ordinary browser, confirms it labels its volume as consolidated, and copies the day's volume and official close into the gitignored `data/v2/checks/official_YYYY_MM_DD.toml`. No script fetches the page, which is for personal viewing. Without a consolidated label the owner uses a second consolidated display they may view, and the two must agree within 5 percent. Whether the page's volume is consolidated, and its terms, are unverified, because it timed out on 11 October 2026.
+**The official figures.** The next morning the owner, or the assistant session viewing the page in a browser on the owner's behalf, opens Nasdaq's public historical quote page for each symbol in an ordinary browser, confirms it labels its volume as consolidated, and copies the day's volume and official close into the gitignored `data/v2/checks/official_YYYY_MM_DD.toml`. No script fetches the page, which is for personal viewing. Without a consolidated label the owner uses a second consolidated display they may view, and the two must agree within 5 percent. Whether the page's volume is consolidated, and its terms, are unverified, because it timed out on 11 October 2026.
 
 **The computation.** `tapecheck.py` reads only the raw recording, replaying `finnhub.parse` and the print classification, so it needs no run database. Per symbol it computes full day volume from `04:00` to `20:00` ET, pre, regular and post volume, the ratio r of full day volume to the official figure, odd lot and late shares, replayed prints, the condition histogram, delay percentiles, the last eligible print before `16:00` against the official close, and disconnected time. By default it prints the verdict and how many symbols fall in each band.
 
@@ -1037,13 +1037,12 @@ Every dashboard stays local only, for version 1 and version 2 alike. The version
 
 **The recorded check.** Ten minutes before each open, and at start when the stock process starts inside a session, it runs `v2/localcheck.py` in a worker thread, so no minute step waits for it. The check lists the listening sockets through `lsof` and the running processes through `ps`, and fails when anything listens on port 8050 or 8060 at an address other than `127.0.0.1`, or when a tunnel or remote forward runs, such as `cloudflared`, `ngrok`, `tailscale funnel`, `tailscale serve` or `ssh -R`. It writes the verdict and the count of offending sockets and processes to `feed_events` as kind `local_only` in both run databases. `evaluate` fails criterion 1.8 of section 11.6 on any failed check or any session in the window without one.
 
-### 13.3 No stock data enters an assistant session
+### 13.3 Stock data and assistant sessions
 
-Any AI coding or chat session that builds, runs or checks this system sends its context to a third party. Stock prices and anything derived from them never enter such a session, a rule that rests on exchange data licensing and holds whatever Finnhub says about headlines. So no price, volume, per symbol ratio, candle, fill, profit and loss, forecast or label, and no screenshot showing them, ever enters such a session. This rule covers stock data alone, and Finnhub headlines, summaries and their scores are left to the owner's decision of section 13.1.
+Any AI coding or chat session that builds, runs or checks this system sends its context to a third party. The approved plan first kept stock prices and anything derived from them out of such sessions, on exchange data licensing grounds. On 12 October 2026 the owner lifted that rule, so the assistant session may read prices, volumes, per symbol figures, recordings, databases and the private dashboard, run commands with `--detail`, and send dashboard screenshots to the owner. Finnhub's terms restrict sharing its data with third parties, so the realistic risk is that Finnhub suspends the free key, which also carries the price feed, the same risk the owner accepted for headlines in section 13.1. The rest of the data handling stays.
 
-* Every version 2 command prints by default only counts, pass or fail verdicts, hashes, timings of this system and synthetic data.
-* `--detail` adds rows, per symbol figures and samples, is meant only for the owner's own terminal, and is never passed in an assistant session.
-* No assistant session opens `127.0.0.1:8060` with a browser tool or reads `data/v2`, a raw recording or a database directly.
+* Every version 2 command prints by default only counts, pass or fail verdicts, hashes, timings of this system and synthetic data, and `--detail` adds rows, per symbol figures and samples.
+* Apart from the assistant session, no stock data leaves this machine, whether through a page, a tunnel or a push, as section 13.2 sets out.
 * Logs hold only states, counts and timings, never a price, volume or fill.
 * Tests use synthetic data and hand written Finnhub fixtures only.
 * Docs pushed to GitHub carry no feed quality numbers, which stay under `data/v2/checks`.
@@ -1529,7 +1528,7 @@ If any gate slips, the launch moves to the first Monday after a passed rehearsal
 
 ## 17. First live session checks
 
-Checks marked **owner** print prices, volumes, headlines, fills or per symbol figures, so the owner runs them with `--detail` in their own terminal. Every other check prints verdicts and counts only.
+Checks marked **owner** print prices, volumes, headlines, fills or per symbol figures with `--detail`, and since 12 October 2026 the assistant session may run them on the owner's behalf. Every other check prints verdicts and counts only.
 
 **Before the first connection.** The owner approves the first use of the Finnhub key and confirms the Mac owns the one connection. `check-secrets` reports the three names in a mode 600 file, the secret scan finds zero copies of any value, the version 1 suite and `test_v1_untouched` pass, runs A to D show unchanged heartbeats, and `check-local` passes, with no tunnel process and both dashboard ports on loopback only.
 
@@ -1550,7 +1549,7 @@ Checks marked **owner** print prices, volumes, headlines, fills or per symbol fi
 * Finnhub accepts the token header, company news over two days returns items, `minId` returns only newer ids, and bytes per call are logged.
 * No Finnhub 429 with the websocket and collector together, with REST at or under 10 calls a minute.
 * The Atom feed parses, the CIKs match `company_tickers.json`, and every first poll is all seed.
-* `news-status` prints by default a passed order verdict, `received_at` never decreasing and equal to `seq` order, and a passed backlog verdict, no backlog outside restarts and outages. No assistant session queries the database itself.
+* `news-status` prints by default a passed order verdict, `received_at` never decreasing and equal to `seq` order, and a passed backlog verdict, no backlog outside restarts and outages.
 * **Owner** checks the first filing for any of the seven against sec.gov and reads the headline samples.
 * If a scheduled release falls in the week, its fast window works and its delay from schedule to receipt is recorded.
 
