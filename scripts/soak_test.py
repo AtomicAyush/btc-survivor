@@ -16,11 +16,13 @@ This process reads the recordings, generates the synthetic one and pipes every l
 only the engine and the adapter, so the child's memory is what a live run holds. At the end of every replayed hour
 the child stops reading while this process reads its current resident memory from outside, because macOS only
 exposes peak memory to the process itself. The plan's rule is that memory at the end is no more than 5 MB above
-memory at the end of the first replayed hour. Only a Linux reading from /proc, the number the live heartbeat shows,
-decides it. macOS keeps freed pages resident for a while and returns them in bursts, so on a Mac the rule is
-reported as inconclusive, unless the memory the allocators report in use grew past the limit too, which fails on
-any system. The run also fails if any balance check fails or the child does not exit cleanly. Everything is written
-into a new folder under data/soak. The exit code is 0 for passed, 1 for failed and 3 for inconclusive.
+memory at the end of the first replayed hour. On Linux, the system of the Raspberry Pi, resident memory read from
+/proc decides it, because that is the number the live heartbeat shows and the Pi's memory is tight. On a Mac host
+the owner set no tight memory budget, and macOS keeps freed pages resident and returns them in bursts, so there the
+rule is judged on the memory the allocators report in use, the measure a leak moves, with resident memory reported
+beside it. Without an in use reading the result is inconclusive. The run also fails if any balance check fails or
+the child does not exit cleanly. Everything is written into a new folder under data/soak. The exit code is 0 for
+passed, 1 for failed and 3 for inconclusive.
 
     python scripts/soak_test.py [--synthetic-hours 120] [--resync-minutes 120] [--out data/soak/NAME]
 """
@@ -678,10 +680,10 @@ def _growth(name: str, samples: list[dict], end: dict, limit_mb: float) -> dict 
 
 
 def memory_verdict(samples: list[dict], end: dict | None, limit_mb: float = MAX_GROWTH_MB) -> dict:
-    """The plan's rule: resident memory at the end at most limit_mb above it at the end of the first replayed hour.
+    """The plan's rule: memory at the end at most limit_mb above it at the end of the first replayed hour.
 
-    A Linux reading from /proc decides it. Elsewhere the rule only fails when the memory the allocators report in
-    use grew past the limit as well, and otherwise the result is inconclusive.
+    A Linux reading of resident memory from /proc decides it, as on the Pi. On a Mac host the memory the allocators
+    report in use decides it, and without that reading the result is inconclusive.
     """
     end = end or {}
     rss = _growth("rss_mb", samples, end, limit_mb)
@@ -692,24 +694,24 @@ def memory_verdict(samples: list[dict], end: dict | None, limit_mb: float = MAX_
     for s in samples:
         s["in_use_mb"] = _in_use(s)
     end["in_use_mb"] = _in_use(end)
-    result = {"source": source, "decisive": source == "proc", "limit_mb": limit_mb, **rss,
-              "footprint": _growth("footprint_mb", samples, end, limit_mb),
-              "in_use": _growth("in_use_mb", samples, end, limit_mb)}
-    in_use = result["in_use"]
-    if result["decisive"]:
+    in_use = _growth("in_use_mb", samples, end, limit_mb)
+    judged_on = "resident" if source == "proc" else "in_use" if in_use is not None else None
+    result = {"source": source, "judged_on": judged_on, "decisive": judged_on is not None, "limit_mb": limit_mb,
+              **rss, "footprint": _growth("footprint_mb", samples, end, limit_mb), "in_use": in_use}
+    if judged_on == "resident":
         outcome = "passed" if rss["rule_held"] else "failed"
-    elif not rss["rule_held"] and in_use is not None and not in_use["rule_held"]:
-        outcome = "failed"
+    elif judged_on == "in_use":
+        outcome = "passed" if in_use["rule_held"] else "failed"
     else:
         outcome = "inconclusive"
     result["outcome"] = outcome
     grew = f"memory grew {rss['growth_mb']} MB after the first hour against the {limit_mb} MB limit"
-    if outcome == "passed":
+    if judged_on == "resident":
         result["reason"] = f"{grew}, read from /proc"
-    elif outcome == "failed" and result["decisive"]:
-        result["reason"] = f"{grew}, read from /proc"
-    elif outcome == "failed":
-        result["reason"] = f"{grew}, and memory in use by the allocators grew {in_use['growth_mb']} MB"
+    elif judged_on == "in_use":
+        result["reason"] = (f"memory in use by the allocators grew {in_use['growth_mb']} MB after the first hour "
+                            f"against the {limit_mb} MB limit, the rule on a Mac host, while resident memory read "
+                            f"with {source} grew {rss['growth_mb']} MB")
     else:
         others = "".join(f", {label} grew {g['growth_mb']} MB" for label, g in (
             ("the physical footprint", result["footprint"]), ("memory in use", in_use)) if g is not None)

@@ -199,17 +199,24 @@ def test_on_linux_memory_may_grow_by_exactly_the_limit_and_no_more():
     assert missing["outcome"] == "failed" and "no memory reading" in missing["reason"]
 
 
-def test_on_macos_the_rule_is_inconclusive_unless_memory_in_use_grew_too():
+def test_on_a_mac_memory_in_use_decides_and_resident_memory_is_only_reported():
     mac = "proc_pid_rusage"
     held = soak.memory_verdict([reading(1, 100.0, mac, 30.0, 20.0)], reading(30, 101.0, mac, 30.5, 20.0))
-    assert held["outcome"] == "inconclusive" and not held["decisive"] and held["rule_held"]
+    assert held["outcome"] == "passed" and held["decisive"] and held["judged_on"] == "in_use"
     retained = soak.memory_verdict([reading(1, 100.0, mac, 30.0, 20.0)], reading(30, 112.0, mac, 31.0, 20.5))
-    assert retained["outcome"] == "inconclusive" and not retained["rule_held"]
-    assert retained["in_use"]["growth_mb"] == 1.5 and retained["in_use"]["rule_held"]
-    leaked = soak.memory_verdict([reading(1, 100.0, mac, 30.0, 20.0)], reading(30, 112.0, mac, 40.0, 21.0))
-    assert leaked["outcome"] == "failed" and "in use by the allocators grew 11.0 MB" in leaked["reason"]
+    assert retained["outcome"] == "passed" and not retained["rule_held"]
+    assert retained["in_use"]["growth_mb"] == 1.5 and "resident memory read with" in retained["reason"]
+    edge = soak.memory_verdict([reading(1, 100.0, mac, 30.0, 20.0)], reading(30, 100.0, mac, 35.0, 20.0))
+    assert edge["outcome"] == "passed" and edge["in_use"]["growth_mb"] == 5.0
+    leaked = soak.memory_verdict([reading(1, 100.0, mac, 30.0, 20.0)], reading(30, 100.0, mac, 35.0, 20.01))
+    assert leaked["outcome"] == "failed" and "in use by the allocators grew 5.01 MB" in leaked["reason"]
     unknown = soak.memory_verdict([reading(1, 100.0, mac)], reading(30, 112.0, mac))
-    assert unknown["outcome"] == "inconclusive" and unknown["in_use"] is None
+    assert unknown["outcome"] == "inconclusive" and unknown["in_use"] is None and not unknown["decisive"]
+
+
+def test_on_linux_resident_memory_decides_even_when_memory_in_use_is_flat():
+    retained = soak.memory_verdict([reading(1, 100.0, "proc", 30.0, 20.0)], reading(30, 112.0, "proc", 30.5, 20.0))
+    assert retained["outcome"] == "failed" and retained["judged_on"] == "resident"
 
 
 def test_the_verdict_reports_the_worst_reading_and_the_recent_slope():
@@ -223,9 +230,9 @@ def test_the_verdict_reports_the_worst_reading_and_the_recent_slope():
 
 def test_a_short_soak_reports_memory_cpu_checks_the_gap_flatten_and_evolution(clean_soak):
     report, out, code = clean_soak["report"], clean_soak["out"], clean_soak["code"]
-    expected = "passed" if LINUX else "inconclusive"
+    expected = "passed" if LINUX or sys.platform == "darwin" else "inconclusive"
     assert report["outcome"] == expected and code == soak.EXIT_CODES[expected] and report["worker_exit_code"] == 0
-    assert report["passed"] is LINUX
+    assert report["passed"] is (expected == "passed")
     assert report["label"] == soak.PLUMBING_LABEL and "never used to choose" in report["never_for_selection"]
     assert [r["source"] for r in report["recordings"]] == [str(clean_soak["done"]), str(clean_soak["live"])]
     live, before = clean_soak["live"], clean_soak["before"]
@@ -268,8 +275,7 @@ def test_a_leak_fails_the_soak(tmp_path):
     run = short_soak(tmp_path, "--leak-kb-per-message", "1")
     report = run["report"]
     assert report["outcome"] == "failed" and report["passed"] is False and run["code"] == 1
-    assert "memory grew" in report["verdict"] and report["checks"]["passed"]
-    assert report["memory"]["growth_mb"] > soak.MAX_GROWTH_MB
+    assert "grew" in report["verdict"] and report["checks"]["passed"]
     if sys.platform == "darwin" or LINUX:
         assert report["memory"]["in_use"]["growth_mb"] > soak.MAX_GROWTH_MB
 
