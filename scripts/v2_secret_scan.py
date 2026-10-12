@@ -3,7 +3,8 @@
 It takes every value the secrets reader holds, without naming a key, and looks for each one, ignoring case, in every
 file the repository tracks or would add, every staged version in the index, every file under data/v2, any log
 folder given, and every object from the remote branch to HEAD, which covers each blob, tree, commit message and
-author and committer field. Gzip files are read decompressed. It prints only counts and paths, never a value, and
+author and committer field. Gzip files are read decompressed as a stream, so a recording still being written is
+read up to its last flush and a file of several gzip members is read whole. It prints only counts and paths, never a value, and
 exits 1 when anything holds a value.
 
     python scripts/v2_secret_scan.py [--logs FOLDER ...] [--base REF]
@@ -12,10 +13,10 @@ exits 1 when anything holds a value.
 from __future__ import annotations
 
 import argparse
-import gzip
 import subprocess
 import sys
-from collections.abc import Iterable
+import zlib
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 from btc_survivor.v2.local_secrets import DEFAULT_PATH, SecretsError, load_secrets
@@ -24,6 +25,7 @@ ROOT = Path(__file__).resolve().parent.parent
 REMOTE_BRANCH = "origin/feat/v2-stocks"
 FORK_BRANCHES = ("origin/feat/initial-bot", "feat/initial-bot")
 CHUNK_BYTES = 1 << 24
+GZIP_READ_BYTES = 1 << 20
 
 
 def git(root: Path, *args: str, data: bytes | None = None) -> bytes:
@@ -41,16 +43,33 @@ def holds(values: list[bytes], data: bytes) -> bool:
     return any(value in data for value in values)
 
 
+def chunks(path: Path) -> Iterator[bytes]:
+    """The file's contents in pieces, inflating gzip member by member and stopping quietly where a file still being
+    written ends, since the gzip module refuses a file without its end marker."""
+    with path.open("rb") as fh:
+        if path.suffix != ".gz":
+            while chunk := fh.read(CHUNK_BYTES):
+                yield chunk
+            return
+        inflate = zlib.decompressobj(zlib.MAX_WBITS | 16)
+        while raw := fh.read(GZIP_READ_BYTES):
+            while raw:
+                yield inflate.decompress(raw)
+                raw = inflate.unused_data if inflate.eof else b""
+                if inflate.eof:
+                    inflate = zlib.decompressobj(zlib.MAX_WBITS | 16)
+        yield inflate.flush()
+
+
 def file_holds(values: list[bytes], path: Path) -> bool:
     """Read a file in chunks that overlap by one value length, so a value split across two chunks is still found."""
     overlap = max(map(len, values)) - 1
     tail = b""
-    with (gzip.open(path, "rb") if path.suffix == ".gz" else path.open("rb")) as fh:
-        while chunk := fh.read(CHUNK_BYTES):
-            data = (tail + chunk).lower()
-            if holds(values, data):
-                return True
-            tail = data[len(data) - overlap:]
+    for chunk in chunks(path):
+        data = (tail + chunk).lower()
+        if holds(values, data):
+            return True
+        tail = data[max(0, len(data) - overlap):]
     return False
 
 

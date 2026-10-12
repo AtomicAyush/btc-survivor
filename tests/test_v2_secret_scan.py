@@ -3,6 +3,7 @@
 import gzip
 import subprocess
 import sys
+import zlib
 
 import pytest
 
@@ -11,7 +12,7 @@ from btc_survivor.v2.local_secrets import ANTHROPIC, CONTACT, FINNHUB
 from helpers import ROOT
 
 sys.path.insert(0, str(ROOT / "scripts"))
-from v2_secret_scan import main  # noqa: E402
+from v2_secret_scan import file_holds, main  # noqa: E402
 
 FAKE = {FINNHUB: "fakefinnhub0001token", ANTHROPIC: "fake-anthropic-0002-value", CONTACT: "fake.owner@example.invalid"}
 GIT = ["git", "-c", "user.name=Fake Owner", "-c", "user.email=owner@example.invalid", "-c", "commit.gpgsign=false"]
@@ -109,3 +110,20 @@ def test_an_unsafe_secrets_file_stops_the_scan_without_a_value(tmp_path, capsys)
     secrets.chmod(0o644)
     code, lines = run(repo, secrets, capsys)
     assert code == 2 and lines == []
+
+
+def test_a_recording_still_being_written_is_read_up_to_its_last_flush(tmp_path):
+    path = tmp_path / "live.jsonl.gz"
+    with path.open("wb") as raw:
+        fh = gzip.GzipFile(fileobj=raw, mode="wb")
+        fh.write(b"x" * 300_000 + f"token {FAKE[FINNHUB]}\n".encode())
+        fh.flush(zlib.Z_SYNC_FLUSH)
+        raw.flush()
+        assert file_holds([FAKE[FINNHUB].encode()], path)
+        assert not file_holds([FAKE[ANTHROPIC].encode()], path)
+
+
+def test_every_member_of_a_gzip_file_is_read(tmp_path):
+    path = tmp_path / "joined.jsonl.gz"
+    path.write_bytes(gzip.compress(b"first part\n") + gzip.compress(f"second {FAKE[CONTACT]}\n".encode()))
+    assert file_holds([FAKE[CONTACT].encode()], path)
