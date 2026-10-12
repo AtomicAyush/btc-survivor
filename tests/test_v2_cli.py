@@ -1,6 +1,6 @@
 """The btc_survivor_v2 command line, with fixed listings for check-local, a fake secrets file for check-secrets and the
-news dry run, test folders for init-db and news-status and a synthetic recording for tape-check, so no test reads this
-machine's sockets, the real secrets file, data/v2 or the network."""
+news dry run, test folders for init-db, news-status and the stock commands and synthetic recordings for tape-check and
+replay, so no test reads this machine's sockets, the real secrets file, data/v2 or the network."""
 
 import argparse
 import os
@@ -15,25 +15,31 @@ import pytest
 
 from btc_survivor import __version__
 from btc_survivor.replay import NEVER_FOR_SELECTION
-from btc_survivor.v2 import localcheck, sessions
+from btc_survivor.v2 import dashboard, evaluate, export, localcheck, sessions, status
 from btc_survivor.v2.__main__ import build_parser, main
 from btc_survivor.v2.config import load_news_config
 from btc_survivor.v2.local_secrets import CONTACT, DEFAULT_PATH, FINNHUB, REFUSED
 from btc_survivor.v2.news.schedule import Schedule
+from btc_survivor.v2.stocks import process as stock_process
+from btc_survivor.v2.stocks import replay as stock_replay
 from btc_survivor.v2.stocks import synthetic, tapecheck
 from helpers import ROOT
+from test_v2_group import CANARY, FAST, THU, at, raw_tape, write_pair
+from v2_feedkit import script_env
 
 SECTION_3 = ["init-db", "stocks", "news", "news-status", "tape-check", "evaluate", "status", "export", "replay",
              "dashboard", "check-secrets", "check-local"]
 
-NOT_BUILT = [
-    ["stocks", "s1.toml", "s2.toml"],
-    ["evaluate", "s1.toml", "s2.toml"],
-    ["status", "s1.toml", "s2.toml", "--detail"],
-    ["export", "s1.toml"],
-    ["replay", "s1.toml", "one.jsonl", "two.jsonl", "--out", "replayed"],
-    ["dashboard", "s1.toml", "s2.toml"],
+# Each subcommand of Phases 16 and 17 with arguments its own module parses, and the module whose run it reaches.
+LATER = [
+    (["stocks", "s1.toml", "s2.toml", "--dry-run"], stock_process),
+    (["evaluate", "s1.toml", "s2.toml", "--detail"], evaluate),
+    (["status", "s1.toml", "s2.toml", "--detail"], status),
+    (["export", "s1.toml"], export),
+    (["replay", "s1.toml", "one.jsonl", "two.jsonl", "--out", "replayed", "--detail"], stock_replay),
+    (["dashboard", "s1.toml", "s2.toml", "--port", "8061"], dashboard),
 ]
+MODEL_RUNTIMES = ("anthropic", "onnxruntime", "tokenizers", "pydantic", "torch")
 
 LOOPBACK_LSOF = "p501\ncPython\nf7\nn127.0.0.1:8050\np502\ncPython\nf9\nn127.0.0.1:8060\n"
 EXPOSED_LSOF = LOOPBACK_LSOF + "p777\ncnc\nf3\nn0.0.0.0:8060\n"
@@ -73,11 +79,20 @@ def test_the_console_script_points_at_main():
     assert 'btc_survivor_v2 = "btc_survivor.v2.__main__:main"' in (ROOT / "pyproject.toml").read_text()
 
 
-@pytest.mark.parametrize("argv", NOT_BUILT, ids=[a[0] for a in NOT_BUILT])
-def test_a_later_subcommand_fails_clearly_with_exit_code_2(argv, capsys):
-    assert main(argv) == 2
-    out, err = capsys.readouterr()
-    assert out == "" and err == f"error: {argv[0]} is not built yet\n"
+@pytest.mark.parametrize("argv, module", LATER, ids=[a[0] for a, _ in LATER])
+def test_a_later_subcommand_reaches_its_module_with_the_arguments_that_module_parses(argv, module, monkeypatch):
+    seen = []
+    monkeypatch.setattr(module, "run", lambda args: seen.append(args) or 0)
+    assert main(argv) == 0
+    expected = vars(module.build_parser().parse_args(argv[1:]))
+    assert len(seen) == 1 and {k: v for k, v in vars(seen[0]).items() if k in expected} == expected
+
+
+def test_the_command_line_loads_no_model_runtime_so_the_stock_process_never_does():
+    script = ("import sys\nimport btc_survivor.v2.__main__\n"
+              f"print(','.join(name for name in {MODEL_RUNTIMES!r} if name in sys.modules))")
+    done = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=60, cwd=ROOT)
+    assert (done.returncode, done.stdout, done.stderr) == (0, "\n", "")
 
 
 def test_replay_help_says_it_never_chooses_tunes_or_ranks(capsys):
@@ -218,9 +233,40 @@ def test_init_db_refuses_a_database_of_another_kind(tmp_path, capsys):
     assert out == "" and err.startswith("error: ") and "meta.kind is 'stocks'" in err
 
 
-def test_init_db_for_a_stock_run_config_waits_for_phase_16_and_a_version_1_config_is_refused(capsys):
-    assert main(["init-db", str(S1)]) == 2
-    assert capsys.readouterr().err == "error: init-db for a stock run config is not built yet\n"
+def stock_copy(tmp_path):
+    """The committed S1 config copied two folders below tmp_path, so its data_dir lands in tmp_path/data."""
+    path = tmp_path / "configs" / "v2" / "s1_prices.toml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(S1.read_text(encoding="utf-8"), encoding="utf-8")
+    return path, tmp_path / "data" / "v2" / "s1_prices" / "stocks.db"
+
+
+def test_init_db_creates_a_run_database_owner_only_then_checks_it(tmp_path, capsys):
+    config, path = stock_copy(tmp_path)
+    umask = umask_now()
+    assert main(["init-db", str(config)]) == 0
+    assert capsys.readouterr().out.splitlines() == ["init db", "verdict: pass", "kind: stocks", "database: created"]
+    assert umask_now() == umask
+    assert mode(path) == 0o600
+    assert [mode(folder) for folder in (path.parent, path.parent.parent, tmp_path / "data")] == [0o700] * 3
+    assert main(["init-db", str(config)]) == 0
+    assert capsys.readouterr().out.splitlines()[-1] == "database: checked"
+
+
+def test_init_db_refuses_a_news_database_at_a_run_path_and_a_version_1_config(tmp_path, capsys):
+    config, path = stock_copy(tmp_path)
+    path.parent.mkdir(parents=True)
+    other = sqlite3.connect(path)
+    other.executescript("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+                        "INSERT INTO meta VALUES ('kind', 'news');")
+    other.close()
+    assert main(["init-db", str(config)]) == 2
+    out, err = capsys.readouterr()
+    assert out == "" and err.startswith("error: ") and "meta.kind is 'news', not 'stocks'" in err
+    other = sqlite3.connect(path)
+    assert other.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall() == [("meta",)]
+    assert other.execute("SELECT key, value FROM meta").fetchall() == [("kind", "news")]
+    other.close()
     assert main(["init-db", str(ROOT / "configs" / "run_a.toml")]) == 2
     assert "is not a version 2 config" in capsys.readouterr().err
 
@@ -237,7 +283,8 @@ def test_news_dry_run_runs_through_the_command_line_with_fake_secrets(tmp_path):
     channels = len(Schedule(load_news_config(config)).channels)
     assert (done.returncode, done.stderr) == (0, "")
     assert done.stdout.splitlines() == ["news dry run", "verdict: pass", f"channels: {channels}",
-                                        "sources enabled: 4", "lock: taken and released"]
+                                        "sources enabled: 4", "lock: taken and released",
+                                        "scoring: waits for the finbert pins"]
     assert not path.parent.exists() and FAKE[FINNHUB] not in done.stdout and FAKE[CONTACT] not in done.stdout
 
 
@@ -269,3 +316,42 @@ def test_tape_check_runs_through_the_command_line_on_a_synthetic_recording(tmp_p
     assert lines[-1] == "8 rows hidden, pass --detail in your own terminal to see them"
     assert main(["tape-check", str(tmp_path / "missing"), str(official), "--config", str(S1)]) == 2
     assert capsys.readouterr().err.startswith("error: no recording files")
+
+
+# The subcommands of Phases 16 and 17.
+
+
+def test_stocks_dry_run_through_the_command_line(tmp_path):
+    s1, s2 = write_pair(tmp_path, **FAST)
+    done = subprocess.run([sys.executable, "-m", "btc_survivor.v2", "stocks", str(s1), str(s2), "--dry-run",
+                           "--test-url", "ws://127.0.0.1:9"], capture_output=True, text=True, timeout=60,
+                          cwd=tmp_path, env=script_env(tmp_path))
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.splitlines() == ["stocks dry run", "verdict: pass", "runs: 2", "symbols: 8",
+                                        "lock: taken and released"]
+    assert CANARY not in done.stdout + done.stderr and not (tmp_path / "data").exists()
+
+
+def test_replay_through_the_command_line(tmp_path, capsys):
+    _, s2 = write_pair(tmp_path, **FAST)
+    files = synthetic.write_recording(tmp_path / "rec", raw_tape(at(THU, "09:20"), at(THU, "09:50")))
+    assert main(["replay", str(s2), *map(str, files), "--out", str(tmp_path / "out")]) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert out[:2] == ["stock replay", "verdict: pass"] and out[-1] == NEVER_FOR_SELECTION
+    assert main(["replay", str(s2), *map(str, files), "--out", str(tmp_path / "out")]) == 2
+    assert "not empty" in capsys.readouterr().err
+
+
+def test_status_export_and_dashboard_refuse_missing_runs_and_the_version_1_port(tmp_path, capsys):
+    import v2_runkit as kit
+    s1, s2, _ = kit.configs(tmp_path)
+    for argv in (["status", s1, s2], ["export", s1]):
+        assert main([str(a) for a in argv]) == 2
+        assert "stocks.db does not exist" in capsys.readouterr().err
+    assert main(["dashboard", str(s1), str(s2), "--port", "8050"]) == 2
+    assert "port 8050 belongs to the version 1 dashboard" in capsys.readouterr().err
+
+
+def test_evaluate_refuses_a_version_1_config(capsys):
+    assert main(["evaluate", str(ROOT / "configs" / "run_a.toml"), str(S1)]) == 2
+    assert capsys.readouterr().err.startswith("error: ")

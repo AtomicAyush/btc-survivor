@@ -455,7 +455,8 @@ def test_llm_subtables_load_nested():
     assert cfg.llm.sonnet.max_tokens == 1024
     assert cfg.llm.caps.reserve_overhead_tokens == 1000
     assert cfg.llm.prices.sonnet_output_per_mtok == 10.0
-    assert cfg.calendar.fomc_statement == ("2026-10-28T14:00", "2026-12-09T14:00")
+    assert cfg.calendar.fomc_statement == ("2026-10-28T14:00", "2026-12-09T14:00", "2027-01-27T14:00",
+                                           "2027-03-17T14:00")
     assert cfg.finnhub.regular_window_et == ("09:30", "16:00")
 
 

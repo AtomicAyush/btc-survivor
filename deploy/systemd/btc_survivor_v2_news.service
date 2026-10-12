@@ -1,0 +1,26 @@
+# BTC Survivor version 2, the news process of PLAN_V2 sections 14.3 and 14.5, for the move to a Raspberry Pi after
+# the window. It collects news into data/v2/news/news.db and scores it, and no real order is ever placed.
+# Nothing installs this file. It is installed only with the owner's approval, together with
+# btc_survivor_v2_stocks.service, because the two share news.db, by the steps in docs/v2_operations.md.
+# Replace CHANGE_ME with the user that owns the project folder before installing.
+# Enable systemd-time-wait-sync.service too, or time-sync.target does not wait for a real clock.
+
+[Unit]
+Description=BTC Survivor version 2 news process
+Wants=network-online.target
+After=network-online.target time-sync.target
+
+[Service]
+Type=simple
+User=CHANGE_ME
+WorkingDirectory=/home/CHANGE_ME/btc_survivor_v2
+Environment=PYTHONUNBUFFERED=1 OPENBLAS_NUM_THREADS=1
+UMask=0077
+ExecStart=/home/CHANGE_ME/btc_survivor_v2/.venv-v2/bin/btc_survivor_v2 news configs/v2/news.toml
+Restart=always
+RestartSec=10
+KillSignal=SIGTERM
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

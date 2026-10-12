@@ -1,0 +1,130 @@
+# Rehearsal run S2, prices plus the two news inputs. PLUMBING ONLY, never a strategy setting.
+# The live rehearsal of PLAN_V2 section 16 phase 19 runs this file with rehearsal_s1.toml, and scripts/v2_soak.py
+# replays with the pair by default. Only four values differ from s2_news.toml. [run] name and data_dir give the
+# rehearsal its own name and folder under data/v2/rehearsal, and the 30 training minutes of warmup and the forced
+# timer of 30 healthy minutes exist only so trading runs live on the second rehearsal session. Nothing here is ever
+# used to choose, tune or rank strategies, and the launch never uses this file. It reads the production news.db
+# read only and records into the production raw folder. Relative paths are resolved from this folder.
+
+[run]
+kind = "stocks"
+name = "rehearsal_s2"
+master_seed = 12345
+data_dir = "../../data/v2/rehearsal/s2_news"
+log_level = "INFO"
+secrets_file = "~/.config/btc_survivor/secrets.env"
+
+[stock_feed]                              # identical in both runs of one stock process
+provider = "finnhub"
+symbols = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "QQQ"]
+index_symbol = "QQQ"
+feed_stale_after_seconds = 5
+symbol_stale_after_seconds = 15
+max_print_delay_seconds = 2.0             # set after the first recorded session by the rule in section 4.5
+late_print_seconds = 4                    # twice max_print_delay_seconds
+price_excluded_conditions = []            # filled before launch from the meanings in Finnhub's published table
+reconnect_backoff_start_seconds = 5
+reconnect_backoff_max_seconds = 60
+mark_healthy_outside_session_seconds = 60
+record_raw_messages = true
+raw_dir = "../../data/v2/raw_stocks"
+keep_raw_days = 30
+lock_file = "~/.config/btc_survivor/finnhub_ws.lock"
+
+[session]
+first_open_session_minute = 30            # 10:00 ET
+last_open_minutes_before_close = 35       # 15:25 ET, 12:25 on early close days
+flatten_minutes_before_close = 5          # 15:55 ET
+calendar_warn_days = 60
+max_overnight_gap_pct = 25.0
+
+[news_input]
+use_news = true                           # false in S1
+news_db = "../../data/v2/news/news.db"
+poll_seconds = 1
+reopen_after_silent_seconds = 60
+heartbeat_max_age_seconds = 120
+half_life_session_minutes = 120
+drop_after_half_lives = 5
+
+[time]
+horizon_minutes = 30                      # session minutes, the only horizon
+history_session_minutes = 391
+warmup_hours = 0.5                        # plumbing only, 30 training minutes, never a strategy setting
+
+[features]
+return_windows_minutes = [30, 120]
+day_return_minutes = 390
+vol_window_minutes = 60
+volume_window_minutes = 30
+volume_baseline_minutes = 390
+volume_ratio_clip = 3.0
+tick_window_minutes = 30
+standardizer_half_life_hours = 168        # healthy session hours, also the label scale
+clip_z = 5.0
+min_samples = 30
+min_window_coverage = 0.8
+series_capacity_minutes = 420
+
+[model]
+inputs = 12                               # 10 price features plus two news inputs, pinned at zero in S1
+hidden_units = 16
+init_output_scale = 0.1
+batch_size = 16                           # newly matured samples plus draws from the window
+replay_window_minutes = 240               # session minutes, all symbols
+huber_delta = 1.0
+grad_clip = 5.0
+adam_beta1 = 0.9
+adam_beta2 = 0.999
+learning_rate = 0.0001                    # set by scripts/v2_learner_check.py on 12 October 2026, section 6.4
+weight_decay = 0.0001
+skill_window_samples = 360
+
+[trading]
+start_equity = 10000.0
+notional = 500.0
+qty_decimals = 6                          # longs
+short_whole_shares = true                 # nearest whole share, at least one
+margin_sigma = 0.25
+stop_loss_sigma = 3.0
+allow_short = true
+force_trade_after_hours = 0.5             # plumbing only, 30 healthy minutes, never a strategy setting
+
+[stock_costs]
+commission_per_order = 0.0
+half_spread_bps = { AAPL = 1.0, MSFT = 1.0, NVDA = 1.0, AMZN = 1.0, GOOGL = 1.0, META = 2.0, TSLA = 2.0, QQQ = 0.5 }
+extra_slippage_bps = 1.0
+sec_fee_per_million = 20.60               # SEC fee rate advisory, from 4 Apr 2026
+finra_taf_per_share = 0.000195            # charged through the pause from 1 Oct to 31 Dec 2026
+finra_taf_max_per_trade = 9.79
+fee_round_up_to_cent = true
+short_borrow_pct_per_year = 1.0
+short_sale_restriction_drop_pct = 10.0
+latency_ms = 1000
+latency_jitter_ms = 300
+daily_running_cost = 1.16                 # 4.23 percent T bill yield on 10,000, 8 Oct 2026
+trading_days_per_year = 252
+
+[population]
+size = 24                                 # no replacement, a death leaves the slot empty
+
+[controls]
+coin_flip_twins = true
+
+[persistence]
+checkpoint_every_seconds = 300
+equity_snapshot_every_seconds = 300
+max_resume_gap_minutes = 10               # session minutes, per symbol
+keep_candles_days = 0                     # kept for the life of the run
+keep_checkpoints = 3
+
+[evaluation]                              # S2 only, copied into meta at launch and read from there
+confirmatory_predictor = "news"
+final_healthy_session_minutes = 15600     # run minutes from launch
+run_minute_rule = "news_healthy_and_any_symbol_healthy"
+burn_in_sessions = 1
+newey_west_lags = 12
+one_sided_z = 2.33
+upper_bound_z = 1.645
+interim_sessions = [10, 20]
+tape_check_sessions = [10, 20, 40]        # first clean full session at or after each

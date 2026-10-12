@@ -4,7 +4,7 @@ a failure message or the output.
 
 The real scan runs in a child process that prints only file names, because pytest shows the arguments of the frames
 of a failing test, and a frame of the secrets reader or of the scan would otherwise hold the file text or the address.
-Seeded dashboard JSON joins the scan when the private dashboard is built.
+The JSON the private dashboard serves for seeded runs joins the scan, so a page can never carry the address either.
 """
 
 import hashlib
@@ -106,6 +106,28 @@ def test_the_scan_covers_this_repository():
     assert "PLAN_V2.md" in {name for name, _ in index_blobs()}
 
 
+def seeded_page_holds(found):
+    """Whether the dashboard's JSON for seeded runs holds the address, built in a temporary folder."""
+    import tempfile
+
+    import v2_runkit as kit
+    from btc_survivor.v2 import dashboard
+    from btc_survivor.v2.config import load_run_pair
+    with tempfile.TemporaryDirectory() as folder:
+        runs = kit.seeded(Path(folder))
+        page = dashboard.body(dashboard.build_state(*load_run_pair(runs.s1, runs.s2), kit.ms(kit.NOW)))
+    return holds(*found, page)
+
+
+def test_the_scan_reads_the_seeded_dashboard_json(monkeypatch):
+    from btc_survivor.v2 import dashboard
+    fake = "planted.person@example.invalid"
+    assert not seeded_page_holds(fingerprint(fake))
+    built = dashboard.build_state
+    monkeypatch.setattr(dashboard, "build_state", lambda *args: {**built(*args), "planted": fake.upper()})
+    assert seeded_page_holds(fingerprint(fake))
+
+
 # Prints one line per hit and then done, or skip and a reason, or error and an exception type, and never a value.
 REAL_SCAN = """
 import sys
@@ -124,6 +146,8 @@ try:
     del secrets
     for name in scan.files_holding(*found, scan.repository_files(), scan.ROOT):
         print("hit " + name)
+    if scan.seeded_page_holds(found):
+        print("hit seeded dashboard json")
     for name in scan.index_holding(*found):
         print("hit index:" + name)
     print("done")

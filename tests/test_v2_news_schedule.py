@@ -17,7 +17,8 @@ from helpers import ROOT
 EDT, EST, UTC = timezone(timedelta(hours=-4)), timezone(timedelta(hours=-5)), timezone.utc
 SECOND = 1000
 CONFIG = load_news_config(ROOT / "configs" / "v2" / "news.toml")
-# Fictional BLS release times for these tests only, in both offsets, and the FOMC statement days of the config.
+# A calendar for these tests only, kept apart from the committed one, with BLS releases in both offsets and the two
+# 2026 FOMC statement days. tests/test_v2_news_calendar.py checks the committed calendar.
 CALENDAR = CalendarConfig(
     fomc_statement=("2026-10-28T14:00", "2026-12-09T14:00"),
     cpi=("2026-10-14T08:30", "2026-11-10T08:30"),

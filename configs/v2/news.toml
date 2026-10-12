@@ -98,13 +98,54 @@ near_dup_min_tokens = 4
 macro_strip_pattern = '\b(NASDAQ|NYSE|NYSEARCA)\s*:\s*[A-Z.]+'
 alias_excludes_macro = true
 
-[calendar]                                # ET times copied from federalreserve.gov and bls.gov before launch, polling only
-                                          # every date through 31 Mar 2027, never changed after launch
-fomc_statement = ["2026-10-28T14:00", "2026-12-09T14:00"]   # unverified until copied, the 2027 dates added before launch
-cpi = []                                  # filled before launch
-empsit = []
-ppi = []
-jolts = []
+[calendar]                                # New York times from 12 Oct 2026 through 31 Mar 2027, polling only
+                                          # copied before launch and never changed after it, PLAN_V2 section 16
+# FOMC statements. Meeting dates from https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm, read 12 Oct 2026.
+# That page gives no time, so each statement takes 2 pm ET from the last one, the 16 Sep 2026 statement released at
+# 2 pm EDT by https://www.federalreserve.gov/newsevents/pressreleases/monetary20260916a.htm, read 12 Oct 2026. The
+# page calls each 2027 date tentative until the meeting before it confirms it.
+fomc_statement = [
+    "2026-10-28T14:00",                   # meeting of 27 and 28 Oct 2026
+    "2026-12-09T14:00",                   # meeting of 8 and 9 Dec 2026
+    "2027-01-27T14:00",                   # meeting of 26 and 27 Jan 2027, tentative on the page
+    "2027-03-17T14:00",                   # meeting of 16 and 17 Mar 2027, tentative on the page
+]
+# BLS releases, each comment naming the reference month. Dates and times from the release schedule pages
+# https://www.bls.gov/schedule/news_release/cpi.htm, empsit.htm, ppi.htm and jolts.htm, each read 12 Oct 2026, and
+# checked against the monthly pages https://www.bls.gov/schedule/2026/10_sched.htm through 2027/03_sched.htm, read the
+# same day. The release pages start at the October 2026 reference month, so each September 2026 release comes from the
+# October or November 2026 monthly page and the next release line of https://www.bls.gov/cpi/, https://www.bls.gov/ppi/
+# or https://www.bls.gov/jlt/, read 12 Oct 2026.
+cpi = [
+    "2026-10-14T08:30",                   # September 2026
+    "2026-11-10T08:30",                   # October 2026
+    "2026-12-10T08:30",                   # November 2026
+    "2027-01-13T08:30",                   # December 2026
+    "2027-02-11T08:30",                   # January 2027
+    "2027-03-10T08:30",                   # February 2027
+]
+empsit = [                                # the September 2026 release on 2 Oct 2026 came before the window
+    "2026-11-06T08:30",                   # October 2026
+    "2026-12-04T08:30",                   # November 2026
+    "2027-01-08T08:30",                   # December 2026
+    "2027-02-05T08:30",                   # January 2027
+    "2027-03-05T08:30",                   # February 2027, and March 2027 follows on 2 Apr 2027 after the window
+]
+ppi = [
+    "2026-10-15T08:30",                   # September 2026
+    "2026-11-13T08:30",                   # October 2026
+    "2026-12-15T08:30",                   # November 2026
+    "2027-01-14T08:30",                   # December 2026
+    "2027-02-12T08:30",                   # January 2027
+    "2027-03-12T08:30",                   # February 2027
+]
+# JOLTS is unverified after 1 Dec 2026. No BLS page read on 12 Oct 2026 lists a JOLTS release for the November 2026
+# reference month or later, and the 2027 monthly pages list none at all, so those releases are left out rather than
+# guessed. Dates BLS lists before launch are added then, and none can be added after it.
+jolts = [
+    "2026-11-03T10:00",                   # September 2026, from 2026/11_sched.htm and the jlt page
+    "2026-12-01T10:00",                   # October 2026
+]
 
 [llm]                                     # Haiku, on every routed item
 enabled = true
@@ -113,9 +154,9 @@ effort = "low"                            # the only accepted value
 thinking = "disabled"                     # the only accepted value
 scorer_name = "haiku_v1"
 prompt_file = "prompt_v1.txt"
-prompt_sha256 = ""                        # pinned at build
+prompt_sha256 = "0fe8e7e3d2bb4a0071c243d1be7286f06e259e0f10ea76a5371b0107d8d551f1"   # pinned at build
 schema_file = "schema_v1.json"
-schema_sha256 = ""                        # pinned at build
+schema_sha256 = "8790e26b03adebcc245fee6ea9c85eafcaf68c158c1d4e440cb7d211da8a58a6"   # pinned at build
 request_timeout_seconds = 60
 max_tokens = 4096
 flush_max_items = 20
@@ -138,7 +179,8 @@ probe_time_utc = "06:00"
 probe_alert_direction_agreement = 0.8     # probes run on Haiku only
 
 [llm.sonnet]                              # the comparison scorer, official items only
-enabled = true
+enabled = false                           # off until the owner picks a thinking setting, because Sonnet 5.5 answers
+                                          # thinking disabled with a 400, section 8.1
 model = "claude-sonnet-5-5"               # the only accepted value, and Opus is never accepted
 effort = "low"                            # the only accepted value
 thinking = "disabled"                     # the only accepted value
@@ -152,7 +194,7 @@ ledger_file = "~/.config/btc_survivor/llm_ledger.db"
 ledger_lock_file = "~/.config/btc_survivor/llm_ledger.lock"
 monthly_usd = 20.00                       # equal to the Console workspace limit, and no daily cap
 daily_alert_share = 0.25                  # a warning above 5 dollars in one UTC day, never a stop
-reserve_overhead_tokens = 1000            # byte bound only, checked against real overhead in Phase 15
+reserve_overhead_tokens = 1000            # the byte bound overhead, and the margin reserved over an exact count
 
 [llm.prices]                              # Anthropic pricing page, read 11 Oct 2026
 haiku_input_per_mtok = 0.10

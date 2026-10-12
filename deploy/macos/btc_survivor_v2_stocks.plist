@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+BTC Survivor version 2, the stock process of PLAN_V2 section 14.2, as a launchd agent of the logged in user. It runs
+both stock runs, S1 prices and S2 news, on the one Finnhub websocket the key allows, and no real order is ever
+placed. Nothing installs this file. It is installed only with the owner's approval, question 9 of PLAN_V2 section 19,
+by the steps in docs/v2_operations.md, which replace CHANGE_ME with the user that owns ~/code/btc_survivor_v2. Load
+it only at the launch, once the raw recorder has stopped, because the first start launches both runs.
+
+The shell starts caffeinate -s, which holds a sleep assertion while the Mac is on power for as long as the process
+runs, and then execs the process, so launchd signals the process itself and SIGTERM lets pending fills settle and
+checkpoints both runs. KeepAlive restarts it after any exit, at most once every ThrottleInterval seconds, and
+ExitTimeOut leaves the final checkpoint room before launchd sends SIGKILL. Interactive spares the one second ticker
+the CPU and I/O throttling launchd gives agents by default. PATH lists the system folders that hold git, ps, lsof,
+netstat and caffeinate, and the Homebrew folders, so the local only check finds a Homebrew tailscale. The log folder
+holds only redacted log lines and must exist first.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>btc_survivor_v2_stocks</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/sh</string>
+        <string>-c</string>
+        <string>/usr/bin/caffeinate -s -w $$ &amp; exec /Users/CHANGE_ME/code/btc_survivor_v2/.venv-v2/bin/btc_survivor_v2 stocks configs/v2/s1_prices.toml configs/v2/s2_news.toml</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/CHANGE_ME/code/btc_survivor_v2</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin</string>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+        <key>OPENBLAS_NUM_THREADS</key>
+        <string>1</string>
+    </dict>
+    <key>Umask</key>
+    <integer>63</integer>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>ExitTimeOut</key>
+    <integer>60</integer>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+    <key>StandardOutPath</key>
+    <string>/Users/CHANGE_ME/code/btc_survivor_v2/data/logs/v2/launchd/btc_survivor_v2_stocks.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/CHANGE_ME/code/btc_survivor_v2/data/logs/v2/launchd/btc_survivor_v2_stocks.log</string>
+</dict>
+</plist>

@@ -1,0 +1,35 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["items"],
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "impacts"],
+        "properties": {
+          "id": {"type": "string"},
+          "impacts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["ticker", "event_type", "is_new", "direction", "surprise", "horizon", "confidence"],
+              "properties": {
+                "ticker": {"type": "string", "enum": ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "QQQ", "MACRO"]},
+                "event_type": {"type": "string", "enum": ["earnings", "guidance", "product", "legal_regulatory", "mergers_acquisitions", "management", "capital_return", "financing", "analyst_rating", "partners_supply", "macro_policy", "macro_data", "market_commentary", "other"]},
+                "is_new": {"type": "boolean"},
+                "direction": {"type": "integer", "enum": [-1, 0, 1]},
+                "surprise": {"type": "integer", "enum": [0, 1, 2, 3]},
+                "horizon": {"type": "string", "enum": ["hours", "days", "weeks"]},
+                "confidence": {"type": "integer", "enum": [1, 2, 3, 4, 5]}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

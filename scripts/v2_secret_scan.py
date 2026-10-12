@@ -1,11 +1,11 @@
 """The secret scan of PLAN_V2 section 14.4, run before every push.
 
 It takes every value the secrets reader holds, without naming a key, and looks for each one, ignoring case, in every
-file the repository tracks or would add, every staged version in the index, every file under data/v2, any log
-folder given, and every object from the remote branch to HEAD, which covers each blob, tree, commit message and
-author and committer field. Gzip files are read decompressed as a stream, so a recording still being written is
-read up to its last flush and a file of several gzip members is read whole. It prints only counts and paths, never a value, and
-exits 1 when anything holds a value.
+file the repository tracks or would add, every staged version in the index, every file under data/v2, the log folders
+given, data/logs/v2 with the launchd logs by default, and every object from the remote branch to HEAD, which covers
+each blob, tree, commit message and author and committer field. Gzip files are read decompressed as a stream, so a
+recording still being written is read up to its last flush and a file of several gzip members is read whole. It prints
+only counts and paths, never a value, and exits 1 when anything holds a value.
 
     python scripts/v2_secret_scan.py [--logs FOLDER ...] [--base REF]
 """
@@ -142,7 +142,8 @@ def main(argv: list[str] | None = None) -> int:
                                                  "and the push range, printing only counts and paths.")
     parser.add_argument("--secrets-file", type=Path, default=DEFAULT_PATH)
     parser.add_argument("--root", type=Path, default=ROOT, help="the repository to scan")
-    parser.add_argument("--logs", type=Path, nargs="*", default=[], help="log folders, such as the launchd logs")
+    parser.add_argument("--logs", type=Path, nargs="*", help="log folders, by default data/logs/v2 of the repository, "
+                                                             "which holds the launchd logs")
     parser.add_argument("--base", help="scan objects from this ref to HEAD, by default the remote branch")
     args = parser.parse_args(argv)
     try:
@@ -150,7 +151,8 @@ def main(argv: list[str] | None = None) -> int:
         if not values:
             print("error: the secrets file holds no value to look for", file=sys.stderr)
             return 2
-        counts, hits = scan(args.root, values, args.logs, args.base or push_base(args.root))
+        logs = args.logs if args.logs is not None else [args.root / "data" / "logs" / "v2"]
+        counts, hits = scan(args.root, values, logs, args.base or push_base(args.root))
     except (SecretsError, OSError, subprocess.CalledProcessError) as exc:
         detail = str(exc) if isinstance(exc, SecretsError) else type(exc).__name__
         print(f"error: the scan could not run, {detail}", file=sys.stderr)

@@ -1,4 +1,4 @@
-"""The news process of PLAN_V2 sections 7.1 and 14.3, collecting only until Phase 15 adds the scorers.
+"""The news process of PLAN_V2 sections 7.1 and 14.3, which collects news and scores it with Haiku, Sonnet and FinBERT.
 
 It sets umask 077, installs redact before anything logs, reads secrets only through local_secrets, refuses a proxy or
 certificate variable, holds the Finnhub REST lock while Finnhub is enabled and opens news.db as its one writer. On every
@@ -6,10 +6,15 @@ start it writes the config hash, the prompt and schema hashes and both model ids
 when the hash moved, and starts its receive clock no earlier than the newest item, so seq order stays receive order even
 when the wall clock stepped back across a restart. It then runs a task per channel, writes a news_heartbeat row every
 heartbeat_seconds with a log line of counts once a minute, writes a pause event when the process was frozen, such as by
-sleep, and prunes once a day. Items are written with their route and never scored here. SIGTERM or Ctrl+C lets polls in
-flight finish for up to 20 seconds and exits with code 0, an expected failure such as a held lock exits with code 2, and
-a crash with code 1. --dry-run loads the config and secrets, takes and releases the lock and opens nothing on the
-network.
+sleep, and prunes once a day. Beside collection it runs the model scoring of news/scoring.py, Haiku and Sonnet on the
+key ledger, and the FinBERT scorer, with each scorer's state and the key's spend in every heartbeat. Scoring starts once
+[finbert] pins the export, and then the prompt and schema pins, the Anthropic key and the FinBERT files must all match
+or the process exits with code 2. Until any FinBERT pin is written it collects only, so a restart before the export
+never stops collection. The model runtimes load only when scoring starts, so a command that merely imports this module,
+such as the stock process through btc_survivor_v2, never loads anthropic or onnxruntime. SIGTERM or Ctrl+C lets polls in
+flight finish for up to 20 seconds and exits with code 0, an expected failure such as a held lock, a missing key or a
+FinBERT hash mismatch exits with code 2, and a crash with code 1. --dry-run loads the config and secrets, checks the
+pins and the FinBERT files when scoring is pinned, takes and releases the lock and opens nothing on the network.
 
     btc_survivor_v2 news configs/v2/news.toml [--dry-run]
 """
@@ -28,19 +33,26 @@ from collections import Counter
 from collections.abc import Awaitable, Callable, Iterator, Mapping
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from btc_survivor.clock import MS_PER_DAY, MS_PER_MINUTE, MS_PER_SECOND, LiveClock, iso, parse_iso
 from btc_survivor.logsetup import setup_logging
 from btc_survivor.v2 import output, redact
 from btc_survivor.v2.config import ConfigError, NewsConfig, load_news_config
-from btc_survivor.v2.local_secrets import REFUSED, SecretsError, load_secrets
+from btc_survivor.v2.local_secrets import ANTHROPIC, REFUSED, SecretsError, load_secrets
 from btc_survivor.v2.news import db, health
 from btc_survivor.v2.news.budget import Budget, rules_from_config
 from btc_survivor.v2.news.collector import Client, Collector, wait_or_stop
 from btc_survivor.v2.news.db import NewsDbError
 from btc_survivor.v2.news.http import HttpClient
+from btc_survivor.v2.news.ledger import Ledger, LedgerError, SpendWatch
+from btc_survivor.v2.news.llm_request import check_pins
 from btc_survivor.v2.news.prefilter import Prefilter
 from btc_survivor.v2.news.schedule import Schedule
+
+if TYPE_CHECKING:
+    from btc_survivor.v2.news.finbert_scorer import Model
+    from btc_survivor.v2.news.llm_scorer import Client as ModelClient
 
 log = logging.getLogger("btc_survivor.v2.news")
 
@@ -84,6 +96,13 @@ def refused_variables(environ: Mapping[str, str]) -> list[str]:
     return sorted(name for name, value in environ.items() if name.upper() in REFUSED and value)
 
 
+def scoring_pinned(config: NewsConfig) -> bool:
+    """Whether [finbert] pins the FinBERT export, which turns scoring on. With no pin at all the process collects only,
+    and with any pin every pin must match."""
+    settings = config.finbert
+    return any((settings.model_sha256, settings.tokenizer_sha256, settings.source_revision))
+
+
 def default_log_dir(config: NewsConfig) -> Path:
     """logs/v2/news two folders above data_dir, so data/logs/v2/news for the committed config."""
     return config.data_dir.parent.parent / "logs" / "v2" / "news"
@@ -115,9 +134,10 @@ def heartbeat_line(row: dict, counts: Counter[str]) -> str:
 
 
 async def beat(config: NewsConfig, collector: Collector, heart: health.Heartbeat, start_ms: int,
-               stop: asyncio.Event, wait: Callable[[asyncio.Event, float], Awaitable[bool]]) -> None:
-    """Write a heartbeat row every heartbeat_seconds and a log line of counts once a minute, and a pause event when a
-    beat comes far later than due, as after the laptop slept."""
+               stop: asyncio.Event, wait: Callable[[asyncio.Event, float], Awaitable[bool]],
+               scorers: Callable[[], health.Scorers] = health.Scorers, watch: SpendWatch | None = None) -> None:
+    """Write a heartbeat row with the scorer states and the key's spend every heartbeat_seconds and a log line of counts
+    once a minute, and a pause event when a beat comes far later than due, as after the laptop slept."""
     every_ms = config.news.heartbeat_seconds * MS_PER_SECOND
     clock = collector.clock
     last = clock.stamp()
@@ -130,7 +150,8 @@ async def beat(config: NewsConfig, collector: Collector, heart: health.Heartbeat
                                                            "detail": f"the process was paused for {seconds} s"})
             log.warning("the process was paused for %d s, such as by sleep", seconds)
         last = now
-        row = heart.write(now, collector.clock_check.clean, collector.last_ok(), start_ms)
+        spend = watch.check(now) if watch is not None else health.Spend()
+        row = heart.write(now, collector.clock_check.clean, collector.last_ok(), start_ms, scorers(), spend)
         if now - logged >= LOG_EVERY_MS:
             log.info("heartbeat %s", heartbeat_line(row, collector.counts))
             logged = now
@@ -151,10 +172,11 @@ async def prune_daily(config: NewsConfig, conn: sqlite3.Connection, clock: LiveC
 
 async def serve(config: NewsConfig, conn: sqlite3.Connection, client: Client, stop: asyncio.Event | None = None,
                 clock: LiveClock | None = None, budget: Budget | None = None,
-                wait: Callable[[asyncio.Event, float], Awaitable[bool]] = wait_or_stop) -> Counter[str]:
-    """Collect until stop is set, by default by SIGTERM or SIGINT, then let tasks finish their poll for up to 20
-    seconds, write the stopped event and return the counts. Tests pass their own client, stop, clock, budget and
-    wait."""
+                wait: Callable[[asyncio.Event, float], Awaitable[bool]] = wait_or_stop, model: Model | None = None,
+                llm: ModelClient | None = None, ledger: Ledger | None = None) -> Counter[str]:
+    """Collect, and score with FinBERT given a model and with Haiku and Sonnet given a client and the key ledger, until
+    stop is set, by default by SIGTERM or SIGINT, then let tasks finish their poll for up to 20 seconds, write the
+    stopped event and return the counts. Tests pass their own client, stop, clock, budget and wait."""
     loop = asyncio.get_running_loop()
     redact.install_asyncio_handler(loop)
     if stop is None:
@@ -167,6 +189,19 @@ async def serve(config: NewsConfig, conn: sqlite3.Connection, client: Client, st
         clock.stamp(parse_iso(newest))  # a wall clock stepped back across a restart never stamps an earlier item
     collector = Collector(config, conn, client, budget or Budget(rules_from_config(config)), clock, wait)
     heart = health.Heartbeat(config, conn, collector.schedule)
+    scorer = scoring = watch = None
+    if model is not None:
+        from btc_survivor.v2.news.finbert_scorer import FinbertScorer
+        scorer = FinbertScorer(config, conn, collector.clock, model)
+    if llm is not None and ledger is not None:
+        from btc_survivor.v2.news.scoring import Scoring   # loads anthropic, so only once scoring starts
+        scoring = Scoring(config, conn, collector.clock, llm, ledger)
+        watch = SpendWatch(ledger, conn, config.llm.caps.daily_alert_share)
+
+    def states() -> health.Scorers:
+        haiku, sonnet = scoring.words() if scoring is not None else (health.OFF, health.OFF)
+        return health.Scorers(haiku=haiku, sonnet=sonnet, finbert=scorer.state if scorer is not None else health.OFF)
+
     start_ms = clock.stamp()
     record_start(conn, config, start_ms, len(collector.channels))
     log.info("collecting %d channels into %s", len(collector.channels), config.db_path.name)
@@ -181,13 +216,20 @@ async def serve(config: NewsConfig, conn: sqlite3.Connection, client: Client, st
             stop.set()
 
     tasks = [asyncio.create_task(guard(name, collector.run_channel(name, stop))) for name in collector.channels]
-    tasks.append(asyncio.create_task(guard("heartbeat", beat(config, collector, heart, start_ms, stop, wait))))
+    tasks.append(asyncio.create_task(guard("heartbeat", beat(config, collector, heart, start_ms, stop, wait, states,
+                                                             watch))))
+    if scoring is not None:
+        tasks.append(asyncio.create_task(guard("scoring", scoring.run(stop, wait))))
+    if scorer is not None:
+        tasks.append(asyncio.create_task(guard("finbert", scorer.run(stop, wait))))
     tasks.append(asyncio.create_task(guard("pruning", prune_daily(config, conn, clock, stop, wait))))
     await stop.wait()
     _, pending = await asyncio.wait(tasks, timeout=STOP_GRACE_SECONDS)
     for task in pending:
         task.cancel()
     await asyncio.gather(*pending, return_exceptions=True)
+    if llm is not None:
+        await llm.close()
     db.insert(conn, "collector_events", {"ts": iso(clock.stamp()), "kind": "stopped",
                                          "detail": " ".join(f"{name}={collector.counts[name]}" for name in COUNTS)})
     if failed:
@@ -214,13 +256,14 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def dry_run_report(config: NewsConfig, channels: int, locked: bool) -> output.Report:
+def dry_run_report(config: NewsConfig, channels: int, locked: bool, scoring: bool) -> output.Report:
     sources = [config.finnhub.enabled, config.edgar.enabled, config.fed.enabled, config.bls.enabled]
     return output.Report("news dry run", (
         ("verdict", True),
         ("channels", output.Count(channels)),
         ("sources enabled", output.Count(sum(sources))),
         ("lock", output.Word("taken and released" if locked else "not needed")),
+        ("scoring", output.Word("pins checked" if scoring else "waits for the finbert pins")),
     ))
 
 
@@ -247,21 +290,36 @@ def run(args: argparse.Namespace) -> int:
                 raise ValueError(f"unset {', '.join(refused)} first, because the contact address and the token go "
                                  f"only straight to their hosts, checked against the system's own certificate "
                                  f"authorities")
-            client = HttpClient.from_config(config, load_secrets(config.path(config.news.secrets_file)))
+            secrets = load_secrets(config.path(config.news.secrets_file))
+            client = HttpClient.from_config(config, secrets)
             channels = len(Schedule(config).channels)
             Prefilter(config)
+            scoring = scoring_pinned(config)
+            if scoring:
+                from btc_survivor.v2.news import finbert, llm_client   # the model runtimes, only once scoring starts
+                check_pins(config.llm)
+                secrets.require(ANTHROPIC)
             if config.finnhub.enabled:
                 held.enter_context(rest_lock(config.path(config.news.rest_lock_file)))
             if args.dry_run:
+                if scoring:
+                    finbert.verify(config)
                 held.close()
-                output.emit(dry_run_report(config, channels, config.finnhub.enabled))
+                output.emit(dry_run_report(config, channels, config.finnhub.enabled, scoring))
                 return 0
+            model = llm = ledger = None
+            if scoring:
+                model = finbert.Finbert.load(config)
+                llm = llm_client.connect(secrets, config.llm.request_timeout_seconds)
+                ledger = held.enter_context(Ledger.from_config(config))
             conn = db.open_writer(config.db_path)
             held.callback(conn.close)
-        except (SecretsError, LockError, NewsDbError, ValueError, OSError) as exc:
+        except (SecretsError, LockError, NewsDbError, LedgerError, ValueError, OSError) as exc:
             print(f"error: {redact.redact(str(exc))}", file=sys.stderr)
             return 2
-        counts = asyncio.run(serve(config, conn, client))
+        if not scoring:
+            log.warning("scoring waits for the FinBERT export and its pins, so this process collects only")
+        counts = asyncio.run(serve(config, conn, client, model=model, llm=llm, ledger=ledger))
     log.info("stopped, %s", " ".join(f"{name}={counts[name]}" for name in COUNTS))
     return 0
 

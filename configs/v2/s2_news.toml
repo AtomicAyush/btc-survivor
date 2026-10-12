@@ -71,7 +71,7 @@ huber_delta = 1.0
 grad_clip = 5.0
 adam_beta1 = 0.9
 adam_beta2 = 0.999
-learning_rate = 0.0001                    # placeholder, set by scripts/v2_learner_check.py before launch
+learning_rate = 0.0001                    # set by scripts/v2_learner_check.py on 12 October 2026, section 6.4
 weight_decay = 0.0001
 skill_window_samples = 360
 

@@ -1,12 +1,17 @@
 """The btc_survivor_v2 command line of PLAN_V2 section 3. By default every subcommand prints only counts, pass or
-fail verdicts, hashes and timings, and --detail adds rows for the owner's own terminal. Subcommands of later phases
-are registered now and fail with exit code 2 until their phase builds them, as init-db does for a stock run config
-until Phase 16.
+fail verdicts, hashes and timings, and --detail adds rows for the owner's own terminal.
 
     btc_survivor_v2 init-db configs/v2/news.toml
+    btc_survivor_v2 init-db configs/v2/s1_prices.toml
+    btc_survivor_v2 stocks configs/v2/s1_prices.toml configs/v2/s2_news.toml [--dry-run]
     btc_survivor_v2 news configs/v2/news.toml [--dry-run]
     btc_survivor_v2 news-status [--days 7] [--detail [--samples 50]]
     btc_survivor_v2 tape-check data/v2/raw_stocks data/v2/checks/official_YYYY_MM_DD.toml [--detail]
+    btc_survivor_v2 evaluate configs/v2/s1_prices.toml configs/v2/s2_news.toml [--detail]
+    btc_survivor_v2 status configs/v2/s1_prices.toml configs/v2/s2_news.toml [--detail]
+    btc_survivor_v2 export configs/v2/s1_prices.toml
+    btc_survivor_v2 replay configs/v2/s2_news.toml data/v2/raw_stocks --out data/v2/replays/one [--detail]
+    btc_survivor_v2 dashboard configs/v2/s1_prices.toml configs/v2/s2_news.toml [--port 8060]
 """
 
 from __future__ import annotations
@@ -19,39 +24,39 @@ from pathlib import Path
 
 from btc_survivor import __version__
 from btc_survivor.replay import NEVER_FOR_SELECTION
-from btc_survivor.v2 import local_secrets, localcheck, news_status, output, redact
-from btc_survivor.v2.config import ConfigError, config_kind, load_news_config
+from btc_survivor.store import StoreError
+from btc_survivor.v2 import dashboard, evaluate, export, local_secrets, localcheck, news_status, output, redact, status
+from btc_survivor.v2.config import ConfigError, config_kind, load_news_config, load_stock_config
+from btc_survivor.v2.evaluate import EvaluateError
 from btc_survivor.v2.local_secrets import SecretsError
 from btc_survivor.v2.localcheck import LocalCheckError
 from btc_survivor.v2.news import db as news_db
 from btc_survivor.v2.news import runner as news_runner
 from btc_survivor.v2.news.db import NewsDbError
 from btc_survivor.v2.sessions import CalendarError
+from btc_survivor.v2.stocks import process as stock_process
+from btc_survivor.v2.stocks import replay as stock_replay
+from btc_survivor.v2.stocks import store as stock_store
 from btc_survivor.v2.stocks import tapecheck
 from btc_survivor.v2.stocks.tapecheck import TapeCheckError
 
-EXPECTED = (SecretsError, LocalCheckError, ConfigError, NewsDbError, TapeCheckError, CalendarError, OSError)
-
-
-def cmd_not_built(args: argparse.Namespace) -> int:
-    """Refuse a subcommand whose phase has not been built yet."""
-    print(f"error: {args.command} is not built yet", file=sys.stderr)
-    return 2
+EXPECTED = (SecretsError, LocalCheckError, ConfigError, NewsDbError, StoreError, EvaluateError, TapeCheckError,
+            CalendarError, OSError)
 
 
 def cmd_init_db(args: argparse.Namespace) -> int:
-    """Create news.db from a news config, or check an existing one, under umask 077 so every folder it makes is the
-    owner's alone, printing only the verdict. A stock run database comes with the stock engine in Phase 16."""
-    if config_kind(args.config) != "news":
-        print("error: init-db for a stock run config is not built yet", file=sys.stderr)
-        return 2
-    config = load_news_config(args.config)
+    """Create news.db from a news config or a run database from a stock run config, or check an existing one, under
+    umask 077 so every folder it makes is the owner's alone, printing only the verdict."""
+    kind = config_kind(args.config)
     umask = os.umask(0o077)
     try:
-        created = news_db.init_db(config)
+        if kind == "news":
+            created = news_db.init_db(load_news_config(args.config))
+        else:
+            created = stock_store.init_db(load_stock_config(args.config))
     finally:
         os.umask(umask)
-    output.emit(output.Report("init db", (("verdict", True), ("kind", output.Word("news")),
+    output.emit(output.Report("init db", (("verdict", True), ("kind", output.Word(kind)),
                                           ("database", output.Word("created" if created else "checked")))))
     return 0
 
@@ -84,9 +89,8 @@ def cmd_check_local(args: argparse.Namespace) -> int:
     return 0 if result.passed else 1
 
 
-def _command(sub: argparse._SubParsersAction, name: str, help_text: str,
-             handler: Callable[[argparse.Namespace], int] = cmd_not_built, positionals: tuple[str, ...] = (),
-             detail: bool = False, **kwargs: str) -> argparse.ArgumentParser:
+def _command(sub: argparse._SubParsersAction, name: str, help_text: str, handler: Callable[[argparse.Namespace], int],
+             positionals: tuple[str, ...] = (), detail: bool = False, **kwargs: str) -> argparse.ArgumentParser:
     """Register one subcommand with its positional arguments, an optional --detail and its handler."""
     parser = sub.add_parser(name, help=help_text, **kwargs)
     for positional in positionals:
@@ -108,21 +112,24 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     _command(sub, "init-db", "create a run or news database with its meta.kind", handler=cmd_init_db,
              positionals=("CONFIG",))
-    _command(sub, "stocks", "run the stock process for both runs", positionals=("S1", "S2"))
+    stock_process.add_arguments(_command(sub, "stocks", "run the stock process for both runs",
+                                         handler=stock_process.run, description=stock_process.DESCRIPTION))
     news_runner.add_arguments(_command(sub, "news", "run the news process", handler=news_runner.run,
                                        description=news_runner.DESCRIPTION))
     news_status.add_arguments(_command(sub, "news-status", "print the week one and data quality report",
                                        handler=news_status.run, description=news_status.DESCRIPTION))
     tapecheck.add_arguments(_command(sub, "tape-check", "print the tape verdict from a raw recording alone",
                                      handler=tapecheck.run, description=tapecheck.DESCRIPTION))
-    _command(sub, "evaluate", "print the criteria of PLAN_V2 section 11", positionals=("S1", "S2"), detail=True)
-    _command(sub, "status", "print the state of both runs", positionals=("S1", "S2"), detail=True)
-    _command(sub, "export", "write CSV files under data/v2/exports", positionals=("CONFIG",))
-    replay = _command(sub, "replay", "run recordings into a new folder. " + NEVER_FOR_SELECTION,
-                      positionals=("CONFIG",), description=NEVER_FOR_SELECTION)
-    replay.add_argument("files", metavar="FILES", nargs="+", type=Path, help="recording files or folders of them")
-    replay.add_argument("--out", required=True, type=Path, help="a new or empty folder for the replay database")
-    _command(sub, "dashboard", "serve the private page on 127.0.0.1:8060", positionals=("S1", "S2"))
+    evaluate.add_arguments(_command(sub, "evaluate", "print the criteria of PLAN_V2 section 11",
+                                    handler=evaluate.run, description=evaluate.DESCRIPTION))
+    status.add_arguments(_command(sub, "status", "print the state of both runs", handler=status.run,
+                                  description=status.DESCRIPTION))
+    export.add_arguments(_command(sub, "export", "write CSV files under data/v2/exports", handler=export.run,
+                                  description=export.DESCRIPTION))
+    stock_replay.add_arguments(_command(sub, "replay", "run recordings into a new folder. " + NEVER_FOR_SELECTION,
+                                        handler=stock_replay.run, description=stock_replay.DESCRIPTION))
+    dashboard.add_arguments(_command(sub, "dashboard", "serve the private page on 127.0.0.1:8060",
+                                     handler=dashboard.run, description=dashboard.DESCRIPTION))
     secrets = _command(sub, "check-secrets", "name the keys present in the secrets file, never a value",
                        handler=cmd_check_secrets)
     secrets.add_argument("--secrets-file", type=Path, default=local_secrets.DEFAULT_PATH,

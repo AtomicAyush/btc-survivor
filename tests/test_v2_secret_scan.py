@@ -104,6 +104,19 @@ def test_only_the_push_range_is_scanned(tmp_path, capsys):
     assert code == 0 and "objects to push: 3, of which commits: 1" in lines
 
 
+def test_without_logs_the_scan_reads_data_logs_v2_and_with_logs_only_the_folders_given(tmp_path, capsys):
+    repo = clean_repo(tmp_path)
+    launchd = repo / "data" / "logs" / "v2" / "launchd"
+    launchd.mkdir(parents=True)
+    (launchd / "news.log").write_text(f"key {FAKE[ANTHROPIC]}\n", encoding="utf-8")
+    code, lines = run(repo, secrets_file(tmp_path), capsys)
+    assert code == 1 and "log files: 1" in lines and lines[-2].startswith("log ") and lines[-2].endswith("news.log")
+    other = tmp_path / "other_logs"
+    other.mkdir()
+    code, lines = run(repo, secrets_file(tmp_path), capsys, "--logs", str(other))
+    assert code == 0 and "log files: 0" in lines
+
+
 def test_an_unsafe_secrets_file_stops_the_scan_without_a_value(tmp_path, capsys):
     repo = clean_repo(tmp_path)
     secrets = secrets_file(tmp_path)

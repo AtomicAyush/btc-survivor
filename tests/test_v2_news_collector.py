@@ -2,10 +2,13 @@
 client that serves the fixtures or fictional bodies in their shape, so no test reaches the network. received_at never
 decreases and matches seq order across interleaved awaits, a first poll is all seed, ordinary polls at long or
 slowing cadences give new, a restart gives backlog except for filings, a filing waits for its documents, clock skew
-marks polls and the news process stops cleanly. Secrets are fake canaries. Instants use fixed UTC offsets."""
+marks polls and the news process stops cleanly. The process collects only until [finbert] is pinned, and once it is
+it scores with a fake model and a fake SDK client that sends nothing. Secrets are fake canaries. Instants use fixed UTC
+offsets."""
 
 import asyncio
 import dataclasses
+import hashlib
 import heapq
 import itertools
 import json
@@ -27,7 +30,7 @@ import pytest
 
 from btc_survivor.clock import MS_PER_MINUTE, MS_PER_SECOND, LiveClock, iso, parse_iso
 from btc_survivor.v2.config import load_news_config
-from btc_survivor.v2.local_secrets import CONTACT, FINNHUB, REFUSED
+from btc_survivor.v2.local_secrets import ANTHROPIC, CONTACT, FINNHUB, REFUSED
 from btc_survivor.v2.news import db, edgar, edgar_docs, rss, runner
 from btc_survivor.v2.news.budget import Budget, rules_from_config
 from btc_survivor.v2.news.collector import ChannelState, Collector, vendor_status
@@ -40,6 +43,7 @@ CONFIG = load_news_config(NEWS)
 FIXTURES = ROOT / "tests" / "fixtures"
 CANARY_TOKEN = "CANARYcollectorTOKEN0099"
 CANARY_CONTACT = "canary.collector@example.invalid"
+CANARY_KEY = "CANARYcollectorKEY0098"
 SECOND, MINUTE = MS_PER_SECOND, MS_PER_MINUTE
 
 
@@ -1104,6 +1108,35 @@ def fake_get(self, url, validators=None):
     return http.Response(http.OK, 200, body, len(body), 1, int(time.time() * 1000), http.Validators())
 
 http.HttpClient.get = fake_get
+
+# With NEWS_SCORING set, the real pin check runs on the test's fake FinBERT files, then a fake model and a fake SDK
+# client stand in for FinBERT and the API, so no model runs and no request is sent. The fake SDK fails every call,
+# which the scorer books at its reservation.
+if os.environ.get("NEWS_SCORING"):
+    import anthropic
+    from btc_survivor.v2.news import finbert, llm_client
+
+    class FakeModel:
+        def score(self, headline, text=None):
+            return finbert.Probs(0.2, 0.1, 0.7, 1, 12)
+
+    class FakeMessages:
+        async def create(self, **request):
+            raise anthropic.AnthropicError("the fake SDK sends nothing")
+
+        async def count_tokens(self, **request):
+            raise anthropic.AnthropicError("the fake SDK counts nothing")
+
+    class FakeSdk:
+        messages = FakeMessages()
+
+        async def close(self):
+            Path(os.environ["NEWS_CALLS"]).with_name("sdk_closed.txt").write_text("closed")
+
+    finbert.Finbert.load = classmethod(lambda cls, config, session_factory=None: (finbert.verify(config),
+                                                                                    FakeModel())[1])
+    llm_client.sdk_client = lambda timeout_s: FakeSdk()
+
 from btc_survivor.v2.news import runner
 sys.exit(runner.main(sys.argv[1:]))
 '''
@@ -1117,9 +1150,9 @@ def edit(text, section, key, value):
     return text[:start] + tail
 
 
-def process_config(folder, secrets=None, finnhub=True):
+def process_config(folder, secrets=None, finnhub=True, pinned=False):
     """A secrets file of fake canaries and a copy of the news config whose every path points into folder, with one
-    company and one CIK."""
+    company and one CIK, and when pinned with fake FinBERT files in folder/models that [finbert] pins."""
     path = folder / "secrets.env"
     path.write_text(secrets if secrets is not None else f"{FINNHUB}={CANARY_TOKEN}\n{CONTACT}={CANARY_CONTACT}\n",
                     encoding="utf-8")
@@ -1132,6 +1165,20 @@ def process_config(folder, secrets=None, finnhub=True):
             ("llm.caps", "ledger_file", '"ledger/llm_ledger.db"'),
             ("llm.caps", "ledger_lock_file", '"ledger/llm_ledger.lock"')):
         text = edit(text, section, key, value)
+    if pinned:
+        models = folder / "models"
+        models.mkdir()
+        manifest = {"revision": "0" * 40, "labels": ["positive", "negative", "neutral"],
+                    "max_position_embeddings": 512}
+        for role, name, data in (("model", "model.onnx", b"a fake model, never run"),
+                                 ("tokenizer", "tokenizer.json", b'{"fake": true}')):
+            (models / name).write_bytes(data)
+            manifest[role] = {"sha256": hashlib.sha256(data).hexdigest()}
+            text = edit(text, "finbert", f"{role}_file", f'"models/{name}"')
+            text = edit(text, "finbert", f"{role}_sha256", f'"{manifest[role]["sha256"]}"')
+        (models / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        text = edit(text, "finbert", "manifest_file", '"models/manifest.json"')
+        text = edit(text, "finbert", "source_revision", f'"{manifest["revision"]}"')
     assert "~" not in text
     config = folder / "news.toml"
     config.write_text(text, encoding="utf-8")
@@ -1181,7 +1228,7 @@ def test_dry_run_loads_config_and_secrets_and_opens_nothing_on_the_network(tmp_p
     code, out, err = run_process(tmp_path, str(config), "--dry-run")
     assert (code, err) == (0, "")
     assert out.splitlines() == ["news dry run", "verdict: pass", "channels: 11", "sources enabled: 4",
-                                "lock: taken and released"]
+                                "lock: taken and released", "scoring: waits for the finbert pins"]
     assert (tmp_path / "calls.txt").read_text() == "0"
     assert not (tmp_path / "data").exists() and CANARY_TOKEN not in out
     with runner.rest_lock(tmp_path / "lock" / "finnhub_rest.lock"):
@@ -1260,3 +1307,87 @@ def test_a_crash_is_logged_redacted_and_exits_with_code_1_after_a_clean_stop(tmp
     assert [kind for (kind,) in read_db(path, "SELECT kind FROM collector_events ORDER BY id")] == ["started",
                                                                                                   "stopped"]
     assert CANARY_TOKEN not in (tmp_path / "logs" / "btc_survivor.log").read_text()
+
+
+# The news process once [finbert] pins the export, with the fake model and SDK client of WRAPPER.
+
+
+def scoring_secrets():
+    return f"{FINNHUB}={CANARY_TOKEN}\n{ANTHROPIC}={CANARY_KEY}\n{CONTACT}={CANARY_CONTACT}\n"
+
+
+def test_a_pinned_dry_run_checks_the_pins_the_key_and_the_finbert_files(tmp_path):
+    config = process_config(tmp_path, scoring_secrets(), pinned=True)
+    code, out, err = run_process(tmp_path, str(config), "--dry-run", NEWS_SCORING="1")
+    assert (code, err) == (0, "")
+    assert out.splitlines()[-1] == "scoring: pins checked"
+    assert not (tmp_path / "data").exists() and not (tmp_path / "ledger").exists()
+
+
+@pytest.mark.parametrize("case", ["missing key", "finbert mismatch", "unpinned prompt", "partly pinned"])
+def test_a_pinned_start_that_cannot_score_exits_with_code_2_naming_no_value(tmp_path, case):
+    config = process_config(tmp_path, scoring_secrets() if case != "missing key" else None, pinned=True)
+    text = config.read_text(encoding="utf-8")
+    if case == "unpinned prompt":
+        config.write_text(edit(text, "llm", "prompt_sha256", '""'), encoding="utf-8")
+    if case == "partly pinned":
+        config.write_text(edit(text, "finbert", "model_sha256", '""'), encoding="utf-8")
+    if case == "finbert mismatch":
+        (tmp_path / "models" / "model.onnx").write_bytes(b"a model changed after it was pinned")
+    code, out, err = run_process(tmp_path, str(config), "--log-dir", str(tmp_path / "logs"), NEWS_SCORING="1")
+    assert code == 2 and out == "" and err.startswith("error: ")
+    expected = {"missing key": f"missing from {tmp_path / 'secrets.env'}: {ANTHROPIC}",
+                "finbert mismatch": "the model file model.onnx has sha256", "unpinned prompt": "prompt_sha256",
+                "partly pinned": "[finbert] model_sha256 is not pinned"}[case]
+    assert expected in err
+    assert CANARY_TOKEN not in err and CANARY_KEY not in err and CANARY_CONTACT not in err
+    assert (tmp_path / "calls.txt").read_text() == "0" and not (tmp_path / "data").exists()
+
+
+def test_a_pinned_news_process_scores_beside_collection_and_stops_cleanly_on_sigterm(tmp_path):
+    config = process_config(tmp_path, scoring_secrets(), pinned=True)
+    logs = tmp_path / "logs"
+    path = tmp_path / "data" / "news" / "news.db"
+    proc = start(tmp_path, str(config), "--log-dir", str(logs), NEWS_SCORING="1")
+    loaded = load_news_config(config)
+    names = {loaded.llm.scorer_name: "failed", loaded.llm.sonnet.scorer_name: "skipped_off", "finbert_v1": "scored"}
+    try:
+        assert wait_for(lambda: read_db(path, "SELECT count(DISTINCT channel) FROM news_polls")[0][0] >= 10
+                        and read_db(path, "SELECT count(*) FROM news_heartbeat")[0][0] >= 1), \
+            (tmp_path / "err.txt").read_text()
+        # One live official item, as the collector would write it, reaches every scorer of the running process.
+        writer = db.open_writer(path)
+        with db.transaction(writer):
+            seq = db.insert(writer, "news_items", {
+                "source": "fed", "channel": "fed_press_all", "vendor_id": "planted-1", "kind": "fed_press",
+                "received_at": iso(int(time.time() * 1000)), "detected_at": None, "vendor_ts": None,
+                "title": "Fictional board notice", "summary": "A fictional notice for this test.", "url": None,
+                "publisher": None, "tickers": "MACRO", "relevance": "title", "status": "new", "filter_reason": None,
+                "title_hash": "1" * 16, "items_8k": None, "route": "llm"})
+        writer.close()
+        scored = f"SELECT scorer, status FROM item_scores WHERE item_seq = {seq}"
+        assert wait_for(lambda: dict(read_db(path, scored)) == names), (read_db(path, scored),
+                                                                         (tmp_path / "err.txt").read_text())
+    finally:
+        proc.send_signal(signal.SIGTERM)
+        proc.wait(timeout=60)
+    out, err = (tmp_path / "out.txt").read_text(), (tmp_path / "err.txt").read_text()
+    assert proc.returncode == 0, err
+    assert out == "" and "heartbeat healthy=1" in err and "collects only" not in err
+    # The fake SDK fails the call, which is booked at its reservation and never sent again.
+    assert read_db(path, f"SELECT c.status, c.cost_basis, c.cost_usd = c.reserved_usd AND c.reserved_usd > 0 "
+                         f"FROM llm_calls c JOIN llm_call_items i USING (call_id) WHERE i.item_seq = {seq}") == [
+        ("server", "reserved", 1)]
+    beats = read_db(path, "SELECT healthy, reason, config_hash, haiku_state, sonnet_state, finbert_state "
+                          "FROM news_heartbeat")
+    assert set(beats) == {(1, None, loaded.config_hash, "on", "off", "on")}
+    assert (tmp_path / "sdk_closed.txt").read_text() == "closed"
+    ledger = tmp_path / "ledger" / "llm_ledger.db"
+    assert stat.S_IMODE(ledger.stat().st_mode) == 0o600
+    assert stat.S_IMODE(ledger.parent.stat().st_mode) == 0o700
+    written = [*path.parent.iterdir(), *ledger.parent.iterdir(), logs / "btc_survivor.log", tmp_path / "out.txt",
+               tmp_path / "err.txt"]
+    for file in written:
+        data = file.read_bytes()
+        for canary in (CANARY_TOKEN, CANARY_KEY, CANARY_CONTACT):
+            assert canary.encode() not in data, file
