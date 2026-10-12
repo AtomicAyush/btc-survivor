@@ -516,7 +516,7 @@ Only headlines up to 300 characters, summaries up to 600 for Finnhub, 1,000 for 
 
 ### 7.7 Week one
 
-The collector starts as soon as Phase 14 passes, in parallel with the Phase 13 tape gate and at least four trading days before launch. Week one may change only cadences, budgets and retention. Routing, aliases, junk patterns, text lengths, the half life and every threshold that touches a score are fixed now and never compared with prices or labels. The news process writes its config hash, prompt and schema hashes and both model ids to `meta` on every start, and a stock run records them at launch. If they ever differ, news health fails and a feed event says why.
+The collector starts as soon as Phase 14 passes, in parallel with the Phase 13 tape gate and at least five trading days before launch. Week one may change only cadences, budgets and retention. Routing, aliases, junk patterns, text lengths, the half life and every threshold that touches a score are fixed now and never compared with prices or labels. The news process writes its config hash, prompt and schema hashes and both model ids to `meta` on every start, and a stock run records them at launch. If they ever differ, news health fails and a feed event says why.
 
 `btc_survivor_v2 news-status --days 7` reports these as counts and verdicts.
 
@@ -1428,7 +1428,7 @@ threads = 1
 
 Each phase ends with the full suite green on Python 3.11 and 3.13, one single line commit carrying only the owner's name, a push of `feat/v2-stocks` to the private repository, and a short summary. Before existing code changes, the modules and tests that depend on it are listed. No test needs the network, randomized tests use seeded generators, no test puts a secret value inside an assert expression, and the suite never runs with `showlocals`. Version 2 test files carry the prefix `test_v2_` so they never collide with a version 1 file, so the `test_store` of Phase 16 lives in `tests/test_v2_store.py`, while `test_v1_untouched`, `test_v1_isolation` and the amended version 1 tests keep their names.
 
-**Critical path.** On 12 October 2026 the owner asked for the earliest safe launch, which moved the launch from 2 November to 19 October. Phase 14 is built, and the collector started, in parallel with the Phase 13 live gate, because collection does not depend on the tape verdict. Phases 15 and 16 are built in parallel with the verdict, because the engine reads candles rather than the vendor, and only their live use waits for a consolidated verdict. Phases 17 and 18 follow launch, apart from `scripts/v2_power.py`, because evaluation, status, export, the private dashboard, docs and units only read what the runs record and every criterion is already fixed in sections 11 and 12. The rehearsal is one session, and launch may fall on any session open.
+**Critical path.** On 12 October 2026 the owner asked for the earliest launch with every phase built and tested first, which moved the launch from 2 November to 19 October. Only live market time sets the date, through the tape verdict, five trading days of collection and two rehearsal sessions, so the building runs in parallel around them. Phase 14 is built, and the collector started, in parallel with the Phase 13 live gate, because collection does not depend on the tape verdict. Phases 15, 16, 17 and 18 are built in parallel with the verdict and with each other, because the engine reads candles rather than the vendor and the readers follow the tables of section 9, and only their live use waits for a consolidated verdict.
 
 | Gate | Phase | Latest date |
 | --- | --- | --- |
@@ -1436,14 +1436,14 @@ Each phase ends with the full suite green on Python 3.11 and 3.13, one single li
 | Guard rails green | 12 | done, Sunday 11 October |
 | Gate session recorded, the first clean full session | 13 | Monday 12 October |
 | Tape verdict consolidated, after at most one repeat session | 13 | Tuesday 13 October, or Wednesday 14 after a repeat |
-| Collector live, four trading days before launch | 14 | Tuesday 13 October before `04:00` ET |
-| First live Haiku and Sonnet calls | 15 | Wednesday 14 October |
-| Learner check fixes the learning rate, and `scripts/v2_power.py` prints its range | 16 and 17 | Wednesday 14 October |
-| Rehearsal session | 19 | Thursday 15 or Friday 16 October |
+| Collector live, five trading days before launch | 14 | Monday 12 October before `04:00` ET |
+| First live Haiku and Sonnet calls | 15 | Tuesday 13 October |
+| Learner check fixes the learning rate | 16 | Wednesday 14 October |
+| Evaluate, docs and units done | 17 and 18 | Wednesday 14 October |
+| Rehearsal sessions | 19 | Thursday 15 and Friday 16 October |
 | Launch | 19 | Monday 19 October |
-| Evaluate, status, export, the private dashboard, docs and units | 17 and 18 | the first week of the window |
 
-If any gate slips, the launch moves to the first session open after a passed rehearsal with the collector at least four trading days old.
+If any gate slips, the launch moves to the first session open after a passed rehearsal with the collector at least five trading days old.
 
 **The calendar before launch.** From 19 October the window of 15,600 run minutes ends on 15 December 2026, the 41st session, if no minute is lost, and there are 52 sessions to 31 December, so the window ends within the year unless more than about 4,300 minutes are lost. Whatever the expected end date, `[calendar]` therefore holds every FOMC statement and every CPI, employment situation, PPI and JOLTS release from launch through 31 March 2027 before launch, which also covers a 60 session window. `[calendar]` cannot change after launch, because any change alters the news config hash, which fails news health for the rest of the window under section 7.7 and breaks criterion 1.6.
 
@@ -1522,7 +1522,7 @@ If any gate slips, the launch moves to the first session open after a passed reh
 
 19. **Soak, rehearsal and launch.**
     * `scripts/v2_soak.py` replays the recorded sessions plus a synthetic multi day run with many reconnects, halts and news bursts, reporting memory against the 5 MB bound after the first hour, CPU per print, invariants and determinism.
-    * A live rehearsal of one session uses `rehearsal_s1.toml` and `rehearsal_s2.toml`, separate data folders and the production `news.db` read only, with a plumbing warmup of 30 training minutes and a forced timer of 30 healthy minutes, labelled never a strategy setting. It starts during the session before its main day, so features have their history, and trading runs live on the main day. The drills kill the stock process mid session, stop and restart the production news process, which briefly interrupts collection, SIGSTOP the stock process past the stale limit, and run the cap drill below with its tiny monthly cap.
+    * A live rehearsal of two sessions uses `rehearsal_s1.toml` and `rehearsal_s2.toml`, separate data folders and the production `news.db` read only, with a plumbing warmup of 30 training minutes and a forced timer of 30 healthy minutes, labelled never a strategy setting, so trading runs live on the second session. The drills kill the stock process mid session, stop and restart the production news process, which briefly interrupts collection, SIGSTOP the stock process past the stale limit, and run the cap drill below with its tiny monthly cap.
     * The cap drill runs on one rehearsal day. `scripts/llm_synthetic_check.py --cap-drill` writes the drill config to the gitignored `data/v2/rehearsal/cap_drill_news.toml`, a copy of `configs/v2/news.toml` with `[finnhub] enabled = false`, `[edgar] enabled = false`, `[fed] enabled = false`, `[bls] enabled = false`, `[llm.sonnet] enabled = false`, `data_dir` set to `data/v2/rehearsal/cap_drill`, a tiny `monthly_usd = 0.01`, and `ledger_file` and `ledger_lock_file` pointing to a throwaway ledger in that folder, so it is never a committed run config and its tiny cap never meets the month's real spend on the key ledger. With every channel off the drill polls nothing, so no real item reaches Haiku and only the items the drill inserts are scored. Sonnet stays off because a single Sonnet reservation of about 0.014 dollars or more would pass the tiny cap at once. It starts a separate news process on that config and then inserts fictional long form official items from its own synthetic set into the drill database, each as a fresh item with status `new` and route `llm`, and the next only after the previous one has its final Haiku row, so no item is a seed and each goes alone to a reserved call or to the cap check. It inserts at most 20. A long form Haiku call books about 0.001 dollars and reserves about 0.003, and the throwaway ledger starts empty, so the cap refuses a call within about ten items. The drill passes when a call is refused by the cap, the waiting items get `skipped_cap`, Haiku stays off until the next UTC month, FinBERT scores every item, and the drill's booked spend stays at or under 1 cent. When it ends the script books the drill's total into the key ledger as one row, so the key ledger still holds every cent the key spent. The drill database and its ledger stay under `data/v2/rehearsal` and are never read by a run.
     * S1 and S2 then launch with fresh databases at a session open, the news process already running, on the date the critical path gives.
 
