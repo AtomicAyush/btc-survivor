@@ -147,7 +147,7 @@ def test_forced_opens_come_the_timer_rounded_up_to_whole_horizons_apart(ledger, 
         assert sum(spacings.values()) > 40
         assert set(spacings) == {rc.forced_period_minutes(cfg)}
     assert rc.forced_period_minutes(recorded[0]) == 12 and rc.forced_period_minutes(ledger[0]) == 4
-    for run in "abcd":
+    for run in "abcde":
         cfg = load_config(ROOT / "configs" / f"run_{run}.toml")
         assert rc.forced_period_minutes(cfg) == 720
         assert rc.arithmetic_path(cfg, 5.0)["period_hours"] == 12
@@ -186,9 +186,10 @@ def test_the_arithmetic_path_of_run_c():
     assert path["capped_death_day"] == pytest.approx(92.7, abs=0.05)
     assert rc.arithmetic_path(RUN_C, 1e9)["capped_death_day"] == path["death_day"]
     deaths = {run: rc.arithmetic_path(load_config(ROOT / "configs" / f"run_{run}.toml"), 5.0)["death_day"]
-              for run in "abd"}
+              for run in "abde"}
     assert deaths == {"a": pytest.approx(516.3, abs=0.05), "b": pytest.approx(4236.8, abs=0.05),
-                      "d": pytest.approx(4237.0, abs=0.05)}  # evolution.md's 516 and 4,237 days
+                      "d": pytest.approx(4237.0, abs=0.05),  # evolution.md's 516 and 4,237 days
+                      "e": pytest.approx(8619.8, abs=0.05)}  # run E pays rent alone, 9,998.84 dollars at 1.16 a day
 
 
 def test_the_verifiers_spacing_of_12_25_hours_reproduces_his_arithmetic():

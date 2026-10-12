@@ -1,6 +1,6 @@
 # Results template
 
-This file holds the tables for writing up the four live runs. Results are written up at days 7, 14 and 28 of healthy data, and at day 56 for run C. Days 7 and 14 are descriptive and only the final day counts, which is day 28 for runs A and B and day 56 for run C. Run D is exploratory and every row for it is descriptive. Every run is reported whatever it shows, no setting changes during a run, and the best single bot is never evidence on its own. The criteria were fixed before launch in [section 21 of the plan](../PLAN.md#21-controls-parallel-runs-and-success-criteria), and what they can and cannot show is in [honesty_and_limits.md](honesty_and_limits.md).
+This file holds the tables for writing up the five live runs. Results are written up at days 7, 14 and 28 of healthy data, and at day 56 for run C. Days 7 and 14 are descriptive and only the final day counts, which is day 28 for runs A and B and day 56 for run C. Runs D and E are exploratory and every row for them is descriptive. Run E is also hypothetical, with no fee, slippage, short charges or margin, so none of its rows says anything about real tradability. Every run is reported whatever it shows, no setting changes during a run, and the best single bot is never evidence on its own. The criteria were fixed before launch in [section 21 of the plan](../PLAN.md#21-controls-parallel-runs-and-success-criteria), and what they can and cannot show is in [honesty_and_limits.md](honesty_and_limits.md).
 
 Most numbers come straight from the `evaluate` command. With `--final-day` it freezes every number at the moment the run reached that many days of healthy data, so running it again later gives the same rows. Use the virtual environment the run itself uses, `.venv311` on the Mac or `.venv` on the Pi.
 
@@ -10,8 +10,8 @@ Most numbers come straight from the `evaluate` command. With `--final-day` it fr
 .venv311/bin/btc_survivor --config configs/run_c.toml evaluate --final-day 56    # run C at its final day
 .venv311/bin/btc_survivor --config configs/run_a.toml status --twins            # living bots and the all bots figure, now only
 .venv311/bin/btc_survivor --config configs/run_a.toml export --out ~/btc_exports/run_a  # every table as CSV, outside the repository
-.venv311/bin/python scripts/check_config_integrity.py configs/run_a.toml configs/run_b.toml configs/run_c.toml configs/run_d.toml
-.venv311/bin/python scripts/population_value.py configs/run_a.toml configs/run_b.toml configs/run_c.toml configs/run_d.toml
+.venv311/bin/python scripts/check_config_integrity.py configs/run_a.toml configs/run_b.toml configs/run_c.toml configs/run_d.toml configs/run_e.toml
+.venv311/bin/python scripts/population_value.py configs/run_a.toml configs/run_b.toml configs/run_c.toml configs/run_d.toml configs/run_e.toml
 .venv311/bin/python scripts/run_c_analysis.py configs/run_c.toml                # add --every-open for one line per open
 ```
 
@@ -21,25 +21,25 @@ Write timestamps and negative numbers in inline code, such as `2026-10-11T20:41Z
 
 ## Run header
 
-The settings below are fixed for the life of each run. Add a hardware entry whenever a run moves to another machine. The runs do not record a commit themselves, so the launch commits are read from the commit times. Runs A to C launched at `20:41` UTC, about a minute after `174718f` was committed at `20:40:38` UTC. Run D launched at `21:39` UTC from `ef648f5` with `configs/run_d.toml` not yet committed, and that file was committed a minute later in `351efc2`. The config text each run actually started with is stored in its `meta` table under `config_toml`.
+The settings below are fixed for the life of each run. Add a hardware entry whenever a run moves to another machine. The runs do not record a commit themselves, so the launch commits are read from the commit times. Runs A to C launched at `20:41` UTC, about a minute after `174718f` was committed at `20:40:38` UTC. Run D launched at `21:39` UTC from `ef648f5` with `configs/run_d.toml` not yet committed, and that file was committed a minute later in `351efc2`. Run E was added on 12 October 2026 by the owner's decision and launched at `21:29` UTC from `622cf49` with `configs/run_e.toml` not yet committed, and that file was committed a few minutes later. The config text each run actually started with is stored in its `meta` table under `config_toml`.
 
-| Setting | Run A | Run B | Run C | Run D |
-| --- | --- | --- | --- | --- |
-| Purpose | main run, the skill result | low fee, the same forced schedule at 5 bps | machinery, death and lineage | long horizon, exploratory |
-| Config | `configs/run_a.toml` | `configs/run_b.toml` | `configs/run_c.toml` | `configs/run_d.toml` |
-| Start, UTC | `2026-10-11T20:41Z` | `2026-10-11T20:41Z` | `2026-10-11T20:41Z` | `2026-10-11T21:39Z` |
-| First healthy minute, `launch_ts` in `meta` |  |  |  |  |
-| Master seed | 12345 | 12345 | 12345 | 12345 |
-| Fee profile | `retail_default`, 90 bps taker | `low_fee_tier`, 5 bps taker | `retail_default`, 90 bps taker | `low_fee_tier`, 5 bps taker |
-| Horizon | 30 minutes | 30 minutes | 30 minutes | 4 hours |
-| Rent | 1.16 dollars a day | 1.16 dollars a day | 1.16 dollars a day | 1.16 dollars a day |
-| Start equity and notional | 10,000 and 500 dollars | 10,000 and 500 dollars | 500 and 500 dollars | 10,000 and 500 dollars |
-| Learning rate and gene bounds | 0.0001, 0.00001 to 0.001 | 0.0001, 0.00001 to 0.001 | 0.0001, 0.00001 to 0.001 | 0.00003, 0.000003 to 0.0003 |
-| Population | 20 learners and 20 coin flip twins | 20 learners and 20 coin flip twins | 20 learners and 20 coin flip twins | 20 learners and 20 coin flip twins |
-| Final day | 28 | 28 | 56 | 28, descriptive |
-| Hardware at launch | MacBook, macOS, Python 3.11 in `.venv311`, numpy 2.4.6 | MacBook, macOS, Python 3.11 in `.venv311`, numpy 2.4.6 | MacBook, macOS, Python 3.11 in `.venv311`, numpy 2.4.6 | MacBook, macOS, Python 3.11 in `.venv311`, numpy 2.4.6 |
-| Later hardware, with the date of the move |  |  |  |  |
-| Code commit at launch | `174718f` | `174718f` | `174718f` | `ef648f5`, config committed in `351efc2` |
+| Setting | Run A | Run B | Run C | Run D | Run E |
+| --- | --- | --- | --- | --- | --- |
+| Purpose | main run, the skill result | low fee, the same forced schedule at 5 bps | machinery, death and lineage | long horizon, exploratory | hypothetical frictionless, exploratory, the bots' own calls before costs |
+| Config | `configs/run_a.toml` | `configs/run_b.toml` | `configs/run_c.toml` | `configs/run_d.toml` | `configs/run_e.toml` |
+| Start, UTC | `2026-10-11T20:41Z` | `2026-10-11T20:41Z` | `2026-10-11T20:41Z` | `2026-10-11T21:39Z` |  |
+| First healthy minute, `launch_ts` in `meta` |  |  |  |  |  |
+| Master seed | 12345 | 12345 | 12345 | 12345 | 12345 |
+| Fee profile | `retail_default`, 90 bps taker | `low_fee_tier`, 5 bps taker | `retail_default`, 90 bps taker | `low_fee_tier`, 5 bps taker | `hypothetical_zero`, 0 bps taker, no slippage, short charges or margin |
+| Horizon | 30 minutes | 30 minutes | 30 minutes | 4 hours | 30 minutes |
+| Rent | 1.16 dollars a day | 1.16 dollars a day | 1.16 dollars a day | 1.16 dollars a day | 1.16 dollars a day |
+| Start equity and notional | 10,000 and 500 dollars | 10,000 and 500 dollars | 500 and 500 dollars | 10,000 and 500 dollars | 10,000 and 500 dollars |
+| Learning rate and gene bounds | 0.0001, 0.00001 to 0.001 | 0.0001, 0.00001 to 0.001 | 0.0001, 0.00001 to 0.001 | 0.00003, 0.000003 to 0.0003 | 0.0001, 0.00001 to 0.001 |
+| Population | 20 learners and 20 coin flip twins | 20 learners and 20 coin flip twins | 20 learners and 20 coin flip twins | 20 learners and 20 coin flip twins | 20 learners and 20 coin flip twins |
+| Final day | 28 | 28 | 56 | 28, descriptive | 28, descriptive |
+| Hardware at launch | MacBook, macOS, Python 3.11 in `.venv311`, numpy 2.4.6 | MacBook, macOS, Python 3.11 in `.venv311`, numpy 2.4.6 | MacBook, macOS, Python 3.11 in `.venv311`, numpy 2.4.6 | MacBook, macOS, Python 3.11 in `.venv311`, numpy 2.4.6 | MacBook, macOS, Python 3.11 in `.venv311`, numpy 2.4.6 |
+| Later hardware, with the date of the move |  |  |  |  |  |
+| Code commit at launch | `174718f` | `174718f` | `174718f` | `ef648f5`, config committed in `351efc2` |  |
 
 Every setting is explained in [config.example.toml](../config.example.toml) and the runs in [section 21 of the plan](../PLAN.md#21-controls-parallel-runs-and-success-criteria).
 
@@ -93,6 +93,9 @@ One confirmatory test, on run A at day 28. It scores the population forecast at 
 | D | 7 |  |  |  |  |  |  |  |  |  | exploratory |
 | D | 14 |  |  |  |  |  |  |  |  |  | exploratory |
 | D | 28 |  |  |  |  |  |  |  |  |  | exploratory |
+| E | 7 |  |  |  |  |  |  |  |  |  | exploratory |
+| E | 14 |  |  |  |  |  |  |  |  |  | exploratory |
+| E | 28 |  |  |  |  |  |  |  |  |  | exploratory |
 
 A failure at day 28 rules out, at 95 percent confidence, only correlations above the upper bound printed for that row, which goes in the table below. It is never read as evidence that the correlation is below about 0.1, nor below a detectable correlation, which describes the test's power and not this run's correlation, and it does not say that the market holds no edge, as [honesty_and_limits.md](honesty_and_limits.md#statistical-limits) explains.
 
@@ -115,6 +118,9 @@ A failure at day 28 rules out, at 95 percent confidence, only correlations above
 | D | 7 |  |  |  |  |  |  |  |  |
 | D | 14 |  |  |  |  |  |  |  |  |
 | D | 28 |  |  |  |  |  |  |  |  |
+| E | 7 |  |  |  |  |  |  |  |  |
+| E | 14 |  |  |  |  |  |  |  |  |
+| E | 28 |  |  |  |  |  |  |  |  |
 
 In the external review's simulation at a true correlation of 0.1, 87 percent of the failures under shared volatility clustering still had an upper bound above 0.1, as [honesty_and_limits.md](honesty_and_limits.md#statistical-limits) explains.
 
@@ -135,6 +141,7 @@ Each closed learner trade is paired with its twin's trade from the same decision
 | C | 28 |  |  |  |  |  |  | descriptive |
 | C | 56 |  |  |  |  |  |  |  |
 | D | 28 |  |  |  |  |  |  | exploratory |
+| E | 28 |  |  |  |  |  |  | exploratory |
 
 The twins are described in [honesty_and_limits.md](honesty_and_limits.md#the-coin-flip-twins-and-their-power).
 
@@ -157,6 +164,9 @@ Deaths, causes and lifespans of learners and twins, with no pass threshold. Deat
 | D | 7 |  |  |  |  |  |  |  |  |
 | D | 14 |  |  |  |  |  |  |  |  |
 | D | 28 |  |  |  |  |  |  |  |  |
+| E | 7 |  |  |  |  |  |  |  |  |
+| E | 14 |  |  |  |  |  |  |  |  |
+| E | 28 |  |  |  |  |  |  |  |  |
 
 The five causes of death are explained in [evolution.md](evolution.md) and the ledger behind them in [execution_model.md](execution_model.md).
 
@@ -177,11 +187,11 @@ The `lineage BOT_ID` command shows any one chain back to its random ancestor, as
 
 Buy and hold, the exposure matched benchmark and the cash baseline, read from the `benchmark` table at the same moment as the other rows. The living mean and median count only the learners alive at that moment, and every birth refills a slot with full start equity, so after deaths they are topped up with new money. The all bots figure adds living equity to the final equity of every dead learner and compares it with the capital given to every learner ever born, but that capital grows with every birth, and a dead learner's final equity is recorded after any negative cash is written off, so writeoffs are left out. Neither is the population's return, and the self financing value in its own section below is the figure to set against buy and hold and cash. None of these is a pass criterion.
 
-`status` prints the all bots figure only for the present moment, so the query below gives the whole row at a past cutoff. Replace the timestamp with the cutoff `evaluate` printed for that day, set the start equity to 10,000 dollars for runs A, B and D or 500 for run C, and run it against a read only connection. Like `status` it counts learners only, and a learner born after the last equity snapshot counts at its start equity.
+`status` prints the all bots figure only for the present moment, so the query below gives the whole row at a past cutoff. Replace the timestamp with the cutoff `evaluate` printed for that day, set the start equity to 10,000 dollars for runs A, B, D and E or 500 for run C, and run it against a read only connection. Like `status` it counts learners only, and a learner born after the last equity snapshot counts at its start equity.
 
 ```sql
 -- sqlite3 -readonly -header -column data/run_a/btc_survivor.db < context.sql
--- start_equity is 10000 for runs A, B and D and 500 for run C
+-- start_equity is 10000 for runs A, B, D and E and 500 for run C
 WITH at AS (SELECT '2026-11-08T20:41:00.000Z' AS ts, 10000 AS start_equity),
 snap AS (SELECT max(e.ts) AS ts FROM equity_snapshots e, at WHERE e.ts <= at.ts),
 bench AS (SELECT * FROM benchmark WHERE ts = (SELECT max(b.ts) FROM benchmark b, at WHERE b.ts <= at.ts)),
@@ -214,6 +224,9 @@ FROM bench, at;
 | D | 7 |  |  |  |  |  |  |  |  |  |
 | D | 14 |  |  |  |  |  |  |  |  |  |
 | D | 28 |  |  |  |  |  |  |  |  |  |
+| E | 7 |  |  |  |  |  |  |  |  |  |
+| E | 14 |  |  |  |  |  |  |  |  |  |
+| E | 28 |  |  |  |  |  |  |  |  |  |
 
 The benchmark columns are defined in [section 12 of the plan](../PLAN.md#12-storage-schema).
 
@@ -236,6 +249,9 @@ This is the population's return, the figure to compare with buy and hold and cas
 | D | 7 |  |  |  |  |  |  |  |  |  |  |  |  |
 | D | 14 |  |  |  |  |  |  |  |  |  |  |  |  |
 | D | 28 |  |  |  |  |  |  |  |  |  |  |  |  |
+| E | 7 |  |  |  |  |  |  |  |  |  |  |  |  |
+| E | 14 |  |  |  |  |  |  |  |  |  |  |  |  |
+| E | 28 |  |  |  |  |  |  |  |  |  |  |  |  |
 
 The definition is in [`self_financing.py`](../src/btc_survivor/cli/self_financing.py), and why the living mean is not enough is in [honesty_and_limits.md](honesty_and_limits.md#population-averages-and-the-self-financing-value).
 
@@ -255,6 +271,13 @@ These follow from fees, notional, start equity and the forced timer, so they wer
 | C | The second wave falls between days 48 and 56, and generation 2 appears in it |  |  |  |  |  |
 | C | Parent choice mostly reflects market noise, because costs swamp any plausible skill |  |  |  |  |  |
 | D | No learner dies, at a quiet burn of about 2.36 dollars a day plus short funding |  |  |  |  |  |
+| E | No learner dies, its death line is about one day of rent |  |  |  |  |  |
+
+How many of run E's learner opens are its own rather than forced is not fixed by arithmetic, because it depends on the predictions its bots make. It is expected from the predictions runs A to C recorded, about 97 percent of which would pass run E's gate, so it is recorded here as a descriptive count and never judged as matched.
+
+| Run | Expected from recorded predictions | Day 7 | Day 14 | Day 28 |
+| --- | --- | --- | --- | --- |
+| E | Almost every learner open is its own rather than forced, recorded as own opens and forced opens |  |  |  |
 
 The arithmetic is worked through in [honesty_and_limits.md](honesty_and_limits.md#outcomes-fixed-by-arithmetic) and in [section 3 of the plan](../PLAN.md#3-what-to-expect-from-the-default-experiment).
 
@@ -275,12 +298,13 @@ Equity before an open is the bot's newest snapshot, at most five minutes old, le
 | A | 28 |  |  |  |  |  |  |  |  |
 | B | 28 |  |  |  |  |  |  |  |  |
 | D | 28 |  |  |  |  |  |  |  |  |
+| E | 28 |  |  |  |  |  |  |  |  |
 
-Runs A, B and D are expected to stay near 0.05 times, as they were on 12 October 2026, and the mechanism is in [execution_model.md](execution_model.md#no-principal-is-reserved).
+Runs A, B, D and E are expected to stay near 0.05 times, as they were on 12 October 2026, and the mechanism is in [execution_model.md](execution_model.md#no-principal-is-reserved).
 
 ### Death days with and without a margin cap
 
-Under the illustrative cap a bot stops trading at its first open above 5 times its equity and lives on rent until it crosses its death threshold. From the config alone a quiet run C bot dies on day 25.8 without a cap and on day 92.7 with it. For runs A, B and D the same arithmetic puts a quiet bot's death on day 516.3, 4,236.8 and 4,237.0, which agrees with the 516 and 4,237 days in evolution.md, so none of them can see a death within its window. The external review's verifier spaced forced opens 12.25 hours apart, half a horizon more than the engine does, which moves every one of these days later, and `--period-hours 12.25` reproduces his figures.
+Under the illustrative cap a bot stops trading at its first open above 5 times its equity and lives on rent until it crosses its death threshold. From the config alone a quiet run C bot dies on day 25.8 without a cap and on day 92.7 with it. For runs A, B and D the same arithmetic puts a quiet bot's death on day 516.3, 4,236.8 and 4,237.0, which agrees with the 516 and 4,237 days in evolution.md, and for run E, which pays almost nothing but rent, on day 8,619.8, so none of them can see a death within its window. The external review's verifier spaced forced opens 12.25 hours apart, half a horizon more than the engine does, which moves every one of these days later, and `--period-hours 12.25` reproduces his figures.
 
 | Day | Date | Learner deaths | Recorded death day, mean and standard deviation | Death day with a 5 times cap, mean and standard deviation | Deaths the cap changes | Deaths whose last open was above 5 times | Living learners past 5 times | Twin deaths | Twin recorded and capped death days |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -321,13 +345,13 @@ Parent choice and the lineage table are described in [evolution.md](evolution.md
 
 ## Generations
 
-One table per generation, with a row per run at each write up. Generation 0 holds the founders and every newcomer. A newcomer is a fresh random bot that replaces a dead learner with probability 0.10, or whenever no living learner has the 24 healthy hours and 20 closed trades a parent needs, as in [section 11 of the plan](../PLAN.md#11-evolution). In run C the founders die within a few days of each other, while their children need about 10 days to close 20 trades, so late in the first wave many replacements are likely to be newcomers rather than generation 1. Runs A, B and D are not expected to have any deaths, so their later generation tables stay empty unless a death happens. Born, alive and dead count learners only. Mean equity and mean skill correlation are over that generation's living learners, and twin mean equity is over the twins paired with them. The last two columns are the living mean equity of the whole population minus buy and hold and minus the cash baseline, in dollars. They count living learners only and are topped up at every birth, so they are not the population's return, which is in the self financing table above.
+One table per generation, with a row per run at each write up. Generation 0 holds the founders and every newcomer. A newcomer is a fresh random bot that replaces a dead learner with probability 0.10, or whenever no living learner has the 24 healthy hours and 20 closed trades a parent needs, as in [section 11 of the plan](../PLAN.md#11-evolution). In run C the founders die within a few days of each other, while their children need about 10 days to close 20 trades, so late in the first wave many replacements are likely to be newcomers rather than generation 1. Runs A, B, D and E are not expected to have any deaths, so their later generation tables stay empty unless a death happens. Born, alive and dead count learners only. Mean equity and mean skill correlation are over that generation's living learners, and twin mean equity is over the twins paired with them. The last two columns are the living mean equity of the whole population minus buy and hold and minus the cash baseline, in dollars. They count living learners only and are topped up at every birth, so they are not the population's return, which is in the self financing table above.
 
 This query prints every generation's row at one moment. Replace the timestamp with the cutoff `evaluate` printed for that day, set the start equity as for the context query above, and run it against a read only connection. A learner counts as alive when it was born by the cutoff and had not died by then, and one born after the last equity snapshot counts at its start equity.
 
 ```sql
 -- sqlite3 -readonly -header -column data/run_c/btc_survivor.db < generations.sql
--- start_equity is 10000 for runs A, B and D and 500 for run C
+-- start_equity is 10000 for runs A, B, D and E and 500 for run C
 WITH at AS (SELECT '2026-11-08T20:41:00.000Z' AS ts, 500 AS start_equity),
 snap AS (SELECT max(e.ts) AS ts FROM equity_snapshots e, at WHERE e.ts <= at.ts),
 bench AS (SELECT * FROM benchmark WHERE ts = (SELECT max(b.ts) FROM benchmark b, at WHERE b.ts <= at.ts)),
@@ -372,6 +396,9 @@ The tables behind the query are listed in [section 12 of the plan](../PLAN.md#12
 | D | 7 |  | 0 |  |  |  |  |  |  |  |  |  |
 | D | 14 |  | 0 |  |  |  |  |  |  |  |  |  |
 | D | 28 |  | 0 |  |  |  |  |  |  |  |  |  |
+| E | 7 |  | 0 |  |  |  |  |  |  |  |  |  |
+| E | 14 |  | 0 |  |  |  |  |  |  |  |  |  |
+| E | 28 |  | 0 |  |  |  |  |  |  |  |  |  |
 
 Founders and newcomers are described in [evolution.md](evolution.md).
 

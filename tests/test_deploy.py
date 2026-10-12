@@ -97,7 +97,7 @@ def test_exec_start_runs_the_instance_config(unit):
 
 def test_every_instance_named_in_the_pi_guide_has_a_config():
     names = set(re.findall(r"btc_survivor@(run_\w+)", PI_GUIDE.read_text(encoding="utf-8")))
-    assert {"run_a", "run_b", "run_c", "run_d"} <= names
+    assert {"run_a", "run_b", "run_c", "run_d", "run_e"} <= names
     for name in names:
         assert (ROOT / "configs" / f"{name}.toml").is_file(), f"btc_survivor@{name} has no configs/{name}.toml"
 

@@ -1,0 +1,115 @@
+# Run E, the hypothetical frictionless run. HYPOTHETICAL. This is never a realistic cost setting, and no venue
+# trades Bitcoin with no fee, no slippage and free shorts. Exploratory, added on 12 October 2026 by the owner's
+# decision, with its settings fixed before its own launch, see PLAN section 21.
+#
+# Why it exists. In runs A to D no learner prediction has ever passed the gate. The largest prediction recorded was
+# about 8 bps, while the required edge is about 190 bps in runs A and C and about 20 to 24 bps in runs B and D, so
+# every trade there is forced. Run E sets the taker fee, the extra slippage, the short opening fee, short funding and
+# the margin gene to zero, so the bots trade on their own predictions. What is left in the gate is the order book
+# itself, the full spread (half of it on each leg) plus the walk through the book on both legs, about 0.001 bps at a
+# one cent spread, so almost any prediction that is not zero passes. Fills still pay that half spread and walk on
+# every leg, and latency is unchanged.
+#
+# What it can show. Whether the bots' own calls make money before costs, and how they compare with their coin flip
+# twins and with holding cash. What it cannot show. Anything about real tradability, because a real round trip
+# costs about 12 bps at the 5 bps fee and 182 bps at retail before any margin, more than every prediction made so
+# far. Its own trades are not a confirmatory test.
+#
+# Everything else matches run B, including the master seed, population, twins, horizon, timers, features and
+# learning settings, so its founders start from the same networks as the other runs. Rent stays 1.16 dollars a day.
+# The margin gene starts at 0 and mutation multiplies it, so it stays 0 for the whole run.
+# Relative paths are resolved from this folder.
+
+[run]
+master_seed = 12345
+data_dir = "../data/run_e"
+log_level = "INFO"
+
+[feed]
+exchange = "coinbase"
+product = "BTC-USD"
+book_depth_levels = 20
+stale_after_seconds = 5
+reconnect_backoff_start_seconds = 1
+reconnect_backoff_max_seconds = 60
+record_raw_messages = false
+max_clock_skew_seconds = 2.0
+
+[time]
+horizon_minutes = 30                  # 15 or 30
+history_minutes_required = 360        # longest feature window
+warmup_hours_random = 6               # random bots learn without trading
+warmup_hours_inherited = 1            # mutated copies of survivors
+
+[features]
+return_windows_minutes = [5, 15, 30, 60]
+vol_windows_minutes = [30, 120]
+volume_baseline_minutes = 360
+imbalance_levels = 10
+standardizer_half_life_hours = 168    # also used for the label scale
+clip_z = 5.0
+min_samples = 30
+min_window_coverage = 0.8
+
+[model]
+hidden_units = 16
+init_output_scale = 0.1
+batch_size = 8
+replay_window_minutes = 240
+huber_delta = 1.0
+grad_clip = 5.0
+adam_beta1 = 0.9
+adam_beta2 = 0.999
+gate_on_skill = false
+skill_window_samples = 360
+skill_gate_min_corr = 0.0             # used only when gate_on_skill is true
+
+[trading]
+start_equity = 10000.0
+notional = 500.0                      # static position size
+stop_loss_pct = 1.0
+allow_short = true
+force_trade_after_hours = 12
+
+[costs]
+fee_profile = "hypothetical_zero"     # HYPOTHETICAL, run E only, never a realistic cost setting, see the header
+taker_fee_bps_retail_default = 90.0   # placeholder, Coinbase US Intro since 16 Sep 2026
+taker_fee_bps_active_retail = 30.0    # placeholder, Coinbase US Advanced 2, 50k USD per 30 days
+taker_fee_bps_low_fee_tier = 5.0      # placeholder, Coinbase US VIP3, 20m USD per 30 days
+taker_fee_bps_hypothetical_zero = 0.0 # HYPOTHETICAL, no venue charges this, run E only
+latency_ms = 1000
+latency_jitter_ms = 300               # uniform 0 to 300 added to latency_ms
+extra_slippage_bps = 0.0              # HYPOTHETICAL, 1.0 in the other runs
+short_funding_bps_per_hour = 0.0      # HYPOTHETICAL, 0.5 in the other runs
+short_open_fee_bps = 0.0              # HYPOTHETICAL, 2.0 in the other runs
+daily_running_cost = 1.16             # kept as in run B, 4.23 percent T bill yield on 10,000 USD, 8 Oct 2026
+
+[genes]
+margin_bps_init = 0.0                 # the lowest value the validator allows, 8.0 in the other runs
+margin_bps_min = 0.0                  # the lowest value the validator allows, 2.0 in the other runs
+margin_bps_max = 60.0
+lr_init = 0.0001                      # see PLAN section 8, fixed on synthetic data only
+lr_min = 0.00001
+lr_max = 0.001
+weight_decay = 0.0001
+
+[population]
+size = 20
+newcomer_fraction = 0.10
+parent_min_age_hours = 24
+parent_min_trades = 20
+mutation_sigma_weights = 0.05
+mutation_sigma_genes = 0.20
+fitness_window_hours = 168
+fitness_std_floor_usd = 1.0
+tournament_size = 3
+
+[controls]
+coin_flip_twins = true                # one coin flip twin per learner, see PLAN section 21
+
+[persistence]
+checkpoint_every_seconds = 300
+equity_snapshot_every_seconds = 300
+max_resume_gap_minutes = 10
+keep_candles_days = 14
+keep_checkpoints = 3

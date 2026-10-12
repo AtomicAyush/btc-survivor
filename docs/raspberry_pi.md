@@ -4,7 +4,7 @@ A Raspberry Pi 4 is the long term home for the runs. It draws little power, neve
 
 ## Hardware
 
-* **A Raspberry Pi 4 Model B with 2 GB of memory or more.** One run of 20 learners and their twins is estimated at about 110 MB at its peak, so four runs fit in 2 GB, and 4 GB leaves room for tools.
+* **A Raspberry Pi 4 Model B with 2 GB of memory or more.** One run of 20 learners and their twins is estimated at about 110 MB at its peak, so five runs fit in 2 GB, and 4 GB leaves room for tools.
 * **The official 5.1 V, 3 A USB C power supply.** A weak supply causes undervoltage throttling and can drop a USB drive, and the SSD draws its power from the Pi.
 * **A USB SSD** in a USB 3 enclosure, plugged into one of the blue USB 3 ports. The next sections explain why.
 * **A case with a heatsink or a fan.** A Pi 4 that runs hot slows its own clock, and a throttled Pi runs noticeably slower.
@@ -50,7 +50,7 @@ A run that starts fresh on the Pi creates its database on its first start. It ca
 
 ## Why a USB SSD
 
-Each run writes to SQLite all day. Feed events and the runtime status row are committed every minute, and the buffered rows and a checkpoint every 300 seconds, so one run of 20 learners with their twins grows by roughly 700 MB a year. The log files and the system journal add their own writes, and four runs write four times as much. SD cards wear out under many small writes and are more easily corrupted by a power cut in the middle of one. A slow card also hurts the runs directly, because every database write happens on the event loop thread, and while a write blocks, the feed is not read.
+Each run writes to SQLite all day. Feed events and the runtime status row are committed every minute, and the buffered rows and a checkpoint every 300 seconds, so one run of 20 learners with their twins grows by roughly 700 MB a year. The log files and the system journal add their own writes, and five runs write five times as much. SD cards wear out under many small writes and are more easily corrupted by a power cut in the middle of one. A slow card also hurts the runs directly, because every database write happens on the event loop thread, and while a write blocks, the feed is not read.
 
 An SSD on USB 3 removes both problems. Pi 4 boards shipped in recent years boot from USB out of the box. An older board may need its bootloader updated with `sudo rpi-eeprom-update -a` and USB boot chosen in `sudo raspi-config` under Advanced Options and Boot Order. Booting from the SSD is simpler than keeping the system on a card and only the data on the SSD, and it keeps the journal off the card as well.
 
@@ -73,14 +73,14 @@ The runs also guard themselves. The feed health monitor compares the exchange's 
 
 ## The systemd template unit
 
-`deploy/btc_survivor@.service` is a template, so one file runs every run as its own service. The text after the `@` names the config, so `btc_survivor@run_a` runs `configs/run_a.toml`, `btc_survivor@run_b` runs `configs/run_b.toml`, and likewise `btc_survivor@run_c` and `btc_survivor@run_d`. Each run's config points at its own data folder under `data/`.
+`deploy/btc_survivor@.service` is a template, so one file runs every run as its own service. The text after the `@` names the config, so `btc_survivor@run_a` runs `configs/run_a.toml`, `btc_survivor@run_b` runs `configs/run_b.toml`, and likewise `btc_survivor@run_c`, `btc_survivor@run_d` and `btc_survivor@run_e`. Each run's config points at its own data folder under `data/`.
 
 The unit has two placeholders, `User` and `WorkingDirectory`, both written as `CHANGE_ME`, and the path in `ExecStart` uses the same folder. Fill them in while installing the unit, then start the runs.
 
 ```bash
 sed 's/CHANGE_ME/btc/g' ~/btc_survivor/deploy/btc_survivor@.service | sudo tee /etc/systemd/system/btc_survivor@.service > /dev/null
 sudo systemctl daemon-reload
-sudo systemctl enable --now btc_survivor@run_a btc_survivor@run_b btc_survivor@run_c btc_survivor@run_d
+sudo systemctl enable --now btc_survivor@run_a btc_survivor@run_b btc_survivor@run_c btc_survivor@run_d btc_survivor@run_e
 systemctl status 'btc_survivor@*'
 ```
 
@@ -90,7 +90,7 @@ What each setting does.
 * `Restart=always` and `RestartSec=5` bring a run back five seconds after a crash or a kill. A restart is never a death. The run resumes from its newest checkpoint, charges no rent for the downtime, and flattens every open position if the gap was longer than 10 minutes.
 * `KillSignal=SIGTERM` and `TimeoutStopSec=60` give a run up to a minute to stop cleanly. On SIGTERM the runner finishes the current minute step, waits up to 1.3 seconds for pending fills, writes a final checkpoint and exits with code 0.
 * `After=network-online.target time-sync.target` and `Wants=network-online.target` start the runs only once the network is up and the clock is synchronized.
-* `Environment=PYTHONUNBUFFERED=1 OPENBLAS_NUM_THREADS=1` sends log lines to the journal at once and stops numpy's OpenBLAS from starting a thread per core, which only adds overhead for a network this small and would make four runs compete for the cores.
+* `Environment=PYTHONUNBUFFERED=1 OPENBLAS_NUM_THREADS=1` sends log lines to the journal at once and stops numpy's OpenBLAS from starting a thread per core, which only adds overhead for a network this small and would make five runs compete for the cores.
 
 To stop one run, use `sudo systemctl stop btc_survivor@run_a`. To stop it from starting at boot, use `sudo systemctl disable btc_survivor@run_a`. Shutdown and resume are described in [section 13 of the plan](../PLAN.md#13-checkpoints-resume-and-shutdown) and the unit settings in the [systemd service documentation](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html).
 
@@ -116,7 +116,7 @@ The file logs already keep two weeks, so a modest journal limit such as `SystemM
 
 ## Memory and CPU targets
 
-The target for each run is 20 learners, with their twins, under 150 MB of resident memory and under 25 percent of one core on average, in a single process. Each run has its own target, so four runs together use about four times the memory and feed CPU of one, and they share the Pi's four cores.
+The target for each run is 20 learners, with their twins, under 150 MB of resident memory and under 25 percent of one core on average, in a single process. Each run has its own target, so five runs together use about five times the memory and feed CPU of one, and they share the Pi's four cores.
 
 The estimates leave room. Memory is estimated at about 110 MB at the peak, about half of it the baseline and half a brief spike while the 4.5 MB order book snapshot is parsed after a reconnect. CPU is estimated at 1 to 4 percent of one core at the measured quiet rate of 17 messages a second, and at about 6 percent in the central case and 24 percent in the pessimistic case at an assumed busy rate of 100 messages a second. The bots themselves cost only about 9 milliseconds a minute in total, and handling the feed is nearly all of the load.
 
@@ -135,10 +135,10 @@ The Raspberry Pi kernel has long shipped with the memory cgroup turned off. If `
 
 ## Moving runs from the Mac
 
-The four runs started on 11 October 2026 on a MacBook. A Mac with its lid closed on battery sleeps even with a keep awake tool such as Amphetamine, and a sleeping Mac freezes every run until it wakes, so on the Mac the runs need mains power. The Pi does not sleep, which is the main reason to move them. A run is just its config and its data folder, so moving it means stopping it cleanly, copying the folder and starting it on the Pi.
+Runs A to D started on 11 October 2026 on a MacBook, and the hypothetical run E on 12 October. A Mac with its lid closed on battery sleeps even with a keep awake tool such as Amphetamine, and a sleeping Mac freezes every run until it wakes, so on the Mac the runs need mains power. The Pi does not sleep, which is the main reason to move them. A run is just its config and its data folder, so moving it means stopping it cleanly, copying the folder and starting it on the Pi.
 
 1. Install and test the project on the Pi first, as above, without starting any service.
-2. Make sure the Pi holds the same trading code the runs started with. Runs A to C launched from commit `174718f`, and run D from `ef648f5` with its config not yet committed, as the run header of [RESULTS_TEMPLATE.md](RESULTS_TEMPLATE.md#run-header) records. rsync copies the working tree rather than the last commit, so first check that nothing in `src` or `configs` is uncommitted, then list what changed since each launch outside the reporting code.
+2. Make sure the Pi holds the same trading code the runs started with. Runs A to C launched from commit `174718f`, run D from `ef648f5` with its config not yet committed, and run E from the commit recorded for it, as the run header of [RESULTS_TEMPLATE.md](RESULTS_TEMPLATE.md#run-header) records. rsync copies the working tree rather than the last commit, so first check that nothing in `src` or `configs` is uncommitted, then list what changed since each launch outside the reporting code, with one more diff of the same form from run E's launch commit.
 
    ```bash
    # on the Pi, from ~/btc_survivor
@@ -147,20 +147,20 @@ The four runs started on 11 October 2026 on a MacBook. A Mac with its lid closed
    git diff --stat ef648f5 HEAD -- src ':(exclude)src/btc_survivor/cli' ':(exclude)src/btc_survivor/dashboard.*'
    ```
 
-   `git status` should print nothing. Changes to the reporting code, the `cli` folder, the dashboard and the reporting commands in `__main__.py`, are expected and harmless, because none of them changes how a run trades or learns. So the first diff should list only `src/btc_survivor/__main__.py`, where `git diff 174718f HEAD -- src/btc_survivor/__main__.py` shows the new commands and a longer list of errors that `main` prints as one line instead of a traceback, and the second diff should print nothing. Any other file in either list is a change to the trading path, and the move waits until that change is understood. Comparing `git rev-parse HEAD` or file hashes between the Mac and the Pi proves nothing right after an rsync, because the copy made them identical. The configs are checked against the text each run stored at launch in step 5.
-3. Stop the runs on the Mac with SIGTERM, using the stop command in [operations.md](operations.md#stopping-runs), `pkill -TERM -f 'configs/run_a.toml run'` and the same for runs B, C and D, and wait until `pgrep -fl btc_survivor` no longer lists them. Ctrl+C does the same for a run started in a foreground terminal. A clean stop writes a final checkpoint and logs `stopped cleanly`. Stop the Mac dashboard too, since from then on it would only show the old copies.
-4. Copy the four data folders, including any `-wal` or `-shm` file next to a database.
+   `git status` should print nothing. Changes to the reporting code, the `cli` folder, the dashboard and the reporting commands in `__main__.py`, are expected and harmless, because none of them changes how a run trades or learns. So the first diff should list only `src/btc_survivor/__main__.py`, where `git diff 174718f HEAD -- src/btc_survivor/__main__.py` shows the new commands and a longer list of errors that `main` prints as one line instead of a traceback, and the second diff, like the one from run E's launch commit, should print nothing. Any other file in either list is a change to the trading path, and the move waits until that change is understood. Comparing `git rev-parse HEAD` or file hashes between the Mac and the Pi proves nothing right after an rsync, because the copy made them identical. The configs are checked against the text each run stored at launch in step 5.
+3. Stop the runs on the Mac with SIGTERM, using the stop command in [operations.md](operations.md#stopping-runs), `pkill -TERM -f 'configs/run_a.toml run'` and the same for runs B, C, D and E, and wait until `pgrep -fl btc_survivor` no longer lists them. Ctrl+C does the same for a run started in a foreground terminal. A clean stop writes a final checkpoint and logs `stopped cleanly`. Stop the Mac dashboard too, since from then on it would only show the old copies.
+4. Copy the five data folders, including any `-wal` or `-shm` file next to a database.
 
    ```bash
    # on the Mac, from ~/code/btc_survivor
-   rsync -a data/run_a data/run_b data/run_c data/run_d btc@btcpi.local:btc_survivor/data/
+   rsync -a data/run_a data/run_b data/run_c data/run_d data/run_e btc@btcpi.local:btc_survivor/data/
    ```
 
 5. On the Pi, check each database with `.venv/bin/btc_survivor --config configs/run_a.toml init-db`, which reports that it matches the schema, and look at it with `status`. Then compare each config with the text the run stored in its `meta` table at launch. They must match byte for byte.
 
    ```bash
    # on the Pi, from ~/btc_survivor
-   for run in run_a run_b run_c run_d; do
+   for run in run_a run_b run_c run_d run_e; do
      sqlite3 -readonly data/$run/btc_survivor.db "SELECT rtrim(value, char(10)) FROM meta WHERE key = 'config_toml'" \
        | diff - configs/$run.toml && echo "$run config matches"
    done

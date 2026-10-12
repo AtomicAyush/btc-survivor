@@ -1,10 +1,10 @@
 # Operations
 
-This guide covers running BTC Survivor day to day on the MacBook that hosts the four live runs, and reading what the runs report. Commands assume the project folder as the working directory and the `.venv311` environment. On a Raspberry Pi each run is a systemd service instead, as [raspberry_pi.md](raspberry_pi.md) describes, and the runtime design is in [section 14 of the plan](../PLAN.md#14-runtime-and-command-line).
+This guide covers running BTC Survivor day to day on the MacBook that hosts the five live runs, and reading what the runs report. Commands assume the project folder as the working directory and the `.venv311` environment. On a Raspberry Pi each run is a systemd service instead, as [raspberry_pi.md](raspberry_pi.md) describes, and the runtime design is in [section 14 of the plan](../PLAN.md#14-runtime-and-command-line).
 
 ## Where everything lives
 
-* `configs/run_a.toml` to `configs/run_d.toml` hold the settings of each run. A relative `data_dir` is resolved from the config's own folder, so `../data/run_a` means `data/run_a` in the project.
+* `configs/run_a.toml` to `configs/run_e.toml` hold the settings of each run. Run E's config is hypothetical and never a realistic cost setting, as its header says. A relative `data_dir` is resolved from the config's own folder, so `../data/run_a` means `data/run_a` in the project.
 * `data/run_a/btc_survivor.db` is the run's database, with its `-wal` and `-shm` files beside it. The three belong together, so never delete or move one of them alone.
 * `data/run_a/logs/btc_survivor.log` is the log file, rotated at UTC midnight with 14 days kept.
 * `data/run_a/stdout.log` is everything the process prints. It holds the same lines as the log file and is never rotated.
@@ -43,13 +43,28 @@ nohup .venv311/bin/python -m btc_survivor dashboard configs/run_a.toml configs/r
 2026-10-11T20:43:00.078Z INFO btc_survivor.engine feed event 2026-10-11T20:43:00.000Z healthy a full clean minute
 ```
 
+Run E was added on 12 October 2026 by the owner's decision and starts the same way. It is run B with no fee, slippage, short charges or margin, so it is hypothetical, and its bots trade on their own predictions, as [section 21 of the plan](../PLAN.md#21-controls-parallel-runs-and-success-criteria) explains. `init-db` creates `data/run_e` and its empty database first. The dashboard reads its list of runs only when it starts, so it is stopped and started again with all five configs, which costs the runs nothing because it only reads. Stop it by the process number that `pgrep` prints, which was `11451` on 12 October 2026, rather than with `pkill -f`, because a pattern can also match another shell whose command line holds the same words, and on Linux `pkill` does not even skip the shell that runs it. Wait until `pgrep -fl 'btc_survivor dashboard'` lists nothing before starting it again, so the port is free.
+
+```bash
+.venv311/bin/python -m btc_survivor --config configs/run_e.toml init-db
+nohup .venv311/bin/python -m btc_survivor --config configs/run_e.toml run > data/run_e/stdout.log 2>&1 &
+pgrep -fl 'btc_survivor dashboard'
+kill -TERM 11451
+pgrep -fl 'btc_survivor dashboard'
+nohup .venv311/bin/python -m btc_survivor dashboard configs/run_a.toml configs/run_b.toml configs/run_c.toml configs/run_d.toml configs/run_e.toml --port 8050 >> data/dashboard.log 2>&1 &
+```
+
+Run E follows the same timeline as runs A to C. Features need 6 hours of healthy history and the label scale about another hour, then 6 hours of warmup follow, so its learners turn active about 13 hours after launch. Its gate then passes almost every prediction, so its first trades on its own calls come within half an hour of that, each copied by its coin flip twin, and forced trades become rare.
+
+The dashboard's help panel was written for runs A to D. It does not name run E, and its notes that most trades are forced every 12 hours and that trading will not beat cash at retail fees do not describe run E's tab. The file is left unchanged for now, because the running dashboard reads `dashboard.html` on every request, so any edit would change the open page at once, as the rules below explain.
+
 A few rules keep restarts safe.
 
 * Restart a run with `>>` in place of `>`, because `>` empties `stdout.log`. The rotated log file keeps its own 14 days either way.
 * Never start a second process on the same config. Nothing in the code prevents it, and two writers would mix two histories in one database. Check with `pgrep -fl btc_survivor` first.
 * Never edit a run's config, even between restarts. A restart refuses a changed master seed, population size or twin setting, but any other edit would pass unnoticed and break the rule that settings are fixed before launch.
-* Before any restart run `.venv311/bin/python scripts/check_config_integrity.py configs/run_*.toml` and restart only on match, same settings or logging only. A setting that differs means a config file no longer holds the settings its run launched with, so put the file back first, and record the check in the results.
-* Restart a run in the environment it started with, `.venv311` for all four, so its Python and numpy stay the same.
+* Before any restart run `.venv311/bin/python scripts/check_config_integrity.py configs/run_*.toml` and restart only on match, same settings or logging only. A setting that differs means a config file no longer holds the settings its run launched with, so put the file back first, and record the check in the results. Run E's database holds no stored config until its first checkpoint, within about five minutes of its start, so until then the glob reports run E as missing and the script exits 2. In that window name `configs/run_a.toml` to `configs/run_d.toml` instead.
+* Restart a run in the environment it started with, `.venv311` for all five, so its Python and numpy stay the same.
 * Both environments on the Mac are editable installs, so a restarted run loads the source as it stands at that moment. Restart only from a commit that leaves version 1 behaviour unchanged, and note the commit in the results.
 * Never check out another branch in `~/code/btc_survivor` while the runs are live. The dashboard reads `dashboard.html` from that tree on every request and reloads the open page when the file changes, so a checkout changes the running dashboard at once, with no restart. Other work happens in a separate worktree, as [section 3 of the version 2 plan](../PLAN_V2.md#3-scope-isolation-from-version-1-and-module-layout) arranges.
 * Put `--config` before the command. After the command it is rejected.
@@ -96,7 +111,7 @@ Three other lines are worth a search. `slow minute step` appears when a minute s
 
 Two warnings matter. One says the system is not running, when `runtime_status` is missing or more than two minutes old. The other says the feed is not healthy, so bots are paused. Bot rows come from the latest checkpoint and can be up to five minutes old, while the price and the feed state are at most a minute old.
 
-The dashboard at [http://127.0.0.1:8050](http://127.0.0.1:8050) shows the same numbers from the same read only queries for all four runs, with the equity chart, the skill so far and the latest decisions, fills and feed events. A run whose panel shows an error could not be read, and `data/dashboard.log` holds the reason. Days in `status`, the dashboard and `evaluate` are days of healthy data, 1,440 healthy minutes each, not calendar days. The page is described in the [README](../README.md#the-local-dashboard).
+The dashboard at [http://127.0.0.1:8050](http://127.0.0.1:8050) shows the same numbers from the same read only queries for all five runs, with the equity chart, the skill so far and the latest decisions, fills and feed events. A run whose panel shows an error could not be read, and `data/dashboard.log` holds the reason. Days in `status`, the dashboard and `evaluate` are days of healthy data, 1,440 healthy minutes each, not calendar days. The page is described in the [README](../README.md#the-local-dashboard).
 
 The Bots header names the checkpoint its rows come from, such as `as of the checkpoint at 17:10:30 UTC, 3 min ago`. A run commits its decisions, fills, trades, deaths and births only with each checkpoint, in one transaction, so no committed row is newer than the newest checkpoint and the table cannot be fresher than it. Only the price, the feed state and the living count in `runtime_status`, and the feed events, are newer. The UTC and Local switch at the top right shows every time on the page, times quoted inside feed events included, in UTC or in this Mac's own time zone with its abbreviation, and the browser remembers it. Run logs, `status` and the database stay in UTC whatever the switch says, so compare them with the page in UTC. In Local the explorer's from and to fields take local times, and the page sends the server the same moment in UTC, so a date alone in to means the end of that local day. A time ending in Z is read as UTC in either zone, so a time copied from a log or from `status` can be pasted as it is. A time in the hour that repeats when the clocks go back is shown in UTC with a Z, so it is never read as the other one. The persistence rules are in [section 6.5 of the plan](../PLAN.md#65-persistence-points).
 
@@ -152,7 +167,7 @@ When the Mac sleeps, every process freezes. On wake the one second ticker catche
 * **Rent stops.** Rent accrues only in healthy minutes, so no bot pays for downtime. By `02:33` UTC on 12 October each learner in run A had paid about 0.20 dollars of rent, which matches the roughly 4.2 healthy hours since launch and not the 5.9 hours on the clock.
 * **Shorts keep paying funding.** Funding accrues through stale minutes and downtime, because a real short would still be open.
 * **Long gaps flatten.** At the first healthy minute after a gap longer than `max_resume_gap_minutes`, which is 10, every open position is closed through the normal broker. The exit reason is `restart_flatten` after a restart and `gap_flatten` after an outage while the process stayed up, and a `resume` event records the length of the gap and how many closing orders went out. A rejected flatten is sent again at the next healthy minute.
-* **Pending outcomes are dropped.** Every exit from healthy starts a new feed epoch, and no label crosses an epoch, so every pending prediction is discarded. No outcome matures for one horizon afterwards, so learning pauses for 30 minutes in runs A, B and C and for 4 hours in run D, and warmup, which counts training minutes, takes that much longer.
+* **Pending outcomes are dropped.** Every exit from healthy starts a new feed epoch, and no label crosses an epoch, so every pending prediction is discarded. No outcome matures for one horizon afterwards, so learning pauses for 30 minutes in runs A, B, C and E and for 4 hours in run D, and warmup, which counts training minutes, takes that much longer.
 * **Features need clean windows.** A return needs a healthy minute exactly at its start, and each volatility and volume window needs 80 percent of its minutes healthy. A gap of 1 to 3 minutes costs four times its length, the later minutes whose return windows start inside it. A gap of 4 or 5 minutes costs about 25 minutes, a gap of 6 to 23 minutes about 35 to 55 minutes, one longer than 23 minutes about 1.6 hours, and one longer than 72 minutes about 4.8 hours of healthy data, while the 30 minute volatility, the 120 minute volatility and the 360 minute volume baseline refill. In that time bots neither predict nor learn nor decide, while rent, marking and stop checks go on.
 * **A restart is not a death.** Bots keep their weights, genes, accounts and positions, as the next section explains.
 
@@ -168,7 +183,7 @@ On start, `run` loads the newest checkpoint that decodes and logs a `resume` eve
 
 ## The recorder
 
-Runs A to D record no raw messages, because their configs set `record_raw_messages = false`. A separate development recorder has run since `16:58` UTC on 11 October, reading `config.toml` and writing into `data/raw`.
+Runs A to E record no raw messages, because their configs set `record_raw_messages = false`. A separate development recorder has run since `16:58` UTC on 11 October, reading `config.toml` and writing into `data/raw`.
 
 ```bash
 nohup .venv311/bin/python scripts/record_feed.py --config config.toml > data/record_feed.log 2>&1 &
@@ -285,7 +300,7 @@ A true network cut affects the whole Mac and every run at once, so it is done on
 
 ## Python and TLS
 
-* `.venv311` is built on pyenv Python 3.11.16, and all four live runs use it. It connects to Coinbase with no extra step.
+* `.venv311` is built on pyenv Python 3.11.16, and all five live runs use it. It connects to Coinbase with no extra step.
 * `.venv` is built on the python.org Python 3.13.1 installer. That build carries its own OpenSSL without any trusted certificates, so the websocket fails with `CERTIFICATE_VERIFY_FAILED` until the installer's certificate script has run once.
 * The tests need no network, so both environments run the whole suite, with `.venv/bin/python -m pytest -q` and `.venv311/bin/python -m pytest -q`.
 * numpy is pinned per Python version, 2.4.6 on 3.11 and 2.5.3 on 3.12 and newer, because numpy 2.5 dropped Python 3.11. That is one more reason to keep each run on the environment it started with.
