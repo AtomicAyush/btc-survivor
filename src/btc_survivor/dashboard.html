@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
 <title>BTC Survivor</title>
 <style>
 :root {
@@ -32,6 +33,11 @@ header h1 { font-size: 16px; margin: 0 8px 0 0; letter-spacing: .2px; }
 .live.off { background: var(--bad); animation: none; }
 @keyframes beat { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--good) 60%, transparent); } 100% { box-shadow: 0 0 0 7px transparent; } }
 @media (prefers-reduced-motion: reduce) { .live { animation: none; } }
+.zone { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; flex: none; }
+.zone button { border: 0; background: var(--chip); color: var(--muted); font: inherit; font-size: 12px; padding: 3px 10px; cursor: pointer; }
+.zone button + button { border-left: 1px solid var(--line); }
+.zone button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.zone button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 main { max-width: 1280px; margin: 0 auto; padding: 16px; }
 .banner { border: 1px solid var(--warn); color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent);
   border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; }
@@ -140,6 +146,10 @@ table.dx tr.dxrow > td { padding: 4px 10px 14px; text-align: left; white-space: 
   <div class="tabs" id="tabs"></div>
   <a class="jump" href="#decisions" title="Jump to the decisions explorer below">every decision</a>
   <div class="updated"><span class="live" id="live"></span><span id="updated">connecting</span></div>
+  <div class="zone" id="zone" role="group" aria-label="Time zone of every time on this page">
+    <button type="button" data-zone="utc" aria-pressed="true" title="Show every time in UTC, the clock the runs keep">UTC</button>
+    <button type="button" data-zone="local" aria-pressed="false" title="Show every time in this computer's time zone">Local</button>
+  </div>
 </header>
 <div class="help"><details id="help"><summary>How to read this page</summary>
   <div class="grid">
@@ -152,7 +162,8 @@ table.dx tr.dxrow > td { padding: 4px 10px 14px; text-align: left; white-space: 
     <p><b>Skill.</b> The headline result. It is the correlation between the bots' average prediction and what Bitcoin actually did, scored once per 30 minutes after the first day, with a plain linear model beside it. It is only final on day 28.</p>
     <p><b>Benchmarks.</b> Buy and hold put all the money into Bitcoin at launch. Matched bought only $500 of it. Cash is start money minus rent, the bot that never trades.</p>
     <p><b>Timing.</b> The market is read as one minute candles. Each bot predicts where Bitcoin will be one horizon ahead, 30 minutes in runs A to C and 4 hours in run D, and decides once per horizon at its own minute. Learning, rent and stop checks happen every healthy minute.</p>
-    <p><b>Freshness.</b> The page refreshes every 10 seconds. Bot rows come from a save every 5 minutes, and all times are UTC.</p>
+    <p><b>Freshness.</b> The page refreshes every 10 seconds. Bot rows come from the newest save, made every 5 minutes with every decision and fill since the one before, and the Bots header says when that was. The price and the feed state are written once a minute, so they can be a little over a minute old, and the price card says how old the price is.</p>
+    <p><b>Times.</b> The runs keep UTC, and so does this page until you choose Local at the top. Local shows every time here in this computer's time zone with its abbreviation, times quoted inside feed events included, and the from and to filters below then read and show times in that zone too. A time ending in Z is read as UTC in either zone, so one copied from a log or from status can be pasted as it is, and an hour that repeats when the clocks go back is shown that way. The choice is remembered in this browser.</p>
     <p><b>Decisions explorer.</b> The Decisions section at the bottom lists every decision of the open tab, newest first, 50 to a page. Narrow it by bot, learners or twins, action, forced, gate, label, period or words in the reason. The chips count each action under the other filters, and the line below them says what share of the matured calls pointed the right way. Choose learners to score their predictions, or twins to score the coin, which should land near half. Choose a row to see its order, fills, the trade it opened or closed and how it turned out. Filters stay as the page refreshes and when you switch tabs.</p>
     <p><b>Decision columns.</b> Before is what the bot held. Prediction is the move it expected over the horizon in bps, hundredths of a percent, and a twin shows its learner's. Required edge is the move needed to pay for a round trip plus the bot's margin, and gate says whether the prediction cleared it. Forced marks a trade the timer made. A twin copies its learner's gate but never shows forced, even when it copies a forced trade. Action is what it did, where none means it stayed out and hold means it kept its position. Label is what Bitcoin really did over the horizon, marked right or wrong by whether the bot's own call pointed that way. A learner's call is its prediction and a twin's is the side its coin chose, so a twin's close or wait has no mark. It reads waiting until it matures and never when a feed gap or restart stopped it.</p>
   </div></details></div>
@@ -211,7 +222,44 @@ const pct = v => v == null ? "–" : (100 * v).toFixed(0) + "%";
 const signed = (v, d = 2) => v == null ? "–" : (v > 0 ? "+" : "") + num(v, d);
 const cls = v => v == null || v === 0 ? "" : v > 0 ? "pos" : "neg";
 const ago = s => s == null ? "" : s < 90 ? `${Math.round(s)} s ago` : s < 5400 ? `${Math.round(s / 60)} min ago` : `${(s / 3600).toFixed(1)} h ago`;
-const time = ts => ts ? ts.replace("T", " ").slice(5, 16) : "";
+
+// Times. The runs store UTC and the server only takes UTC. The viewer can show every time in this computer's zone
+// instead, and that choice is remembered in this browser.
+let zone = "utc";
+try { if (localStorage.getItem("tz") === "local") zone = "local"; } catch (e) {}
+const LOCAL_ZONE = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (e) { return ""; } })();
+const ZONE_NAMER = (() => { try { return new Intl.DateTimeFormat(undefined, {timeZoneName: "short"}); } catch (e) { return null; } })();
+const pad = (v, w = 2) => String(v).padStart(w, "0");
+const msOf = ts => ts == null || ts === "" ? null : typeof ts === "number" ? ts : Date.parse(ts);
+function abbr(ms, z = zone) {  // the zone's short name at that moment, such as UTC, CDT or CST, or an offset where none exists
+  if (z === "utc") return "UTC";
+  try {
+    const part = ZONE_NAMER.formatToParts(new Date(ms)).find(p => p.type === "timeZoneName");
+    if (part && part.value) return part.value;
+  } catch (e) {}
+  const off = -new Date(ms).getTimezoneOffset(), a = Math.abs(off);
+  return `UTC${off < 0 ? "-" : "+"}${Math.floor(a / 60)}${a % 60 ? ":" + pad(a % 60) : ""}`;
+}
+const zoneNow = () => abbr(Date.now());
+function parts(ms, z = zone) {
+  const d = new Date(ms), u = z === "utc";
+  return {y: u ? d.getUTCFullYear() : d.getFullYear(), mo: (u ? d.getUTCMonth() : d.getMonth()) + 1,
+    d: u ? d.getUTCDate() : d.getDate(), h: u ? d.getUTCHours() : d.getHours(), mi: u ? d.getUTCMinutes() : d.getMinutes(),
+    s: u ? d.getUTCSeconds() : d.getSeconds(), ms: u ? d.getUTCMilliseconds() : d.getMilliseconds()};
+}
+const day = p => `${p.y}-${pad(p.mo)}-${pad(p.d)}`;
+const hm = p => `${pad(p.h)}:${pad(p.mi)}`;
+// Month, day, hour and minute for tables, whose column header names the zone. A row on the other side of a
+// daylight saving change names its own.
+function time(ts) {
+  const ms = msOf(ts);
+  if (ms == null || Number.isNaN(ms)) return "";
+  const p = parts(ms), z = abbr(ms);
+  return `${pad(p.mo)}-${pad(p.d)} ${hm(p)}${z === zoneNow() ? "" : " " + z}`;
+}
+const stamp = ts => { const ms = msOf(ts); if (ms == null) return ""; const p = parts(ms); return `${day(p)} ${hm(p)} ${abbr(ms)}`; };
+const clock = ms => { const p = parts(ms); return `${hm(p)}:${pad(p.s)} ${abbr(ms)}`; };
+const zoneWords = () => zone === "utc" ? "UTC" : `your local time, ${zoneNow()}`;
 
 async function load() {
   nextAt = Date.now() + REFRESH_MS;
@@ -238,7 +286,7 @@ function tick() {
     label.textContent = state ? `cannot reach the dashboard server, retrying in ${wait} s` : "cannot reach the dashboard server";
   } else {
     live.className = "live";
-    label.textContent = `live · updated ${new Date(lastOk).toISOString().slice(11, 19)} UTC · next in ${wait} s`;
+    label.textContent = `live · updated ${clock(lastOk)} · next in ${wait} s`;
   }
 }
 
@@ -295,7 +343,8 @@ function view(run) {
   <div class="panel"><h2>Equity over time <small>mean learner against the benchmarks, fee ${num(c.fee_bps, 0)} bps</small></h2>
     ${chart(run.equity_curve, c.start_equity)}
     ${lineGuide(run)}</div>
-  <div class="panel"><h2>Bots <small>from the checkpoint ${ago(s.checkpoint_age_s)}, positions marked at the live price</small>
+  <div class="panel"><h2>Bots <small>${s.checkpoint_age_s == null ? "no checkpoint yet"
+    : `as of the checkpoint at ${esc(clock(state.now_ms - Math.round(1000 * s.checkpoint_age_s)))}, ${ago(s.checkpoint_age_s)}`}, positions marked at the live price</small>
     <label class="toggle"><input type="checkbox" id="twins" ${showTwins ? "checked" : ""}> show coin flip twins</label></h2>
     <div class="scroll">${botTable(run.bots.filter(b => showTwins || b.kind === "learner"))}</div></div>
   <div class="two">
@@ -328,7 +377,8 @@ function chart(rows, start) {
     const pts = rows.map((r, i) => r[k] == null ? null : `${x(i).toFixed(1)},${y(r[k]).toFixed(1)}`).filter(Boolean);
     return pts.length ? `<polyline fill="none" stroke="${col}" stroke-width="2" points="${pts.join(" ")}"/>` : "";
   }).join("");
-  const first = time(rows[0].ts), last = time(rows[rows.length - 1].ts);
+  const axis = ts => { const ms = msOf(ts), p = parts(ms); return esc(`${pad(p.mo)}-${pad(p.d)} ${hm(p)} ${abbr(ms)}`); };
+  const first = axis(rows[0].ts), last = axis(rows[rows.length - 1].ts);
   CH = {rows, x, y, W, H, P};
   return `<div class="chartbox" id="chartbox"><svg viewBox="0 0 ${W} ${H}" role="img" tabindex="0"
     aria-label="Equity over time. Move the pointer or use the arrow keys to read exact values.">${ticks}${lines}
@@ -351,7 +401,7 @@ function drawHover(i) {
     `<circle cx="${px}" cy="${CH.y(row[k])}" r="4" fill="${col}" stroke="var(--panel)" stroke-width="2"/>`).join("");
   document.getElementById("hover").innerHTML =
     `<line x1="${px}" x2="${px}" y1="8" y2="${CH.H - 22}" stroke="var(--muted)" stroke-dasharray="3 3"/>${dots}`;
-  tip.innerHTML = `<div class="t">${esc(row.ts.replace("T", " ").slice(0, 16))} UTC${row.btc_mid ? ` · BTC ${usd(row.btc_mid)}` : ""}</div>` +
+  tip.innerHTML = `<div class="t">${esc(stamp(row.ts))}${row.btc_mid ? ` · BTC ${usd(row.btc_mid)}` : ""}</div>` +
     SERIES.filter(([k]) => row[k] != null).map(([k, col, name]) =>
       `<div class="r"><span><i style="--c:${col}"></i>${name}</span><span>${usd(row[k])}</span></div>`).join("");
   tip.hidden = false;
@@ -430,7 +480,7 @@ function botTable(bots) {
     <th title="Correlation of this bot's recent predictions with what actually happened">skill</th>
     <th title="Hours until this bot must make its next forced trade, counting warmup">forced in</th>
     <th title="How long its money lasts at its loss rate over the last day">days left</th>
-    <th class="l" title="Its latest decision. Hover a row's entry for the reasoning.">last decision</th></tr></thead><tbody>${bots.map(b => `<tr>
+    <th class="l" title="Its latest decision and when, in ${esc(zoneWords())}. Hover a row's entry for the reasoning.">last decision ${esc(zoneNow())}</th></tr></thead><tbody>${bots.map(b => `<tr>
     <td>${b.bot_id}</td><td class="l">${b.kind}</td><td>${b.generation}</td><td class="l">${stateChip(b)}</td>
     <td>${usd(b.equity)}</td><td class="${cls(b.pnl)}">${b.pnl == null ? "–" : (b.pnl > 0 ? "+" : "") + usd(b.pnl)}</td><td>${b.trades}</td><td>${pct(b.win_rate)}</td>
     <td>${usd(b.fees)}</td><td class="l">${esc(b.position)}${b.entry_price ? ` <span class="muted">@ ${num(b.entry_price)}</span>` : ""}</td>
@@ -441,7 +491,7 @@ function botTable(bots) {
 
 function decisions(rows) {
   if (!rows.length) return `<p class="empty">No trading decisions yet. Learners trade after warmup.</p>`;
-  return `<table><thead><tr><th class="l">time UTC</th><th>bot</th><th class="l">action</th><th>prediction</th><th>needed</th><th class="l">reason</th></tr></thead><tbody>
+  return `<table><thead><tr><th class="l">time ${esc(zoneNow())}</th><th>bot</th><th class="l">action</th><th>prediction</th><th>needed</th><th class="l">reason</th></tr></thead><tbody>
     ${rows.map(r => `<tr><td class="l">${esc(time(r.ts))}</td><td>${r.bot_id}${r.origin === "control" ? " <span class=\"muted\">twin</span>" : ""}</td>
     <td class="l">${esc(r.action)}${r.forced ? " <span class=\"chip\">forced</span>" : ""}</td><td>${signed(r.prediction_bps, 1)} bps</td>
     <td>${num(r.required_edge_bps, 0)} bps</td><td class="reason">${esc(r.reason)}</td></tr>`).join("")}</tbody></table>`;
@@ -449,7 +499,7 @@ function decisions(rows) {
 
 function fills(rows) {
   if (!rows.length) return `<p class="empty">No fills yet.</p>`;
-  return `<table><thead><tr><th class="l">time UTC</th><th>bot</th><th class="l">leg</th><th class="l">side</th><th>price</th><th>fee</th><th class="l">status</th></tr></thead><tbody>
+  return `<table><thead><tr><th class="l">time ${esc(zoneNow())}</th><th>bot</th><th class="l">leg</th><th class="l">side</th><th>price</th><th>fee</th><th class="l">status</th></tr></thead><tbody>
     ${rows.map(r => `<tr><td class="l">${esc(time(r.filled_at || r.decided_at))}</td><td>${r.bot_id}</td><td class="l">${esc(r.leg)}</td>
     <td class="l">${esc(r.side)}</td><td>${num(r.price)}</td><td>${num(r.fee)}</td>
     <td class="l">${r.status === "filled" ? esc(r.reason) : `<span class="neg">${esc(r.status)} ${esc(r.reason)}</span>`}</td></tr>`).join("")}</tbody></table>`;
@@ -457,9 +507,13 @@ function fills(rows) {
 
 function events(rows) {
   if (!rows.length) return `<p class="empty">No feed events yet.</p>`;
-  return `<table><thead><tr><th class="l">time UTC</th><th class="l">event</th><th class="l">detail</th></tr></thead><tbody>
-    ${rows.map(r => `<tr><td class="l">${esc(time(r.ts))}</td><td class="l">${esc(r.kind)}</td><td class="reason">${esc(r.detail)}</td></tr>`).join("")}</tbody></table>`;
+  return `<table><thead><tr><th class="l">time ${esc(zoneNow())}</th><th class="l">event</th><th class="l">detail</th></tr></thead><tbody>
+    ${rows.map(r => `<tr><td class="l">${esc(time(r.ts))}</td><td class="l">${esc(r.kind)}</td><td class="reason">${textTimes(r.detail)}</td></tr>`).join("")}</tbody></table>`;
 }
+
+// A time the engine wrote inside an event's text, such as the checkpoint a restart restored, follows the switch too.
+const ISO_IN_TEXT = /\b[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?Z/g;
+const textTimes = s => esc(s).replace(ISO_IN_TEXT, ts => Number.isNaN(msOf(ts)) ? ts : when(ts));
 
 // The decisions explorer. Its controls sit outside #main, so typing survives the redraw every ten seconds. The
 // filters are kept for every tab, while the page and the open decision are kept per run.
@@ -472,17 +526,56 @@ const dx = {f: {}, per: "50", page: {}, open: {}, seq: 0, dseq: 0, run: null, li
 const dxEl = id => document.getElementById("dx-" + id);
 const count = v => Number(v || 0).toLocaleString();
 // The typed filters are checked here with the server's own rules, so a half typed value never replaces the table.
-const DX_WHEN = /^([0-9]{4}-[0-9]{2}-[0-9]{2})(?:[T ]([0-9]{2}:[0-9]{2})(?::([0-9]{2})(?:\.[0-9]{1,6})?)?)?Z?$/;
-function dxWhenOk(v) {
+// From and to are typed and shown in the chosen zone, while dx.f keeps what the server receives, which is UTC, so a
+// switch of zone rewrites the two fields and leaves the list as it is.
+const DX_WHEN = /^([0-9]{4})-([0-9]{2})-([0-9]{2})(?:[T ]([0-9]{2}):([0-9]{2})(?::([0-9]{2})(?:\.([0-9]{1,6}))?)?)?(Z?)$/;
+const DX_TIMES = ["from", "to"];
+// The moment a from or to means when read in zone z, or null for anything the server would refuse. A date alone means
+// midnight as a start and the whole of that day as an end. A value ending in Z is UTC whatever the zone, so a time
+// pasted from a log, status or the database means what it says.
+function dxInstant(k, v, z = zone) {
   const m = DX_WHEN.exec(v);
-  if (!m) return false;
-  const text = `${m[1]}T${m[2] || "00:00"}:${m[3] || "00"}`, at = Date.parse(text + "Z"), year = Number(m[1].slice(0, 4));
-  return !Number.isNaN(at) && new Date(at).toISOString().slice(0, 19) === text && year >= 1970 && year <= 9998;
+  if (!m) return null;
+  const f = [1, 2, 3, 4, 5, 6].map(i => Number(m[i] || 0));
+  f[1] -= 1;
+  const check = new Date(Date.UTC(...f));
+  if ([check.getUTCFullYear(), check.getUTCMonth(), check.getUTCDate(), check.getUTCHours(), check.getUTCMinutes(),
+    check.getUTCSeconds()].some((x, i) => x !== f[i])) return null;
+  const at = k === "to" && m[4] == null ? [f[0], f[1], f[2], 23, 59, 59, 999] : [...f, Number((m[7] || "0").slice(0, 3).padEnd(3, "0"))];
+  const ms = z === "utc" || m[8] ? Date.UTC(...at) : new Date(...at).getTime(), year = new Date(ms).getUTCFullYear();
+  return Number.isNaN(ms) || year < 1970 || year > 9998 ? null : ms;
 }
-const DX_CHECK = {bot: v => /^[0-9]{1,12}$/.test(v) && Number(v) > 0, from: dxWhenOk, to: dxWhenOk};
-const DX_HINT = {bot: "bot takes one bot's id, such as 7", from: "from takes a UTC time such as 2026-10-12 07:30",
-  to: "to takes a UTC date or time such as 2026-10-12 or 2026-10-12 07:30"};
-const when = ts => ts ? esc(ts.replace("T", " ").replace("Z", "")) : "–";
+// What the server receives for a typed value. UTC passes as typed, a local time goes as the UTC moment it means.
+const dxToServer = (k, v) => !v || !DX_TIMES.includes(k) || zone === "utc" || dxInstant(k, v) == null ? v
+  : new Date(dxInstant(k, v)).toISOString();
+const dxSame = (k, a, b) => a === b || (DX_TIMES.includes(k) && Boolean(a) && Boolean(b)
+  && dxInstant(k, a, "utc") != null && dxInstant(k, a, "utc") === dxInstant(k, b, "utc"));
+// A value the server receives, written for the field in the chosen zone, as briefly as it stays exact. A local time
+// in the hour that repeats when the clocks go back names two moments, so one that would read back as the other is
+// written in UTC with a Z.
+function dxShow(k, v) {
+  const at = v && DX_TIMES.includes(k) ? dxInstant(k, v, "utc") : null;
+  if (at == null) return v || "";
+  const brief = z => {
+    const p = parts(at, z), edge = k === "to" ? [23, 59, 59, 999] : [0, 0, 0, 0];
+    if ([p.h, p.mi, p.s, p.ms].every((x, i) => x === edge[i])) return day(p);
+    return `${day(p)} ${hm(p)}${p.s || p.ms ? ":" + pad(p.s) : ""}${p.ms ? "." + pad(p.ms, 3) : ""}`;
+  };
+  const text = brief(zone);
+  return dxInstant(k, text) === at ? text : brief("utc").replace(" ", "T") + "Z";
+}
+const DX_CHECK = {bot: v => /^[0-9]{1,12}$/.test(v) && Number(v) > 0, from: v => dxInstant("from", v) != null,
+  to: v => dxInstant("to", v) != null};
+const dxOrZ = () => zone === "utc" ? "" : ", or a UTC time ending in Z";
+const DX_HINT = {bot: () => "bot takes one bot's id, such as 7",
+  from: () => `from takes a time in ${zoneWords()}, such as 2026-10-12 07:30${dxOrZ()}`,
+  to: () => `to takes a date or time in ${zoneWords()}, such as 2026-10-12 or 2026-10-12 07:30${dxOrZ()}`};
+const when = ts => {  // the full time to the millisecond, in the chosen zone with its abbreviation
+  const ms = msOf(ts);
+  if (ms == null || Number.isNaN(ms)) return "–";
+  const p = parts(ms);
+  return esc(`${day(p)} ${hm(p)}:${pad(p.s)}.${pad(p.ms, 3)} ${abbr(ms)}`);
+};
 try {
   const saved = JSON.parse(localStorage.getItem("dx") || "{}") || {};
   for (const k of DX_KEYS) if (typeof (saved.f || {})[k] === "string") dx.f[k] = saved.f[k];
@@ -512,19 +605,29 @@ function dxBad() {
     dxEl(k).setAttribute("aria-invalid", String(bad.includes(k)));
   }
   const hint = dxEl("hint");
-  hint.textContent = bad.length ? `${bad.map(k => DX_HINT[k]).join(", and ")}. The list keeps its previous filter until then.` : "";
+  hint.textContent = bad.length ? `${bad.map(k => DX_HINT[k]()).join(", and ")}. The list keeps its previous filter until then.` : "";
   hint.hidden = !bad.length;
+}
+
+function dxZoneText() {
+  const z = zone === "utc" ? "In UTC" : `In your local time, ${zoneNow()}`, utc = zone === "utc" ? "" : " A time ending in Z is UTC.";
+  dxEl("from").parentElement.title = `${z}, for example 2026-10-12 07:30. A date alone means midnight.${utc}`;
+  dxEl("to").parentElement.title = `${z} and inclusive. A date alone means the whole of that day.${utc}`;
 }
 
 function dxInit() {
   for (const k of DX_KEYS) {
-    const el = dxEl(k);
-    if (DX_CHECK[k] && dx.f[k] && !DX_CHECK[k](dx.f[k])) delete dx.f[k];  // a saved value the server would refuse
-    el.value = dx.f[k] || "";
-    if (el.value !== (dx.f[k] || "")) { delete dx.f[k]; el.value = ""; }  // a saved choice this page no longer offers
+    const el = dxEl(k), saved = dx.f[k];
+    const refused = DX_TIMES.includes(k) ? dxInstant(k, saved, "utc") == null : DX_CHECK[k] && !DX_CHECK[k](saved);
+    if (saved && refused) delete dx.f[k];  // a saved value the server would refuse
+    el.value = dxShow(k, dx.f[k]);
+    if (el.tagName === "SELECT" && el.value !== (dx.f[k] || "")) { delete dx.f[k]; el.value = ""; }  // a choice this page no longer offers
     const apply = () => {
       dxBad();
-      if (dxValid(k) && (dx.f[k] || "") !== el.value.trim()) dxSet({[k]: el.value.trim()});
+      const text = el.value.trim();
+      if (DX_TIMES.includes(k) && text === dxShow(k, dx.f[k])) return;  // an untouched time never moves its filter
+      const v = dxToServer(k, text);
+      if (dxValid(k) && !dxSame(k, dx.f[k] || "", v)) dxSet({[k]: v});
     };
     if (el.tagName === "SELECT") { el.addEventListener("change", apply); continue; }
     let timer = null;  // typing waits for a pause, Enter and leaving the field apply at once
@@ -696,7 +799,7 @@ function dxLabel(r) {
 
 function dxTable(res, openId) {
   if (!res.rows.length) return `<p class="empty">No decisions match these filters.</p>`;
-  return `<table class="dx"><thead><tr><th class="l" title="When the bot decided, UTC">time UTC</th><th title="The bot's id">bot</th>
+  return `<table class="dx"><thead><tr><th class="l" title="When the bot decided, in ${esc(zoneWords())}">time ${esc(zoneNow())}</th><th title="The bot's id">bot</th>
     <th class="l" title="A learner predicts and decides. A twin copies its learner's timing and lets a coin pick the side.">kind</th>
     <th class="l" title="What the bot held just before this decision">before</th>
     <th title="The move the bot expected over the horizon, in bps. A twin shows its learner's prediction.">prediction bps</th>
@@ -820,7 +923,7 @@ function dxDetailHtml(d) {
   const x = d.decision, b = d.bot, o = d.outcome, H = span(d.horizon_minutes), twin = Boolean(b && b.kind === "twin");
   const row = (k, v, tip) => `<dt${tip ? ` title="${esc(tip)}"` : ""}>${k}</dt><dd>${v}</dd>`;
   const way = right => right == null ? "neither way" : `the <span class="verdict ${right ? "pos" : "neg"}">${right ? "right" : "wrong"}</span> way`;
-  let html = `<div class="dxhead"><span><b>Decision ${esc(x.id)}</b> <span class="muted">${when(x.ts)} UTC, bot ${esc(x.bot_id)},
+  let html = `<div class="dxhead"><span><b>Decision ${esc(x.id)}</b> <span class="muted">${when(x.ts)}, bot ${esc(x.bot_id)},
     ${twin ? "a coin flip twin" : "a learner"}</span></span>
     <button class="btn" id="dx-close" type="button" title="Close, or press Escape">close</button></div>
     <div class="cols"><section><h3>What it decided</h3><dl>
@@ -839,7 +942,7 @@ function dxDetailHtml(d) {
     const origin = b.origin === "control" ? "coin flip twin" : b.origin === "mutated" ? `mutated child of bot ${esc(b.parent_id)}` : "random newcomer";
     html += `<dl>${row("bot", esc(b.bot_id))}${row("generation", esc(b.generation), "0 is an original bot, 1 the child of a survivor")}
       ${row("origin", origin)}${row("state now", `<span class="chip ${esc(b.state)}">${esc(b.state)}</span>`)}${row("slot", esc(b.slot))}
-      ${row("born", `${when(b.born_at)} UTC`)}${b.died_at ? row("died", `${when(b.died_at)} UTC`) : ""}
+      ${row("born", when(b.born_at))}${b.died_at ? row("died", when(b.died_at)) : ""}
       ${twin ? "" : row("margin gene", `${num(b.margin_bps, 2)} bps`) + row("learning rate", esc(b.lr))}</dl>`;
   } else {
     html += `<p class="muted">This bot has no row in the bots table.</p>`;
@@ -858,8 +961,8 @@ function dxDetailHtml(d) {
   } else {
     html += d.fills.map(f => `<dl class="leg">${row("leg", `${esc(f.leg)}, ${esc(f.side)} ${num(f.qty, 8)} BTC`)}
       ${row("status", f.status === "filled" ? "filled" : `<span class="neg">${esc(f.status)}, ${esc(f.reason)}</span>`)}
-      ${row("decided", `${when(f.decided_at)} UTC`)}
-      ${row("filled", f.filled_at ? `${when(f.filled_at)} UTC, ${count(f.latency_ms)} ms later` : `not filled, after ${count(f.latency_ms)} ms`, "Orders wait out a simulated latency before they reach the book")}
+      ${row("decided", when(f.decided_at))}
+      ${row("filled", f.filled_at ? `${when(f.filled_at)}, ${count(f.latency_ms)} ms later` : `not filled, after ${count(f.latency_ms)} ms`, "Orders wait out a simulated latency before they reach the book")}
       ${f.price == null ? "" : row("fill price", usd(f.price)) + row("book average", usd(f.book_avg_price), "The average price walking the visible book, before the extra slippage")
         + row("levels", esc(f.levels_consumed), "Book levels the order ate through") + row("slippage", `${signed(f.slippage_bps, 2)} bps`, "Against the mid as it decided, positive is worse")
         + row("fee", usd(f.fee, 4))}</dl>`).join("");
@@ -867,8 +970,8 @@ function dxDetailHtml(d) {
   html += "</section>";
   if (d.trades.length) {
     html += `<section><h3>Trade</h3>` + d.trades.map(t => `<dl class="leg">${row("trade", `${esc(t.id)}, ${esc(t.side)}, ${esc(t.role)} by this decision`)}
-      ${row("opened", `${when(t.opened_at)} UTC at ${usd(t.entry_price)}`)}
-      ${row("closed", t.closed_at ? `${when(t.closed_at)} UTC at ${usd(t.exit_price)}, ${num(t.hold_minutes, 1)} minutes later` : "still open")}
+      ${row("opened", `${when(t.opened_at)} at ${usd(t.entry_price)}`)}
+      ${row("closed", t.closed_at ? `${when(t.closed_at)} at ${usd(t.exit_price)}, ${num(t.hold_minutes, 1)} minutes later` : "still open")}
       ${t.closed_at ? row("exit reason", esc(t.exit_reason)) + row("gross", usd(t.pnl_gross, 4), "Price move times quantity, before costs") : ""}
       ${row("fees", usd(t.fees, 4))}${row("funding", usd(t.funding, 4), "Borrowing cost of a short")}
       ${row("net result", t.closed_at ? `<span class="${cls(t.pnl_net)}">${t.pnl_net > 0 ? "+" : ""}${usd(t.pnl_net, 4)}</span>` : "known once it closes")}
@@ -876,7 +979,7 @@ function dxDetailHtml(d) {
   }
   html += `<section><h3>Outcome</h3>`;
   if (o.state === "matured") {
-    html += `<p>Bitcoin moved <b>${signed(o.label_bps, 2)} bps</b> over the ${H} after the decision, measured at ${when(o.matures_at)} UTC.</p>`;
+    html += `<p>Bitcoin moved <b>${signed(o.label_bps, 2)} bps</b> over the ${H} after the decision, measured at ${when(o.matures_at)}.</p>`;
     if (twin) {
       html += o.coin_side ? `<p>The coin chose ${esc(o.coin_side)}, and that pointed ${way(o.right)}. This is the twin's own call and what its label is scored by.</p>`
         : `<p>A twin's ${x.action === "close" ? "close" : "decision of none"} has no side of its own, so it is not scored.</p>`;
@@ -886,14 +989,49 @@ function dxDetailHtml(d) {
       if (o.position_side) html += `<p>The ${esc(o.position_side)} position it opened pointed ${way(o.position_right)}.</p>`;
     }
   } else if (o.state === "waiting") {
-    html += `<p>The label matures at ${when(o.matures_at)} UTC, ${H} after the decision, and shows here then.</p>`;
+    html += `<p>The label matures at ${when(o.matures_at)}, ${H} after the decision, and shows here then.</p>`;
   } else {
     html += `<p>This label never matured, because the feed was not healthy for the whole ${H} or the run restarted before it ended. Skill scores leave this minute out.</p>`;
   }
   return html + "</section></div>";
 }
 
+// The UTC and Local switch in the header.
+function showZone() {
+  document.querySelectorAll("#zone [data-zone]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.zone === zone)));
+  const local = document.querySelector('#zone [data-zone="local"]');
+  local.title = `Show every time in this computer's time zone, ${LOCAL_ZONE ? LOCAL_ZONE + ", " : ""}now ${abbr(Date.now(), "local")}`;
+  dxZoneText();
+}
+
+function setZone(z) {
+  if (z === zone || (z !== "utc" && z !== "local")) return;
+  const typed = DX_TIMES.filter(k => dxValid(k));  // a field still holding a half typed time keeps it
+  for (const k of typed) {  // a time typed but not yet applied is read in the zone it was typed in
+    const text = dxEl(k).value.trim();
+    if (text === dxShow(k, dx.f[k])) continue;  // an untouched time keeps its filter exactly
+    const v = dxToServer(k, text);
+    if (!dxSame(k, dx.f[k] || "", v)) { if (v) dx.f[k] = v; else delete dx.f[k]; dx.page = {}; }
+  }
+  zone = z;
+  try { localStorage.setItem("tz", zone); } catch (e) {}
+  for (const k of typed) dxEl(k).value = dxShow(k, dx.f[k]);
+  dxSave();
+  dxBad();
+  showZone();
+  render();
+  tick();
+  dx.list = dx.detail = "";  // the same answers, redrawn with the new times
+  dxRefresh();
+}
+
+document.getElementById("zone").addEventListener("click", e => {
+  const b = e.target.closest("[data-zone]");
+  if (b) setZone(b.dataset.zone);
+});
+
 dxInit();
+showZone();
 
 const help = document.getElementById("help");
 try { help.open = localStorage.getItem("help") !== "closed"; } catch (e) { help.open = true; }

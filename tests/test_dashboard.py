@@ -2,6 +2,9 @@
 
 import json
 import math
+import os
+import shutil
+import subprocess
 import threading
 import time
 import urllib.error
@@ -599,6 +602,106 @@ def test_the_page_offers_the_explorer():
     assert 'id="dx-hint"' in page and "DX_CHECK" in page  # a half typed time is held back, not sent
 
 
+def test_the_page_names_its_own_icon():
+    """An empty icon inside the page, which the policy's img-src data: allows, so a browser never asks for
+    /favicon.ico and logs the 404 as a console error."""
+    from btc_survivor.dashboard import PAGE, SECURITY_HEADERS
+
+    assert '<link rel="icon" href="data:,">' in PAGE.read_text()
+    assert "img-src 'self' data:" in SECURITY_HEADERS["Content-Security-Policy"]
+
+
+def test_the_page_offers_a_time_zone_switch():
+    """UTC or the viewer's own zone for every time on the page, remembered in the browser, while the server keeps
+    UTC."""
+    import re
+
+    from btc_survivor.dashboard import PAGE
+
+    page = PAGE.read_text()
+    assert 'id="zone"' in page and 'data-zone="utc"' in page and 'data-zone="local"' in page
+    assert 'localStorage.getItem("tz")' in page and 'localStorage.setItem("tz", zone)' in page
+    assert "all times are UTC" not in page and "<b>Times.</b>" in page and "abbreviation" in page
+    assert "UTC</th>" not in page and ")} UTC" not in page and "toISOString().slice(11" not in page  # no fixed labels
+    assert "new Date(dxInstant(k, v)).toISOString()" in page  # a local from or to reaches the server as UTC
+    assert "as of the checkpoint at" in page  # the Bots header says when its state is from
+    assert "textTimes(r.detail)" in page  # a time quoted inside a feed event follows the switch too
+    assert "at most a minute old" not in page and "written once a minute" in page  # runtime_status is once a minute
+    script = page[page.index("<script>"):]
+    blocks, depth, start = [], 0, None
+    for match in re.finditer(r"try \{|\{|\}", script):  # the spans of every try block, by matching braces
+        if match.group() == "try {" and start is None:
+            start, depth = match.start(), 1
+        elif start is not None:
+            depth += 1 if match.group() != "}" else -1
+            if depth == 0:
+                blocks.append((start, match.end()))
+                start = None
+    uses = [m.start() for m in re.finditer(r"localStorage", script)]
+    assert len(uses) >= 10
+    assert all(any(a < u < b for a, b in blocks) for u in uses)  # the page still works where storage throws
+
+
+NODE = shutil.which("node")
+TIME_CHECK = r"""
+zone = "local";
+const year = Date.UTC(2026, 0, 1), out = {wrong: [], z: 0};
+for (let t = year; t < year + 366 * 86400000; t += 900000) {
+  for (const at of [t, t - 1, t + 15500]) for (const k of DX_TIMES) {
+    const text = dxShow(k, new Date(at).toISOString());
+    if (dxInstant(k, text) !== at || dxToServer(k, text) !== new Date(at).toISOString()) out.wrong.push([k, at, text]);
+    if (text.endsWith("Z")) out.z++;
+  }
+}
+out.pasted = [dxToServer("from", "2026-10-12T07:30:15.5Z"), dxToServer("to", "2026-10-12Z")];
+out.typed = [dxToServer("from", "2026-10-12 07:30"), dxToServer("to", "2026-10-12")];
+out.repeated = [dxShow("from", "2026-11-01T06:30:00.000Z"), dxShow("from", "2026-11-01T07:30:00.000Z")];
+out.detail = textTimes("restored the checkpoint from 2026-10-12T17:20:30.000Z <b>");
+zone = "utc";
+out.detailUtc = textTimes("restored the checkpoint from 2026-10-12T17:20:30.000Z <b>");
+out.asTyped = dxToServer("from", "2026-10-12 07:30");
+console.log(JSON.stringify(out));
+"""
+
+
+def _page_times(page: str) -> str:
+    """The page's own time code, the part that touches no element, for node to run."""
+    script = page[page.index("<script>") + len("<script>"):page.index("</script>")]
+    esc = next(line for line in script.splitlines() if line.startswith("const esc = "))
+    times = script[script.index("// Times."):script.index("async function load()")]
+    explorer = script[script.index("const DX_WHEN"):script.index("try {\n  const saved")]
+    start = script.index("const ISO_IN_TEXT")
+    detail = script[start:script.index("\n", script.index("const textTimes", start))]
+    return "\n".join([esc, times, explorer, detail])
+
+
+@pytest.mark.skipif(NODE is None, reason="node runs the page's own time code")
+@pytest.mark.parametrize("tz", ["America/Chicago", "Europe/London", "Australia/Lord_Howe", "America/Santiago",
+                                "Asia/Kolkata", "Pacific/Chatham", "UTC"])
+def test_local_from_and_to_read_back_as_the_same_moment(tz):
+    """Every from and to the page writes in Local reads back as the moment it came from, all year, the hour that
+    repeats when the clocks go back included, so leaving a field or switching zone never moves a filter. A time ending
+    in Z is UTC in either zone, so one pasted from a log means what it says."""
+    from btc_survivor.dashboard import PAGE
+
+    env = {**os.environ, "TZ": tz, "LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8"}
+    run = subprocess.run([NODE, "-e", _page_times(PAGE.read_text()) + TIME_CHECK], env=env, capture_output=True,
+                         text=True, timeout=120)
+    assert run.returncode == 0, run.stderr
+    out = json.loads(run.stdout)
+    assert out["wrong"] == []
+    assert out["pasted"] == ["2026-10-12T07:30:15.500Z", "2026-10-12T23:59:59.999Z"]
+    assert out["asTyped"] == "2026-10-12 07:30"  # in UTC a value goes to the server as typed
+    assert out["detailUtc"] == "restored the checkpoint from 2026-10-12 17:20:30.000 UTC &lt;b&gt;"
+    if tz in ("UTC", "Asia/Kolkata"):
+        assert out["z"] == 0  # no hour repeats, so every time is written in the zone itself
+    if tz == "America/Chicago":
+        assert out["typed"] == ["2026-10-12T12:30:00.000Z", "2026-10-13T04:59:59.999Z"]
+        assert out["repeated"] == ["2026-11-01 01:30", "2026-11-01T07:30Z"]  # the second 01:30 is 01:30 CST
+        assert out["z"] == 24  # the repeated hour's 4 quarter hours, at 3 offsets, for from and to
+        assert out["detail"] == "restored the checkpoint from 2026-10-12 12:20:30.000 CDT &lt;b&gt;"
+
+
 def test_twins_are_scored_by_the_side_the_coin_chose(explorer):
     """A twin's row copies its learner's prediction, so its mark judges the coin's side. A close or wait has no side."""
     seeded = {r["ts"]: r for r in _fetch_all(explorer, {"kind": "twin"})[0] if r["ts"] in (FLIP_TS, TWIN_OPEN_TS)}
@@ -687,24 +790,98 @@ def test_each_answer_reads_one_snapshot(rich, tmp_path):
         writer.close()
 
 
-def test_a_request_line_that_cannot_be_split_gets_400(rich, capsys):
+def _raw(address, path: str, headers: list[str], method: str = "GET") -> tuple[int, bytes, bytes]:
+    """Send one request with exactly these header lines and return the status, the head and the body."""
     import socket
 
+    reply = b""
+    lines = "".join(f"{h}\r\n" for h in headers)
+    with socket.create_connection(address, timeout=5) as sock:
+        sock.sendall(f"{method} {path} HTTP/1.1\r\n{lines}\r\n".encode())
+        while chunk := sock.recv(65536):
+            reply += chunk
+    head, _, body = reply.partition(b"\r\n\r\n")
+    return int(head.split(b"\r\n")[0].split(b" ")[1]), head, body
+
+
+def test_a_request_line_that_cannot_be_split_gets_400(rich, capsys):
     server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler([rich]))
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    reply = b""
     try:
-        with socket.create_connection(server.server_address, timeout=5) as sock:
-            sock.sendall(b"GET http://[x/api/decisions?run=rich HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
-            while chunk := sock.recv(65536):
-                reply += chunk
+        code, head, body = _raw(server.server_address, "http://[x/api/decisions?run=rich",
+                                [f"Host: 127.0.0.1:{server.server_address[1]}"])
     finally:
         server.shutdown()
         server.server_close()
-    head, _, body = reply.partition(b"\r\n\r\n")
-    assert head.split(b"\r\n")[0].split(b" ")[1] == b"400" and b"frame-ancestors 'none'" in head
+    assert code == 400 and b"frame-ancestors 'none'" in head
     assert body == b"the request path cannot be read"
     assert "Traceback" not in capsys.readouterr().err
+
+
+def test_requests_addressed_to_another_host_get_403(rich):
+    """DNS rebinding. A page on another site can point its own name at 127.0.0.1, and its requests then arrive with
+    that name in the Host header, so anything but 127.0.0.1 or localhost on the serving port is refused everywhere."""
+    server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler([rich]))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    address, port = server.server_address, server.server_address[1]
+    paths = ("/", "/index.html", "/api/state", "/api/decisions?run=rich", "/api/decision?run=rich&id=1", "/nope",
+             "http://[x/api/state")
+    try:
+        for host in (f"127.0.0.1:{port}", f"localhost:{port}", f"LOCALHOST:{port}", f" localhost:{port} "):
+            assert _raw(address, "/api/decisions?run=rich", [f"Host: {host}"])[0] == 200, host
+            assert _raw(address, "/", [f"Host: {host}"])[0] == 200, host
+        refused = [[f"Host: attacker.example:{port}"], ["Host: attacker.example"], ["Host: 127.0.0.1"],
+                   ["Host: localhost"], [f"Host: 127.0.0.1:{port + 1}"], [f"Host: localhost:{port}0"],
+                   [f"Host: 127.0.0.1:{port}.attacker.example"], [f"Host: localhost.:{port}"],
+                   [f"Host: 127.0.0.2:{port}"], [f"Host: [::1]:{port}"], [f"Host: user@127.0.0.1:{port}"],
+                   ["Host: "], [], [f"Host: 127.0.0.1:{port}", "Host: attacker.example"],
+                   [f"Host: 127.0.0.1:{port}", f"Host: 127.0.0.1:{port}"]]
+        for headers in refused:
+            for path in paths:
+                code, head, body = _raw(address, path, headers)
+                assert code == 403, (headers, path)
+                assert b"frame-ancestors 'none'" in head and b"nosniff" in head and b"no-store" in head
+                assert body.startswith(b"this dashboard only answers requests addressed to 127.0.0.1 or localhost")
+        with pytest.raises(urllib.error.HTTPError) as err:  # what a rebound page's fetch would send
+            urllib.request.urlopen(urllib.request.Request(f"http://127.0.0.1:{port}/api/state",
+                                                          headers={"Host": f"attacker.example:{port}"}))
+        assert err.value.code == 403 and b"runs" not in err.value.read()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_every_method_meets_the_host_rule_and_every_answer_carries_the_headers(rich):
+    """Only GET is served, but any other method is refused for a foreign Host too, and the standard library's own
+    answers, 501 for a method and 431 for too many headers, carry the same security headers as the page."""
+    server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler([rich]))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    address, port = server.server_address, server.server_address[1]
+    secure = (b"frame-ancestors 'none'", b"nosniff", b"no-store", b"no-referrer")
+    try:
+        for method in ("HEAD", "POST", "OPTIONS", "PUT", "DELETE", "PATCH", "BREW"):
+            code, head, body = _raw(address, "/api/state", [f"Host: attacker.example:{port}"], method)
+            assert code == 403 and all(h in head for h in secure), method
+            assert (body == b"") if method == "HEAD" else body.startswith(b"this dashboard only answers"), method
+            code, head, body = _raw(address, "/api/state", [f"Host: 127.0.0.1:{port}"], method)
+            assert code == 501 and all(h in head for h in secure) and b"runs" not in body, method
+        padded = [f"Host: 127.0.0.1:{port}"] + [f"X-Pad-{i}: 1" for i in range(110)]
+        code, head, body = _raw(address, "/api/state", padded)
+        assert code == 431 and all(h in head for h in secure) and b"runs" not in body
+        code, head, body = _raw(address, "/api/state", [f"Host: 127.0.0.1:{port}"])
+        assert code == 200 and all(h in head for h in secure) and head.count(b"Cache-Control") == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_host_rule():
+    from btc_survivor.dashboard import host_allowed
+
+    assert host_allowed(["127.0.0.1:8050"], 8050) and host_allowed(["Localhost:8050"], 8050)
+    assert not host_allowed(["127.0.0.1"], 8050) and not host_allowed(["localhost:8051"], 8050)
+    assert host_allowed(["127.0.0.1"], 80) and host_allowed(["localhost:80"], 80)  # browsers leave out port 80
+    assert not host_allowed([], 8050) and not host_allowed(["127.0.0.1:8050"] * 2, 8050)
 
 
 def test_numbers_out_of_range_name_the_range(explorer):

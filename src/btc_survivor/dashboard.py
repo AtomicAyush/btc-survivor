@@ -3,7 +3,8 @@
 It serves one self contained page and a JSON view built from the same read only queries as the status command, so
 it can never change a run. Two more JSON views back the decisions explorer, one page of filtered decisions and one
 decision with the order, fills, trade and label it led to, built from fixed SQL with every filter as a parameter. It
-binds to 127.0.0.1 and needs nothing beyond the project's own dependencies.
+binds to 127.0.0.1, refuses any request whose Host header names something other than 127.0.0.1 or localhost on its
+own port, and needs nothing beyond the project's own dependencies.
 """
 
 from __future__ import annotations
@@ -41,6 +42,7 @@ SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",
 }
+LOCAL_NAMES = ("127.0.0.1", "localhost")  # the only names a request may address, with the serving port
 CHART_POINTS = 400
 RECENT = 25
 
@@ -511,6 +513,19 @@ def _json(value) -> bytes:
     return json.dumps(clean(value), allow_nan=False, default=str).encode()
 
 
+def host_allowed(hosts: list[str], port: int) -> bool:
+    """True when the request carries one Host header naming 127.0.0.1 or localhost with the serving port.
+
+    A page on another site can point its own name at 127.0.0.1, which is DNS rebinding, and its requests then reach
+    this server carrying that other name, so they are refused. Browsers leave out port 80, so only there the bare
+    name is accepted too.
+    """
+    if len(hosts) != 1:
+        return False
+    host = hosts[0].strip().lower()
+    return any(host == f"{name}:{port}" or (port == 80 and host == name) for name in LOCAL_NAMES)
+
+
 def make_handler(configs: list[Config]):
     names = run_names(configs)
     by_name = dict(zip(names, configs))
@@ -562,6 +577,18 @@ def make_handler(configs: list[Config]):
             return 500, _json({"error": f"the decisions of run {name} cannot be read, see the dashboard log"})
 
     class Handler(BaseHTTPRequestHandler):
+        def parse_request(self) -> bool:
+            """Read the request line and headers, then refuse a request addressed to any other name, whatever its
+            method, before its path is looked at."""
+            if not super().parse_request():
+                return False  # the standard library has answered already, with the headers end_headers adds
+            if host_allowed(self.headers.get_all("Host") or [], self.server.server_address[1]):
+                return True
+            self.close_connection = True
+            self._send(403, "text/plain", b"this dashboard only answers requests addressed to 127.0.0.1 or "
+                                          b"localhost on its own port")
+            return False
+
         def do_GET(self) -> None:
             try:
                 url = urllib.parse.urlsplit(self.path)
@@ -581,12 +608,18 @@ def make_handler(configs: list[Config]):
         def _send(self, code: int, kind: str, body: bytes) -> None:
             self.send_response(code)
             self.send_header("Content-Type", kind)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            if self.command != "HEAD":  # an answer to HEAD gives the length but never the body
+                self.wfile.write(body)
+
+        def end_headers(self) -> None:
+            """Every answer is never stored and carries the security headers, including the standard library's own
+            error pages for a method this server does not offer or a request it cannot read."""
             self.send_header("Cache-Control", "no-store")
             for name, value in SECURITY_HEADERS.items():
                 self.send_header(name, value)
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            super().end_headers()
 
         def log_message(self, fmt: str, *args) -> None:
             log.debug("dashboard %s", fmt % args)
@@ -595,7 +628,8 @@ def make_handler(configs: list[Config]):
 
 
 def serve(configs: list[Config], port: int) -> None:
-    """Serve until Ctrl+C on 127.0.0.1 only, so nothing outside this machine can reach it."""
+    """Serve until Ctrl+C on 127.0.0.1 only, so nothing outside this machine can reach it, and the Host check stops
+    a page on another site from reaching it through a name of its own."""
     server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(configs))
     print(f"dashboard for {', '.join(c.data_dir.name for c in configs)} at http://127.0.0.1:{port}", flush=True)
     try:
