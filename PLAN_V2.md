@@ -516,7 +516,7 @@ Only headlines up to 300 characters, summaries up to 600 for Finnhub, 1,000 for 
 
 ### 7.7 Week one
 
-The collector starts as soon as Phase 14 passes, in parallel with the Phase 13 tape gate and at least five trading days before launch. Week one may change only cadences, budgets and retention. Routing, aliases, junk patterns, text lengths, the half life and every threshold that touches a score are fixed now and never compared with prices or labels. The news process writes its config hash, prompt and schema hashes and both model ids to `meta` on every start, and a stock run records them at launch. If they ever differ, news health fails and a feed event says why.
+The collector starts as soon as Phase 14 passes, in parallel with the Phase 13 tape gate and at least four trading days before launch. Week one may change only cadences, budgets and retention. Routing, aliases, junk patterns, text lengths, the half life and every threshold that touches a score are fixed now and never compared with prices or labels. The news process writes its config hash, prompt and schema hashes and both model ids to `meta` on every start, and a stock run records them at launch. If they ever differ, news health fails and a feed event says why.
 
 `btc_survivor_v2 news-status --days 7` reports these as counts and verdicts.
 
@@ -1428,24 +1428,24 @@ threads = 1
 
 Each phase ends with the full suite green on Python 3.11 and 3.13, one single line commit carrying only the owner's name, a push of `feat/v2-stocks` to the private repository, and a short summary. Before existing code changes, the modules and tests that depend on it are listed. No test needs the network, randomized tests use seeded generators, no test puts a secret value inside an assert expression, and the suite never runs with `showlocals`. Version 2 test files carry the prefix `test_v2_` so they never collide with a version 1 file, so the `test_store` of Phase 16 lives in `tests/test_v2_store.py`, while `test_v1_untouched`, `test_v1_isolation` and the amended version 1 tests keep their names.
 
-**Critical path.** Phase 14 may be built, and the collector started, in parallel with the Phase 13 live gate, because collection does not depend on the tape verdict. Phase 16 waits for a consolidated verdict.
+**Critical path.** On 12 October 2026 the owner asked for the earliest safe launch, which moved the launch from 2 November to 19 October. Phase 14 is built, and the collector started, in parallel with the Phase 13 live gate, because collection does not depend on the tape verdict. Phases 15 and 16 are built in parallel with the verdict, because the engine reads candles rather than the vendor, and only their live use waits for a consolidated verdict. Phases 17 and 18 follow launch, apart from `scripts/v2_power.py`, because evaluation, status, export, the private dashboard, docs and units only read what the runs record and every criterion is already fixed in sections 11 and 12. The rehearsal is one session, and launch may fall on any session open.
 
 | Gate | Phase | Latest date |
 | --- | --- | --- |
-| Plan approved, version 1 Phases 9 and 10 finished | 11 | Wednesday 14 October 2026 |
-| Guard rails green | 12 | Friday 16 October |
-| Gate session recorded, the first clean full session | 13 | Monday 19 October |
-| Tape verdict consolidated, after at most one repeat session | 13 | Wednesday 21 October |
-| Collector live, five trading days before launch | 14 | Monday 26 October before `04:00` ET |
-| First live Haiku and Sonnet calls | 15 | Tuesday 27 October |
-| Learner check fixes the learning rate | 16 | Wednesday 28 October |
-| Evaluate, docs and units done | 17 and 18 | Wednesday 28 October |
-| Rehearsal sessions | 19 | Thursday 29 and Friday 30 October |
-| Launch | 19 | Monday 2 November |
+| Plan approved, version 1 Phases 9 and 10 finished | 11 | done, Monday 12 October 2026 |
+| Guard rails green | 12 | done, Sunday 11 October |
+| Gate session recorded, the first clean full session | 13 | Monday 12 October |
+| Tape verdict consolidated, after at most one repeat session | 13 | Tuesday 13 October, or Wednesday 14 after a repeat |
+| Collector live, four trading days before launch | 14 | Tuesday 13 October before `04:00` ET |
+| First live Haiku and Sonnet calls | 15 | Wednesday 14 October |
+| Learner check fixes the learning rate, and `scripts/v2_power.py` prints its range | 16 and 17 | Wednesday 14 October |
+| Rehearsal session | 19 | Thursday 15 or Friday 16 October |
+| Launch | 19 | Monday 19 October |
+| Evaluate, status, export, the private dashboard, docs and units | 17 and 18 | the first week of the window |
 
-If any gate slips, the launch moves to the first Monday after a passed rehearsal with the collector at least five trading days old.
+If any gate slips, the launch moves to the first session open after a passed rehearsal with the collector at least four trading days old.
 
-**The calendar before launch.** The 42 sessions from 2 November to 31 December hold 16,020 minutes, after the two early closes take 360, so 15,600 run minutes end by 31 December only if fewer than about 420 minutes are lost, and the window may well run into January. Whatever the expected end date, `[calendar]` therefore holds every FOMC statement and every CPI, employment situation, PPI and JOLTS release from launch through 31 March 2027 before launch, which also covers a 60 session window. `[calendar]` cannot change after launch, because any change alters the news config hash, which fails news health for the rest of the window under section 7.7 and breaks criterion 1.6.
+**The calendar before launch.** From 19 October the window of 15,600 run minutes ends on 15 December 2026, the 41st session, if no minute is lost, and there are 52 sessions to 31 December, so the window ends within the year unless more than about 4,300 minutes are lost. Whatever the expected end date, `[calendar]` therefore holds every FOMC statement and every CPI, employment situation, PPI and JOLTS release from launch through 31 March 2027 before launch, which also covers a 60 session window. `[calendar]` cannot change after launch, because any change alters the news config hash, which fails news health for the rest of the window under section 7.7 and breaks criterion 1.6.
 
 **Before Phase 11.** Version 1 Phases 9 and 10 finish on `feat/initial-bot`.
 
@@ -1522,9 +1522,9 @@ If any gate slips, the launch moves to the first Monday after a passed rehearsal
 
 19. **Soak, rehearsal and launch.**
     * `scripts/v2_soak.py` replays the recorded sessions plus a synthetic multi day run with many reconnects, halts and news bursts, reporting memory against the 5 MB bound after the first hour, CPU per print, invariants and determinism.
-    * A live rehearsal of two sessions uses `rehearsal_s1.toml` and `rehearsal_s2.toml`, separate data folders and the production `news.db` read only, with a plumbing warmup of 30 training minutes and a forced timer of 30 healthy minutes, labelled never a strategy setting, so trading runs live on the second session. The drills kill the stock process mid session, stop and restart the production news process, which briefly interrupts collection, SIGSTOP the stock process past the stale limit, and run the cap drill below with its tiny monthly cap.
+    * A live rehearsal of one session uses `rehearsal_s1.toml` and `rehearsal_s2.toml`, separate data folders and the production `news.db` read only, with a plumbing warmup of 30 training minutes and a forced timer of 30 healthy minutes, labelled never a strategy setting. It starts during the session before its main day, so features have their history, and trading runs live on the main day. The drills kill the stock process mid session, stop and restart the production news process, which briefly interrupts collection, SIGSTOP the stock process past the stale limit, and run the cap drill below with its tiny monthly cap.
     * The cap drill runs on one rehearsal day. `scripts/llm_synthetic_check.py --cap-drill` writes the drill config to the gitignored `data/v2/rehearsal/cap_drill_news.toml`, a copy of `configs/v2/news.toml` with `[finnhub] enabled = false`, `[edgar] enabled = false`, `[fed] enabled = false`, `[bls] enabled = false`, `[llm.sonnet] enabled = false`, `data_dir` set to `data/v2/rehearsal/cap_drill`, a tiny `monthly_usd = 0.01`, and `ledger_file` and `ledger_lock_file` pointing to a throwaway ledger in that folder, so it is never a committed run config and its tiny cap never meets the month's real spend on the key ledger. With every channel off the drill polls nothing, so no real item reaches Haiku and only the items the drill inserts are scored. Sonnet stays off because a single Sonnet reservation of about 0.014 dollars or more would pass the tiny cap at once. It starts a separate news process on that config and then inserts fictional long form official items from its own synthetic set into the drill database, each as a fresh item with status `new` and route `llm`, and the next only after the previous one has its final Haiku row, so no item is a seed and each goes alone to a reserved call or to the cap check. It inserts at most 20. A long form Haiku call books about 0.001 dollars and reserves about 0.003, and the throwaway ledger starts empty, so the cap refuses a call within about ten items. The drill passes when a call is refused by the cap, the waiting items get `skipped_cap`, Haiku stays off until the next UTC month, FinBERT scores every item, and the drill's booked spend stays at or under 1 cent. When it ends the script books the drill's total into the key ledger as one row, so the key ledger still holds every cent the key spent. The drill database and its ledger stay under `data/v2/rehearsal` and are never read by a run.
-    * S1 and S2 then launch with fresh databases at a Monday open, the news process already running, on the date the critical path gives.
+    * S1 and S2 then launch with fresh databases at a session open, the news process already running, on the date the critical path gives.
 
 ## 17. First live session checks
 
@@ -1602,7 +1602,7 @@ Checks marked **owner** print prices, volumes, headlines, fills or per symbol fi
 Each question carries a recommendation only, and silence never approves anything. Questions 1, 5, 6, 7, 9 and 11 need an explicit answer from the owner before the step each one gates, named in the question. The others follow their recommendation once the owner approves the plan under question 1, unless the owner answers otherwise, and question 2 stays open to a different answer until launch, after `scripts/v2_power.py` prints its range.
 
 1. Is this plan approved, including the worktree, the stricter order scan, the sigma scaled margin, intraday only trading, and the fixed criteria and outcomes in sections 11 and 12? Recommended, approve. This gates Phase 11, and no version 2 code is written before an explicit yes.
-2. Should the window stay at 40 sessions from Monday 2 November 2026, ending around the turn of the year, or run 60 sessions to late January, once `scripts/v2_power.py` prints the power range? Recommended, 40 sessions, with the upper confidence bound reported, settled before launch because `[evaluation]` is fixed then.
+2. Should the window stay at 40 sessions from Monday 19 October 2026, ending in mid December, or run 60 sessions to late January, once `scripts/v2_power.py` prints the power range? Recommended, 40 sessions, with the upper confidence bound reported, settled before launch because `[evaluation]` is fixed then.
 3. Will the owner send Finnhub a written request describing the scoring of its headlines through the Anthropic API for this personal, non commercial use? Recommended, yes, before launch, since an approval would remove the doubt the owner's decision of section 13.1 accepts. Sending headlines does not wait for an answer and nothing is gated on it. An objection turns `send_to_llm` off at once, which ends the window if it has begun.
 4. Will the owner copy the eight daily volumes and closes from nasdaq.com by hand after the gate session and each repeat, and which other consolidated display could replace it? Recommended, nasdaq.com, with a second display named only if needed.
 5. If the tape check fails, which fallback is preferred? Recommended, Databento Standard at 199 dollars a month, whose key is data only and whose licence covers automated use, with Alpaca only if its data scope OAuth route is proven. This gates any spend on a fallback, and after a failed tape check the build stays stopped until the owner answers.
