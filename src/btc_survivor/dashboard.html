@@ -87,12 +87,58 @@ td.reason { text-align: left; white-space: normal; color: var(--muted); min-widt
 .help b { color: var(--ink); }
 [title] { cursor: help; }
 button[title], label[title], input[title] { cursor: pointer; }
+.jump { color: var(--accent); font-size: 13px; text-decoration: none; }
+.jump:hover { text-decoration: underline; }
+h2 .jump { margin-left: auto; font-weight: 400; font-size: 12px; }
+.explore { max-width: 1280px; margin: 0 auto; padding: 0 16px 16px; scroll-margin-top: 72px; }
+.filters { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-end; margin-bottom: 10px; }
+.filters label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); min-width: 0; }
+.filters .grow { flex: 1 1 220px; }
+.filters input, .filters select, .pager select { font: inherit; font-size: 13px; color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; min-width: 0; max-width: 100%; }
+.filters input.bad { border-color: var(--bad); box-shadow: 0 0 0 1px var(--bad); }
+.dxhint { margin: -4px 0 8px; color: var(--bad); font-size: 12px; }
+.filters input:focus-visible, .filters select:focus-visible, .pager select:focus-visible, .btn:focus-visible, .facet:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px; }
+.btn { border: 1px solid var(--line); background: var(--chip); color: var(--ink); border-radius: 6px; padding: 5px 10px;
+  font: inherit; font-size: 13px; cursor: pointer; }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn.link { border: 0; background: none; color: var(--accent); padding: 0; font-size: inherit; }
+.facets { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 8px; }
+.facet { border: 1px solid var(--line); background: var(--chip); color: var(--ink); border-radius: 999px; padding: 2px 10px;
+  font: inherit; font-size: 12px; cursor: pointer; }
+.facet b { margin-left: 5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.facet.zero { color: var(--muted); }
+.facet.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.dxsum { margin: 0 0 10px; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+.dxsum b { color: var(--ink); font-weight: 600; }
+table.dx tbody tr[data-id] { cursor: pointer; }
+table.dx tbody tr[data-id]:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+table.dx tbody tr.sel, table.dx tbody tr.dxrow { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+table.dx tbody tr[data-id]:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+table.dx td.reason { min-width: 200px; }
+table.dx tr.dxrow > td { padding: 4px 10px 14px; text-align: left; white-space: normal; }
+.dxdetail { position: sticky; left: 0; width: calc(var(--dxw, 100%) - 20px); text-align: left; white-space: normal; }
+#dx-pinned .dxdetail { position: static; width: auto; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+  margin-bottom: 10px; background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.dxdetail .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 0 28px; }
+.dxhead { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.dxdetail h3 { font-size: 11.5px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); font-weight: 600; margin: 12px 0 6px; }
+.dxdetail dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 12px; margin: 0; font-size: 12.5px; }
+.dxdetail dt { color: var(--muted); }
+.dxdetail dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.dxdetail p { margin: 4px 0; font-size: 12.5px; line-height: 1.5; }
+.dxdetail .leg { border-top: 1px solid var(--line); padding-top: 6px; margin-top: 6px; }
+.pager { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; font-size: 12.5px; color: var(--muted); }
+.pager .grow { flex: 1; }
+.verdict { font-weight: 600; }
 </style>
 </head>
 <body>
 <header>
   <h1>BTC Survivor</h1>
   <div class="tabs" id="tabs"></div>
+  <a class="jump" href="#decisions" title="Jump to the decisions explorer below">every decision</a>
   <div class="updated"><span class="live" id="live"></span><span id="updated">connecting</span></div>
 </header>
 <div class="help"><details id="help"><summary>How to read this page</summary>
@@ -107,8 +153,45 @@ button[title], label[title], input[title] { cursor: pointer; }
     <p><b>Benchmarks.</b> Buy and hold put all the money into Bitcoin at launch. Matched bought only $500 of it. Cash is start money minus rent, the bot that never trades.</p>
     <p><b>Timing.</b> The market is read as one minute candles. Each bot predicts where Bitcoin will be one horizon ahead, 30 minutes in runs A to C and 4 hours in run D, and decides once per horizon at its own minute. Learning, rent and stop checks happen every healthy minute.</p>
     <p><b>Freshness.</b> The page refreshes every 10 seconds. Bot rows come from a save every 5 minutes, and all times are UTC.</p>
+    <p><b>Decisions explorer.</b> The Decisions section at the bottom lists every decision of the open tab, newest first, 50 to a page. Narrow it by bot, learners or twins, action, forced, gate, label, period or words in the reason. The chips count each action under the other filters, and the line below them says what share of the matured calls pointed the right way. Choose learners to score their predictions, or twins to score the coin, which should land near half. Choose a row to see its order, fills, the trade it opened or closed and how it turned out. Filters stay as the page refreshes and when you switch tabs.</p>
+    <p><b>Decision columns.</b> Before is what the bot held. Prediction is the move it expected over the horizon in bps, hundredths of a percent, and a twin shows its learner's. Required edge is the move needed to pay for a round trip plus the bot's margin, and gate says whether the prediction cleared it. Forced marks a trade the timer made. A twin copies its learner's gate but never shows forced, even when it copies a forced trade. Action is what it did, where none means it stayed out and hold means it kept its position. Label is what Bitcoin really did over the horizon, marked right or wrong by whether the bot's own call pointed that way. A learner's call is its prediction and a twin's is the side its coin chose, so a twin's close or wait has no mark. It reads waiting until it matures and never when a feed gap or restart stopped it.</p>
   </div></details></div>
 <main id="main"><p class="empty">Loading the runs.</p></main>
+<section class="explore" id="decisions" hidden>
+  <div class="panel">
+    <h2>Decisions <small id="dx-sub">every decision of this run, newest first</small></h2>
+    <div class="filters" role="search" aria-label="Filter the decisions">
+      <label title="One bot's id. Leave empty for every bot.">bot <input id="dx-bot" inputmode="numeric" autocomplete="off" placeholder="any" size="6" maxlength="12"></label>
+      <label title="Learners predict and decide. Twins copy their learner's timing with a coin flip direction.">kind <select id="dx-kind">
+        <option value="">learners and twins</option><option value="learner">learners</option><option value="twin">twins</option></select></label>
+      <label title="What the bot did. None means it stayed out, hold means it kept its position.">action <select id="dx-action">
+        <option value="">any</option><option value="open_long,open_short,close,flip,hold">anything but none</option>
+        <option value="open_long,open_short,close,flip">sent an order</option><option value="none">none</option>
+        <option value="open_long">open_long</option><option value="open_short">open_short</option><option value="close">close</option>
+        <option value="flip">flip</option><option value="hold">hold</option></select></label>
+      <label title="Trades the exploration timer forced, because no prediction had cleared the gate for too long. Twins never show forced, even when they copy a forced trade.">forced <select id="dx-forced">
+        <option value="">any</option><option value="1">forced</option><option value="0">not forced</option></select></label>
+      <label title="Whether the prediction cleared the required edge. A twin copies its learner's gate.">gate <select id="dx-gate">
+        <option value="">any</option><option value="1">passed</option><option value="0">not passed</option></select></label>
+      <label title="What Bitcoin did over the horizon, once that is known. Right and wrong judge a learner's prediction and the side a twin's coin chose.">label <select id="dx-outcome">
+        <option value="">any</option><option value="matured">matured</option><option value="right">pointed the right way</option>
+        <option value="wrong">pointed the wrong way</option><option value="waiting">still waiting</option><option value="missed">never matured</option></select></label>
+      <label title="Counted back from the run's newest minute">period <select id="dx-hours">
+        <option value="">whole run</option><option value="1">last hour</option><option value="6">last 6 hours</option>
+        <option value="24">last day</option><option value="168">last 7 days</option></select></label>
+      <label title="UTC, for example 2026-10-12 07:30. A date alone means midnight.">from <input id="dx-from" autocomplete="off" placeholder="YYYY-MM-DD HH:MM" size="18" maxlength="26"></label>
+      <label title="UTC and inclusive. A date alone means the whole of that day.">to <input id="dx-to" autocomplete="off" placeholder="YYYY-MM-DD HH:MM" size="18" maxlength="26"></label>
+      <label class="grow" title="Words anywhere in the reason, ignoring case">reason contains <input id="dx-q" type="search" autocomplete="off" placeholder="for example forced, or twin of bot 3" maxlength="100"></label>
+      <button class="btn" id="dx-clear" type="button">clear filters</button>
+    </div>
+    <p class="dxhint" id="dx-hint" role="status" hidden></p>
+    <div class="facets" id="dx-counts" aria-label="Decisions per action under the other filters"></div>
+    <p class="dxsum" id="dx-summary" aria-live="polite"></p>
+    <div id="dx-pinned"></div>
+    <div class="scroll" id="dx-table"><p class="empty">Loading the decisions.</p></div>
+    <div class="pager" id="dx-pager"></div>
+  </div>
+</section>
 <script>
 "use strict";
 const REFRESH_MS = 10000;
@@ -144,6 +227,7 @@ async function load() {
   }
   render();
   tick();
+  if (lastOk != null) dxRefresh();
 }
 
 function tick() {
@@ -165,12 +249,15 @@ function render() {
   document.getElementById("tabs").innerHTML = state.runs.map(r =>
     `<button class="tab ${r.name === current ? "on" : ""}" data-run="${esc(r.name)}">${esc(r.name)}</button>`).join("");
   document.querySelectorAll(".tab").forEach(b => b.onclick = () => {
-    current = b.dataset.run; try { localStorage.setItem("run", current); } catch (e) {} render();
+    current = b.dataset.run; try { localStorage.setItem("run", current); } catch (e) {} render(); dxRefresh();
   });
   const run = state.runs.find(r => r.name === current);
   const scrolled = [...document.querySelectorAll("#main .scroll")].map(el => el.scrollLeft);
   document.getElementById("main").innerHTML = run.error ? `<div class="banner">${esc(run.error)}</div>` : view(run);
   document.querySelectorAll("#main .scroll").forEach((el, i) => { el.scrollLeft = scrolled[i] || 0; });
+  document.getElementById("decisions").hidden = Boolean(run.error);
+  if (!run.error) dxEl("sub").textContent =
+    `every decision of ${run.name}, newest first, each label known ${span(run.config.horizon_minutes)} after its decision`;
   attachHover();
   const t = document.getElementById("twins");
   if (t) t.onchange = () => { showTwins = t.checked; try { localStorage.setItem("twins", showTwins ? "1" : "0"); } catch (e) {} render(); };
@@ -212,7 +299,7 @@ function view(run) {
     <label class="toggle"><input type="checkbox" id="twins" ${showTwins ? "checked" : ""}> show coin flip twins</label></h2>
     <div class="scroll">${botTable(run.bots.filter(b => showTwins || b.kind === "learner"))}</div></div>
   <div class="two">
-    <div class="panel"><h2>Recent decisions <small>opens, closes, flips and holds</small></h2><div class="scroll">${decisions(run.decisions)}</div></div>
+    <div class="panel"><h2>Recent decisions <small>opens, closes, flips and holds</small><a class="jump" href="#decisions">explore every decision</a></h2><div class="scroll">${decisions(run.decisions)}</div></div>
     <div class="panel"><h2>Recent fills</h2><div class="scroll">${fills(run.fills)}</div></div>
   </div>
   <div class="panel"><h2>Feed events</h2><div class="scroll">${events(run.events)}</div></div>`;
@@ -373,6 +460,440 @@ function events(rows) {
   return `<table><thead><tr><th class="l">time UTC</th><th class="l">event</th><th class="l">detail</th></tr></thead><tbody>
     ${rows.map(r => `<tr><td class="l">${esc(time(r.ts))}</td><td class="l">${esc(r.kind)}</td><td class="reason">${esc(r.detail)}</td></tr>`).join("")}</tbody></table>`;
 }
+
+// The decisions explorer. Its controls sit outside #main, so typing survives the redraw every ten seconds. The
+// filters are kept for every tab, while the page and the open decision are kept per run.
+const DX_KEYS = ["bot", "kind", "action", "forced", "gate", "outcome", "hours", "from", "to", "q"];
+const DX_ACTIONS = ["none", "open_long", "open_short", "close", "flip", "hold"];
+const DX_ORDERS = ["open_long", "open_short", "close", "flip"];
+const DX_PER = ["25", "50", "100", "200"];
+const dx = {f: {}, per: "50", page: {}, open: {}, seq: 0, dseq: 0, run: null, list: "", detail: "", html: "", shown: null,
+  res: null, pagerFocus: null};
+const dxEl = id => document.getElementById("dx-" + id);
+const count = v => Number(v || 0).toLocaleString();
+// The typed filters are checked here with the server's own rules, so a half typed value never replaces the table.
+const DX_WHEN = /^([0-9]{4}-[0-9]{2}-[0-9]{2})(?:[T ]([0-9]{2}:[0-9]{2})(?::([0-9]{2})(?:\.[0-9]{1,6})?)?)?Z?$/;
+function dxWhenOk(v) {
+  const m = DX_WHEN.exec(v);
+  if (!m) return false;
+  const text = `${m[1]}T${m[2] || "00:00"}:${m[3] || "00"}`, at = Date.parse(text + "Z"), year = Number(m[1].slice(0, 4));
+  return !Number.isNaN(at) && new Date(at).toISOString().slice(0, 19) === text && year >= 1970 && year <= 9998;
+}
+const DX_CHECK = {bot: v => /^[0-9]{1,12}$/.test(v) && Number(v) > 0, from: dxWhenOk, to: dxWhenOk};
+const DX_HINT = {bot: "bot takes one bot's id, such as 7", from: "from takes a UTC time such as 2026-10-12 07:30",
+  to: "to takes a UTC date or time such as 2026-10-12 or 2026-10-12 07:30"};
+const when = ts => ts ? esc(ts.replace("T", " ").replace("Z", "")) : "–";
+try {
+  const saved = JSON.parse(localStorage.getItem("dx") || "{}") || {};
+  for (const k of DX_KEYS) if (typeof (saved.f || {})[k] === "string") dx.f[k] = saved.f[k];
+  if (DX_PER.includes(saved.per)) dx.per = saved.per;
+  for (const [k, v] of Object.entries(saved.page || {})) if (Number.isInteger(v) && v > 0) dx.page[k] = v;
+  for (const [k, v] of Object.entries(saved.open || {})) if (Number.isInteger(v) && v > 0) dx.open[k] = v;
+} catch (e) {}
+
+function dxSave() {
+  try { localStorage.setItem("dx", JSON.stringify({f: dx.f, per: dx.per, page: dx.page, open: dx.open})); } catch (e) {}
+}
+
+function dxSet(changes) {
+  for (const [k, v] of Object.entries(changes)) { if (v) dx.f[k] = v; else delete dx.f[k]; }
+  dx.page = {};
+  dxSave();
+  dxRefresh();
+}
+
+const dxValid = k => { const v = dxEl(k).value.trim(); return !v || !DX_CHECK[k] || DX_CHECK[k](v); };
+
+// Marks each typed filter the server would refuse and says why. The list keeps its last filter until it is fixed.
+function dxBad() {
+  const bad = Object.keys(DX_CHECK).filter(k => !dxValid(k));
+  for (const k of Object.keys(DX_CHECK)) {
+    dxEl(k).classList.toggle("bad", bad.includes(k));
+    dxEl(k).setAttribute("aria-invalid", String(bad.includes(k)));
+  }
+  const hint = dxEl("hint");
+  hint.textContent = bad.length ? `${bad.map(k => DX_HINT[k]).join(", and ")}. The list keeps its previous filter until then.` : "";
+  hint.hidden = !bad.length;
+}
+
+function dxInit() {
+  for (const k of DX_KEYS) {
+    const el = dxEl(k);
+    if (DX_CHECK[k] && dx.f[k] && !DX_CHECK[k](dx.f[k])) delete dx.f[k];  // a saved value the server would refuse
+    el.value = dx.f[k] || "";
+    if (el.value !== (dx.f[k] || "")) { delete dx.f[k]; el.value = ""; }  // a saved choice this page no longer offers
+    const apply = () => {
+      dxBad();
+      if (dxValid(k) && (dx.f[k] || "") !== el.value.trim()) dxSet({[k]: el.value.trim()});
+    };
+    if (el.tagName === "SELECT") { el.addEventListener("change", apply); continue; }
+    let timer = null;  // typing waits for a pause, Enter and leaving the field apply at once
+    el.addEventListener("input", () => { clearTimeout(timer); if (dxValid(k)) dxBad(); timer = setTimeout(apply, 400); });
+    el.addEventListener("keydown", e => { if (e.key === "Enter") { clearTimeout(timer); apply(); } });
+    el.addEventListener("blur", () => { clearTimeout(timer); apply(); });
+  }
+  dxEl("clear").addEventListener("click", () => {
+    for (const k of DX_KEYS) dxEl(k).value = "";
+    dxBad();
+    dxSet(Object.fromEntries(DX_KEYS.map(k => [k, ""])));
+  });
+  dxEl("counts").addEventListener("click", e => {
+    const b = e.target.closest("[data-action]");
+    if (!b) return;
+    const action = dx.f.action === b.dataset.action ? "" : b.dataset.action;
+    dxEl("action").value = action;
+    dxSet({action});
+  });
+  const table = dxEl("table");
+  table.addEventListener("click", e => { const tr = e.target.closest("tr[data-id]"); if (tr) dxOpen(Number(tr.dataset.id)); });
+  table.addEventListener("keydown", e => {
+    if ((e.key === "Enter" || e.key === " ") && e.target.matches("tr[data-id]")) { e.preventDefault(); dxOpen(Number(e.target.dataset.id)); }
+  });
+  dxEl("pager").addEventListener("click", e => {
+    const b = e.target.closest("[data-page]");
+    if (!b || b.disabled) return;
+    dx.page[current] = Number(b.dataset.page);
+    dx.pagerFocus = b.dataset.role;
+    dxSave();
+    dxRefresh();
+  });
+  dxEl("pager").addEventListener("change", e => {
+    if (e.target.id !== "dx-per") return;
+    dx.per = e.target.value;
+    dx.page = {};
+    dxSave();
+    dxRefresh();
+  });
+  document.getElementById("decisions").addEventListener("click", e => {
+    if (e.target.closest("#dx-close")) { dxClose(); return; }
+    const b = e.target.closest("[data-open]");
+    if (b) dxOpen(Number(b.dataset.open));
+  });
+  window.addEventListener("resize", dxWidth);
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape" && dx.open[current] && !e.target.matches("input, select, textarea")) dxClose();
+  });
+}
+
+async function dxGet(path) {
+  let r, body = null;
+  try {
+    r = await fetch(path, {cache: "no-store"});
+  } catch (e) {
+    return {ok: false, status: 0, error: "cannot reach the dashboard server"};
+  }
+  try { body = await r.json(); } catch (e) {}
+  if (r.ok && body) return {ok: true, body};
+  if (!body) {  // a server older than this page answers the explorer with a plain not found
+    return {ok: false, status: r.status, stale: true, error: r.status === 404
+      ? "This dashboard server was started before the decisions explorer existed. Restart it to list the decisions."
+      : `the server answered ${r.status}`};
+  }
+  return {ok: false, status: r.status, error: body.error || `the server answered ${r.status}`};
+}
+
+function dxRefresh() {
+  if (!state) return;
+  const run = state.runs.find(r => r.name === current);
+  if (!run || run.error) return;
+  if (dx.run !== current) {
+    dx.run = current;
+    dx.list = dx.detail = "";
+    dx.res = dx.shown = null;
+    dx.html = "";
+    dxEl("pinned").innerHTML = "";
+    dxEl("counts").innerHTML = dxEl("pager").innerHTML = dxEl("summary").innerHTML = "";
+    dxEl("table").innerHTML = `<p class="empty">Loading the decisions of ${esc(current)}.</p>`;
+  }
+  dxList(current);
+  dxDetail(current);
+}
+
+async function dxList(name) {
+  const seq = ++dx.seq;
+  const params = new URLSearchParams({run: name});
+  for (const k of DX_KEYS) if (dx.f[k]) params.set(k, dx.f[k]);
+  params.set("page", String(dx.page[name] || 1));
+  params.set("per", dx.per);
+  const got = await dxGet("/api/decisions?" + params);
+  if (seq !== dx.seq || name !== current) return;  // a newer request or another tab took over
+  if (!got.ok) {
+    if (got.status === 0 && dx.res) return;  // keep the last table while the server is away, the header says so
+    dx.res = null;
+    dx.list = "";
+    dxEl("counts").innerHTML = dxEl("pager").innerHTML = dxEl("summary").innerHTML = "";
+    dxEl("table").innerHTML = `<div class="banner">${esc(got.error)}</div>`;
+    dxPlace();
+    return;
+  }
+  const res = got.body;
+  dx.res = res;
+  if (res.page !== (dx.page[name] || 1)) { dx.page[name] = res.page; dxSave(); }
+  const key = JSON.stringify(res);
+  if (key === dx.list) return;  // nothing changed, so leave the table and its focus alone
+  dx.list = key;
+  dxEl("counts").innerHTML = dxCounts(res);
+  dxEl("summary").innerHTML = dxSummary(res);
+  const holder = dxEl("table"), left = holder.scrollLeft;
+  const active = document.activeElement, focused = active && holder.contains(active) ? active.dataset.id : null;
+  holder.innerHTML = dxTable(res, dx.open[name]);
+  dxPlace();
+  holder.scrollLeft = left;
+  const again = focused && holder.querySelector(`tr[data-id="${Number(focused)}"]`);
+  if (again) again.focus({preventScroll: true});
+  dxEl("pager").innerHTML = dxPager(res);
+  if (dx.pagerFocus) {
+    const b = dxEl("pager").querySelector(`[data-role="${dx.pagerFocus}"]`);
+    if (b && !b.disabled) b.focus({preventScroll: true});
+    dx.pagerFocus = null;
+  }
+}
+
+function dxCounts(res) {
+  const chosen = dx.f.action ? dx.f.action.split(",") : [];
+  return DX_ACTIONS.map(a => {
+    const n = res.action_counts[a] || 0, on = chosen.includes(a), only = dx.f.action === a;
+    return `<button type="button" class="facet${on ? " on" : ""}${n ? "" : " zero"}" data-action="${a}" aria-pressed="${on}"
+      title="${only ? "Show every action again" : `Show only ${a}`}">${a}<b>${count(n)}</b></button>`;
+  }).join("");
+}
+
+// Learners are scored by their prediction and twins by the side their coin chose, the call each one made itself.
+function dxSummary(res) {
+  const s = res.summary, graded = s.right + s.wrong, kind = dx.f.kind || "", H = span(res.horizon_minutes);
+  if (!s.total) return "No decisions match these filters.";
+  let text = `<b>${count(s.total)}</b> ${s.total === 1 ? "decision matches" : "decisions match"}. ${count(s.forced)} forced, ${count(s.gate_passed)} passed the gate. `;
+  const twins = kind === "learner" ? "" : " Twins copy their learner's gate and never show forced.";
+  if (!s.matured) {
+    if (!s.missed) return text + `No label has matured among them yet, each takes ${H}.` + twins;
+    if (!s.waiting) return text + `None of their labels matured, because a feed gap or a restart came before the ${H} ended, so they are never scored.` + twins;
+    return text + `No label has matured among them. ${count(s.waiting)} still wait for their ${H}, and ${count(s.missed)} never matured after a feed gap or a restart.` + twins;
+  }
+  if (dx.f.outcome === "right" || dx.f.outcome === "wrong") {
+    return text + `All of them pointed the ${dx.f.outcome} way, as the label filter asks. Clear it to see the share.` + twins;
+  }
+  const calls = (kind === "learner" ? "prediction" : kind === "twin" ? "coin call" : "call") + (graded === 1 ? "" : "s");
+  text += graded ? `Of ${count(graded)} matured ${calls}, <b>${(100 * s.right / graded).toFixed(1)}%</b> pointed the right way, ${count(s.right)} right and ${count(s.wrong)} wrong, where a coin would get about half.`
+    : `${count(s.matured)} have a matured label, and none made a call either way.`;
+  const silent = s.matured - graded;
+  if (graded && silent) text += ` ${count(silent)} other matured ${silent === 1 ? "decision has" : "decisions have"} no side to score, such as a twin's close.`;
+  if (kind === "") text += " Learners are scored by their prediction and twins by the side their coin chose, so choose one kind to compare the two.";
+  if (kind === "twin") text += " A twin is scored by the side its coin chose, not the prediction it copied.";
+  return text + twins;
+}
+
+function dxLabel(r) {
+  if (r.label_state === "waiting") return `<span class="muted">waiting</span>`;
+  if (r.label_state === "missed") return `<span class="muted" title="A feed gap or a restart came before the horizon ended">never</span>`;
+  const twin = r.kind === "twin";
+  const tip = !twin ? "Scored by the bot's prediction" : r.coin_side
+    ? `The coin chose ${r.coin_side}. A twin is scored by that side, not the prediction it copied.`
+    : "A twin's close or wait has no side of its own, so it is not scored";
+  const verdict = r.right == null ? `<span class="muted" title="${esc(tip)}">${twin ? "no call" : "neither"}</span>`
+    : `<span class="verdict ${r.right ? "pos" : "neg"}" title="${esc(tip)}">${r.right ? "right" : "wrong"}</span>`;
+  return `${signed(r.label_bps, 1)} bps ${verdict}`;
+}
+
+function dxTable(res, openId) {
+  if (!res.rows.length) return `<p class="empty">No decisions match these filters.</p>`;
+  return `<table class="dx"><thead><tr><th class="l" title="When the bot decided, UTC">time UTC</th><th title="The bot's id">bot</th>
+    <th class="l" title="A learner predicts and decides. A twin copies its learner's timing and lets a coin pick the side.">kind</th>
+    <th class="l" title="What the bot held just before this decision">before</th>
+    <th title="The move the bot expected over the horizon, in bps. A twin shows its learner's prediction.">prediction bps</th>
+    <th title="The move needed to pay for a round trip plus the bot's margin, in bps">required edge</th>
+    <th class="l" title="Whether the prediction cleared the required edge. A twin copies its learner's.">gate</th>
+    <th class="l" title="Whether the exploration timer forced this trade. Twins never show forced.">forced</th>
+    <th class="l" title="What the bot did. None means it stayed out, hold means it kept its position.">action</th>
+    <th class="l" title="The bot's own words for its choice">reason</th>
+    <th title="What Bitcoin did over the horizon once it is known, and whether the bot's own call pointed that way. A learner's call is its prediction, a twin's is the side its coin chose.">label</th></tr></thead><tbody>
+    ${res.rows.map(r => `<tr data-id="${Number(r.id)}" tabindex="0" class="${r.id === openId ? "sel" : ""}" aria-selected="${r.id === openId}">
+    <td class="l">${esc(time(r.ts))}</td><td>${esc(r.bot_id)}</td><td class="l">${r.kind === "twin" ? "twin" : "learner"}</td>
+    <td class="l">${esc(r.position_before)}</td><td>${signed(r.prediction_bps, 1)}</td><td>${num(r.required_edge_bps, 1)}</td>
+    <td class="l">${r.gate_passed ? "passed" : `<span class="muted">no</span>`}</td>
+    <td class="l">${r.forced ? `<span class="chip">forced</span>` : `<span class="muted">no</span>`}</td>
+    <td class="l">${r.action === "none" ? `<span class="muted">none</span>` : `<b>${esc(r.action)}</b>`}</td>
+    <td class="reason">${esc(r.reason)}</td><td>${dxLabel(r)}</td></tr>`).join("")}</tbody></table>`;
+}
+
+function dxPager(res) {
+  if (!res.total) return "";
+  const first = (res.page - 1) * res.per + 1, last = Math.min(res.total, res.page * res.per);
+  const go = (page, role, title) => `<button class="btn" type="button" data-page="${page}" data-role="${role}" title="${title}"
+    ${page === res.page || page < 1 || page > res.pages ? "disabled" : ""}>${role}</button>`;
+  return `${go(1, "newest", "The first page")} ${go(res.page - 1, "newer", "The page before")}
+    <span>page ${count(res.page)} of ${count(res.pages)}, rows ${count(first)} to ${count(last)} of ${count(res.total)}</span>
+    ${go(res.page + 1, "older", "The page after")} ${go(res.pages, "oldest", "The last page")}<span class="grow"></span>
+    <label>per page <select id="dx-per">${DX_PER.map(n => `<option${n === String(res.per) ? " selected" : ""}>${n}</option>`).join("")}</select></label>`;
+}
+
+function dxMark() {
+  const id = dx.open[current];
+  dxEl("table").querySelectorAll("tr[data-id]").forEach(tr => {
+    const on = Number(tr.dataset.id) === id;
+    tr.classList.toggle("sel", on);
+    tr.setAttribute("aria-expanded", String(on));
+  });
+}
+
+function dxWidth() {
+  const holder = dxEl("table");
+  holder.style.setProperty("--dxw", holder.clientWidth + "px");
+}
+
+// The open decision shows in a row right under its own row, or above the table when it is not on this page.
+function dxPlace() {
+  const holder = dxEl("table"), pinned = dxEl("pinned"), id = dx.open[current];
+  holder.querySelectorAll("tr.dxrow").forEach(tr => tr.remove());
+  pinned.innerHTML = "";
+  if (!id) return;
+  const row = holder.querySelector(`tr[data-id="${Number(id)}"]`);
+  const inner = `<div class="dxdetail" id="dx-detail" role="region" aria-label="Decision ${Number(id)}">${row ? ""
+    : `<p class="muted">This decision is not on this page of the list.</p>`}${dx.html || `<p class="empty">Loading decision ${Number(id)}.</p>`}</div>`;
+  if (row) {
+    dxWidth();
+    row.insertAdjacentHTML("afterend", `<tr class="dxrow"><td colspan="${row.children.length}">${inner}</td></tr>`);
+  } else {
+    pinned.innerHTML = inner;
+  }
+}
+
+function dxOpen(id) {
+  if (dx.open[current] === id) { dxClose(); return; }
+  dx.open[current] = id;
+  dxSave();
+  dxMark();
+  dxDetail(current).then(() => {
+    const box = document.getElementById("dx-detail");
+    if (box) box.scrollIntoView({block: "nearest", behavior: "smooth"});
+  });
+}
+
+function dxClose() {
+  const id = dx.open[current];
+  delete dx.open[current];
+  dxSave();
+  dxMark();
+  dxDetail(current);
+  const row = dxEl("table").querySelector(`tr[data-id="${Number(id)}"]`);
+  if (row) row.focus({preventScroll: true});
+}
+
+async function dxDetail(name) {
+  const id = dx.open[name];
+  if (!id) {
+    dx.dseq++;
+    dx.detail = dx.html = "";
+    dx.shown = null;
+    dxPlace();
+    return;
+  }
+  const seq = ++dx.dseq;
+  if (dx.shown !== id) {
+    dx.detail = dx.html = "";
+    dx.shown = id;
+    dxPlace();
+  }
+  const got = await dxGet(`/api/decision?run=${encodeURIComponent(name)}&id=${Number(id)}`);
+  if (seq !== dx.dseq || name !== current || dx.open[name] !== id) return;
+  if (!got.ok) {
+    if (got.stale) {  // the list already says the server needs a restart, and the choice is kept for after it
+      dxEl("pinned").innerHTML = "";
+      dxEl("table").querySelectorAll("tr.dxrow").forEach(tr => tr.remove());
+      dx.detail = dx.html = "";
+      return;
+    }
+    if (got.status === 404) { delete dx.open[name]; dxSave(); dxMark(); return dxDetail(name); }
+    if (got.status === 0 && dx.detail) return;
+    dx.detail = "";
+    dx.html = `<div class="dxhead"><b>Decision ${Number(id)}</b><button class="btn" id="dx-close" type="button">close</button></div>
+      <div class="banner">${esc(got.error)}</div>`;
+  } else {
+    const key = JSON.stringify(got.body);
+    if (key === dx.detail) return;  // unchanged, so leave it alone
+    dx.detail = key;
+    dx.html = dxDetailHtml(got.body);
+  }
+  dxPlace();
+}
+
+function dxDetailHtml(d) {
+  const x = d.decision, b = d.bot, o = d.outcome, H = span(d.horizon_minutes), twin = Boolean(b && b.kind === "twin");
+  const row = (k, v, tip) => `<dt${tip ? ` title="${esc(tip)}"` : ""}>${k}</dt><dd>${v}</dd>`;
+  const way = right => right == null ? "neither way" : `the <span class="verdict ${right ? "pos" : "neg"}">${right ? "right" : "wrong"}</span> way`;
+  let html = `<div class="dxhead"><span><b>Decision ${esc(x.id)}</b> <span class="muted">${when(x.ts)} UTC, bot ${esc(x.bot_id)},
+    ${twin ? "a coin flip twin" : "a learner"}</span></span>
+    <button class="btn" id="dx-close" type="button" title="Close, or press Escape">close</button></div>
+    <div class="cols"><section><h3>What it decided</h3><dl>
+    ${row("action", x.action === "none" ? "none" : `<b>${esc(x.action)}</b>`)}${row("reason", esc(x.reason))}
+    ${row("held before", esc(x.position_before))}${row("BTC mid", usd(x.ref_mid), "The middle of the order book as it decided")}
+    ${row("prediction", `${signed(x.prediction_bps, 2)} bps`, twin ? "Copied from its learner" : "The move it expected over the horizon")}
+    ${twin ? row("coin chose", o.coin_side ? esc(o.coin_side) : "no side, nothing to open", "The twin's own call, which its label is scored by") : ""}
+    ${row("cost estimate", `${num(x.cost_estimate_bps, 2)} bps`, "Fees, spread, depth and slippage for a round trip, read from the book")}
+    ${row("margin", `${num(x.margin_bps, 2)} bps`, "The bot's own safety margin gene")}
+    ${row("required edge", `${num(x.required_edge_bps, 2)} bps`, "The cost estimate plus the margin")}
+    ${row("gate", x.gate_passed ? "passed" : "not passed", twin ? "Copied from its learner" : "Whether the prediction cleared the required edge")}
+    ${row("forced", x.forced ? "yes, by the exploration timer" : twin ? "no, a twin never shows forced" : "no")}
+    ${row("label", x.label_bps == null ? "not known" : `${signed(x.label_bps, 2)} bps`)}${row("decision id", esc(x.id))}</dl></section>`;
+  html += `<section><h3>The bot</h3>`;
+  if (b) {
+    const origin = b.origin === "control" ? "coin flip twin" : b.origin === "mutated" ? `mutated child of bot ${esc(b.parent_id)}` : "random newcomer";
+    html += `<dl>${row("bot", esc(b.bot_id))}${row("generation", esc(b.generation), "0 is an original bot, 1 the child of a survivor")}
+      ${row("origin", origin)}${row("state now", `<span class="chip ${esc(b.state)}">${esc(b.state)}</span>`)}${row("slot", esc(b.slot))}
+      ${row("born", `${when(b.born_at)} UTC`)}${b.died_at ? row("died", `${when(b.died_at)} UTC`) : ""}
+      ${twin ? "" : row("margin gene", `${num(b.margin_bps, 2)} bps`) + row("learning rate", esc(b.lr))}</dl>`;
+  } else {
+    html += `<p class="muted">This bot has no row in the bots table.</p>`;
+  }
+  if (d.pair) {
+    const link = `<button class="btn link" type="button" data-open="${Number(d.pair.id)}">decision ${esc(d.pair.id)}</button>`;
+    html += twin ? `<p>It copied learner bot ${esc(d.pair.bot_id)}, ${link}, which chose ${esc(d.pair.action)}.</p>`
+      : `<p>Its twin, bot ${esc(d.pair.bot_id)}, copied this as ${link}, ${esc(d.pair.action)}.</p>`;
+  }
+  html += "</section>";
+  html += `<section><h3>Order and fills</h3>`;
+  if (!DX_ORDERS.includes(x.action)) {
+    html += `<p class="muted">No order. ${x.action === "hold" ? "Hold keeps the position it already had." : "A decision of none sends nothing."}</p>`;
+  } else if (!d.fills.length) {
+    html += `<p class="muted">No fill rows yet. They are saved with the next checkpoint, within five minutes.</p>`;
+  } else {
+    html += d.fills.map(f => `<dl class="leg">${row("leg", `${esc(f.leg)}, ${esc(f.side)} ${num(f.qty, 8)} BTC`)}
+      ${row("status", f.status === "filled" ? "filled" : `<span class="neg">${esc(f.status)}, ${esc(f.reason)}</span>`)}
+      ${row("decided", `${when(f.decided_at)} UTC`)}
+      ${row("filled", f.filled_at ? `${when(f.filled_at)} UTC, ${count(f.latency_ms)} ms later` : `not filled, after ${count(f.latency_ms)} ms`, "Orders wait out a simulated latency before they reach the book")}
+      ${f.price == null ? "" : row("fill price", usd(f.price)) + row("book average", usd(f.book_avg_price), "The average price walking the visible book, before the extra slippage")
+        + row("levels", esc(f.levels_consumed), "Book levels the order ate through") + row("slippage", `${signed(f.slippage_bps, 2)} bps`, "Against the mid as it decided, positive is worse")
+        + row("fee", usd(f.fee, 4))}</dl>`).join("");
+  }
+  html += "</section>";
+  if (d.trades.length) {
+    html += `<section><h3>Trade</h3>` + d.trades.map(t => `<dl class="leg">${row("trade", `${esc(t.id)}, ${esc(t.side)}, ${esc(t.role)} by this decision`)}
+      ${row("opened", `${when(t.opened_at)} UTC at ${usd(t.entry_price)}`)}
+      ${row("closed", t.closed_at ? `${when(t.closed_at)} UTC at ${usd(t.exit_price)}, ${num(t.hold_minutes, 1)} minutes later` : "still open")}
+      ${t.closed_at ? row("exit reason", esc(t.exit_reason)) + row("gross", usd(t.pnl_gross, 4), "Price move times quantity, before costs") : ""}
+      ${row("fees", usd(t.fees, 4))}${row("funding", usd(t.funding, 4), "Borrowing cost of a short")}
+      ${row("net result", t.closed_at ? `<span class="${cls(t.pnl_net)}">${t.pnl_net > 0 ? "+" : ""}${usd(t.pnl_net, 4)}</span>` : "known once it closes")}
+      ${row("forced", t.forced ? "yes" : "no")}</dl>`).join("") + "</section>";
+  }
+  html += `<section><h3>Outcome</h3>`;
+  if (o.state === "matured") {
+    html += `<p>Bitcoin moved <b>${signed(o.label_bps, 2)} bps</b> over the ${H} after the decision, measured at ${when(o.matures_at)} UTC.</p>`;
+    if (twin) {
+      html += o.coin_side ? `<p>The coin chose ${esc(o.coin_side)}, and that pointed ${way(o.right)}. This is the twin's own call and what its label is scored by.</p>`
+        : `<p>A twin's ${x.action === "close" ? "close" : "decision of none"} has no side of its own, so it is not scored.</p>`;
+      html += `<p>Its learner's prediction of ${signed(x.prediction_bps, 2)} bps pointed ${way(o.prediction_right)}, which scores the learner rather than this twin.</p>`;
+    } else {
+      html += `<p>The prediction of ${signed(x.prediction_bps, 2)} bps pointed ${way(o.prediction_right)}.</p>`;
+      if (o.position_side) html += `<p>The ${esc(o.position_side)} position it opened pointed ${way(o.position_right)}.</p>`;
+    }
+  } else if (o.state === "waiting") {
+    html += `<p>The label matures at ${when(o.matures_at)} UTC, ${H} after the decision, and shows here then.</p>`;
+  } else {
+    html += `<p>This label never matured, because the feed was not healthy for the whole ${H} or the run restarted before it ended. Skill scores leave this minute out.</p>`;
+  }
+  return html + "</section></div>";
+}
+
+dxInit();
 
 const help = document.getElementById("help");
 try { help.open = localStorage.getItem("help") !== "closed"; } catch (e) { help.open = true; }

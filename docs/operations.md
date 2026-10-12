@@ -97,6 +97,8 @@ Two warnings matter. One says the system is not running, when `runtime_status` i
 
 The dashboard at [http://127.0.0.1:8050](http://127.0.0.1:8050) shows the same numbers from the same read only queries for all four runs, with the equity chart, the skill so far and the latest decisions, fills and feed events. A run whose panel shows an error could not be read, and `data/dashboard.log` holds the reason. Days in `status`, the dashboard and `evaluate` are days of healthy data, 1,440 healthy minutes each, not calendar days. The page is described in the [README](../README.md#the-local-dashboard).
 
+The Decisions section at the bottom of the page shows how a run is going between `status` checks. Choose learners and the last day to see what share of the matured predictions pointed the right way, where a coin gets about half, then choose twins to see the coin itself, scored by the side it chose rather than the prediction a twin copies. Filter on forced to see only the trades the timer made, which twins never show even when they copy one. Choosing a row opens the order, the fills and the trade behind that decision, and its twin's copy is one click away. A label reads waiting for one horizon after its decision, and never when a feed gap or a restart stopped it maturing, and the skill score leaves those minutes out too. The explorer only reads, like the rest of the page, and its filters are listed in the [README](../README.md#the-local-dashboard).
+
 ## Reading feed events
 
 Every change in feed health is written to the `feed_events` table and to the log.
