@@ -1,0 +1,23 @@
+# BTC Survivor, one live paper trading run per instance. No real orders are ever placed and no keys are needed.
+# btc_survivor@run_a runs configs/run_a.toml, btc_survivor@run_b runs configs/run_b.toml, and so on.
+# Replace CHANGE_ME with the user that owns the project folder before installing, see docs/raspberry_pi.md.
+# Enable systemd-time-wait-sync.service too, or time-sync.target does not wait for a real clock.
+
+[Unit]
+Description=BTC Survivor paper trading run %i
+Wants=network-online.target
+After=network-online.target time-sync.target
+
+[Service]
+Type=simple
+User=CHANGE_ME
+WorkingDirectory=/home/CHANGE_ME/btc_survivor
+Environment=PYTHONUNBUFFERED=1 OPENBLAS_NUM_THREADS=1
+ExecStart=/home/CHANGE_ME/btc_survivor/.venv/bin/btc_survivor --config configs/%i.toml run
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target
