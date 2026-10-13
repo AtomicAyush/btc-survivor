@@ -282,7 +282,8 @@ def test_init_db_refuses_a_news_database_at_a_run_path_and_a_version_1_config(tm
 
 
 def test_news_dry_run_runs_through_the_command_line_with_fake_secrets(tmp_path):
-    config, path = news_copy(tmp_path, secrets_file="secrets.env", rest_lock_file="lock/finnhub_rest.lock")
+    config, path = news_copy(tmp_path, secrets_file="secrets.env", rest_lock_file="lock/finnhub_rest.lock",
+                             model_sha256="", tokenizer_sha256="", source_revision="")
     secrets = config.parent / "secrets.env"
     secrets.write_text(f"{FINNHUB}={FAKE[FINNHUB]}\n{CONTACT}={FAKE[CONTACT]}\n", encoding="utf-8")
     secrets.chmod(0o600)

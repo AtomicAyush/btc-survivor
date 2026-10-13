@@ -1179,6 +1179,9 @@ def process_config(folder, secrets=None, finnhub=True, pinned=False):
         (models / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
         text = edit(text, "finbert", "manifest_file", '"models/manifest.json"')
         text = edit(text, "finbert", "source_revision", f'"{manifest["revision"]}"')
+    else:  # collect only, whatever pins the committed config carries
+        for key in ("model_sha256", "tokenizer_sha256", "source_revision"):
+            text = edit(text, "finbert", key, '""')
     assert "~" not in text
     config = folder / "news.toml"
     config.write_text(text, encoding="utf-8")

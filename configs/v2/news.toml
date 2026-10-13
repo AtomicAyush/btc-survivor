@@ -209,11 +209,11 @@ long_prompt_threshold_tokens = 100000     # Haiku, never reached under the 20,00
 
 [finbert]
 model_file = "../../data/models/finbert/model.onnx"
-model_sha256 = ""                         # pinned at export
+model_sha256 = "637d6c68660e94116f8c067621e8f0c448b00a3d1343d66c96a7dd84220aae68"  # pinned at export, 13 Oct 2026
 tokenizer_file = "../../data/models/finbert/tokenizer.json"
-tokenizer_sha256 = ""
+tokenizer_sha256 = "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66"
 manifest_file = "../../data/models/finbert/manifest.json"
-source_revision = ""                      # the pinned commit of ProsusAI/finbert
+source_revision = "4556d13015211d73dccd3fdd39d39232506f3e43"  # the pinned commit of ProsusAI/finbert
 window_tokens = 510
 max_windows = 16
 threads = 1
