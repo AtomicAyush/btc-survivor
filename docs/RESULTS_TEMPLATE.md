@@ -21,13 +21,13 @@ Write timestamps and negative numbers in inline code, such as `2026-10-11T20:41Z
 
 ## Run header
 
-The settings below are fixed for the life of each run. Add a hardware entry whenever a run moves to another machine. The runs do not record a commit themselves, so the launch commits are read from the commit times. Runs A to C launched at `20:41` UTC, about a minute after `174718f` was committed at `20:40:38` UTC. Run D launched at `21:39` UTC from `ef648f5` with `configs/run_d.toml` not yet committed, and that file was committed a minute later in `351efc2`. Run E was added on 12 October 2026 by the owner's decision and launched at `21:29` UTC from `622cf49` with `configs/run_e.toml` not yet committed, and that file was committed a few minutes later in `e132242`. Run D2 was added on 13 October 2026 by the owner's decision, to launch on the home PC from the commit that adds `configs/run_d2.toml`, and its start time and commit go in the table once it starts. The config text each run actually started with is stored in its `meta` table under `config_toml`.
+The settings below are fixed for the life of each run. Add a hardware entry whenever a run moves to another machine. The runs do not record a commit themselves, so the launch commits are read from the commit times. Runs A to C launched at `20:41` UTC, about a minute after `174718f` was committed at `20:40:38` UTC. Run D launched at `21:39` UTC from `ef648f5` with `configs/run_d.toml` not yet committed, and that file was committed a minute later in `351efc2`. Run E was added on 12 October 2026 by the owner's decision and launched at `21:29` UTC from `622cf49` with `configs/run_e.toml` not yet committed, and that file was committed a few minutes later in `e132242`. Run D2 was added on 13 October 2026 by the owner's decision and launched on the home PC at `15:48` UTC from `95bafef`, the commit that added `configs/run_d2.toml`, after `check_config_integrity.py` matched runs A to E there. The config text each run actually started with is stored in its `meta` table under `config_toml`.
 
 | Setting | Run A | Run B | Run C | Run D | Run D2 | Run E |
 | --- | --- | --- | --- | --- | --- | --- |
 | Purpose | main run, the skill result | low fee, the same forced schedule at 5 bps | machinery, death and lineage | long horizon, exploratory | long horizon with stall tolerance, exploratory, what the strict stall rule costs run D | hypothetical frictionless, exploratory, the bots' own calls before costs |
 | Config | `configs/run_a.toml` | `configs/run_b.toml` | `configs/run_c.toml` | `configs/run_d.toml` | `configs/run_d2.toml` | `configs/run_e.toml` |
-| Start, UTC | `2026-10-11T20:41Z` | `2026-10-11T20:41Z` | `2026-10-11T20:41Z` | `2026-10-11T21:39Z` |  | `2026-10-12T21:29Z` |
+| Start, UTC | `2026-10-11T20:41Z` | `2026-10-11T20:41Z` | `2026-10-11T20:41Z` | `2026-10-11T21:39Z` | `2026-10-13T15:48Z` | `2026-10-12T21:29Z` |
 | First healthy minute, `launch_ts` in `meta` |  |  |  |  |  |  |
 | Master seed | 12345 | 12345 | 12345 | 12345 | 12345 | 12345 |
 | Fee profile | `retail_default`, 90 bps taker | `low_fee_tier`, 5 bps taker | `retail_default`, 90 bps taker | `low_fee_tier`, 5 bps taker | `low_fee_tier`, 5 bps taker | `hypothetical_zero`, 0 bps taker, no slippage, short charges or margin |
@@ -40,7 +40,7 @@ The settings below are fixed for the life of each run. Add a hardware entry when
 | Final day | 28 | 28 | 56 | 28, descriptive | 28, descriptive | 28, descriptive |
 | Hardware at launch | MacBook, macOS, Python 3.11 in `.venv311`, numpy 2.4.6 | MacBook, macOS, Python 3.11 in `.venv311`, numpy 2.4.6 | MacBook, macOS, Python 3.11 in `.venv311`, numpy 2.4.6 | MacBook, macOS, Python 3.11 in `.venv311`, numpy 2.4.6 | home PC, Ubuntu 26.04, Python 3.11.16 in `.venv311`, numpy 2.4.6 | MacBook, macOS, Python 3.11 in `.venv311`, numpy 2.4.6 |
 | Later hardware, with the date of the move | home PC, Ubuntu 26.04, Python 3.11.16 in `.venv311`, numpy 2.4.6, stopped on the Mac at `2026-10-12T23:18Z`, healthy on the PC at `23:20Z` | the same, `23:21Z` and `23:23Z` | the same, `23:24Z` and `23:26Z` | the same, `23:27Z` and `23:29Z` |  | the same, `23:30Z` and `23:32Z` |
-| Code commit at launch | `174718f` | `174718f` | `174718f` | `ef648f5`, config committed in `351efc2` |  | `622cf49`, config committed in `e132242` |
+| Code commit at launch | `174718f` | `174718f` | `174718f` | `ef648f5`, config committed in `351efc2` | `95bafef` | `622cf49`, config committed in `e132242` |
 
 Every setting is explained in [config.example.toml](../config.example.toml) and the runs in [section 21 of the plan](../PLAN.md#21-controls-parallel-runs-and-success-criteria).
 
