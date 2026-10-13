@@ -16,6 +16,7 @@ import pytest
 
 from btc_survivor.dashboard import clean, make_handler, page_version, run_state
 from btc_survivor.replay import replay_lines
+import dashkit
 from enginekit import deadly_config, synthetic
 
 
@@ -228,94 +229,20 @@ def explorer(rich, tmp_path_factory):
 
 
 def _all_rows(cfg) -> tuple[list[dict], str]:
-    from btc_survivor.cli import data
-
-    conn = data.connect(cfg.db_path)
-    rows = [dict(r) for r in conn.execute("SELECT d.*, b.origin FROM decisions d JOIN bots b USING (bot_id)")]
-    clock = conn.execute("SELECT max(ts) FROM benchmark").fetchone()[0]
-    conn.close()
-    return rows, clock
+    return dashkit.decision_rows(cfg)
 
 
 def _expected(cfg, params: dict) -> tuple[list[int], dict, dict]:
     """The ids a request should return, newest first, its counts per action and its summary, worked out in Python."""
-    from btc_survivor.clock import iso, parse_iso
-    from btc_survivor.dashboard import ACTIONS, parse_when
-
-    rows, clock = _all_rows(cfg)
-    cutoff = iso(parse_iso(clock) - cfg.time.horizon_minutes * 60_000)
-
-    def call(r):
-        """A learner's prediction, or the side a twin's coin chose, long as 1 and short as minus 1."""
-        if r["origin"] != "control":
-            return r["prediction_bps"]
-        for side, sign in (("long", 1), ("short", -1)):
-            if r["action"] == "open_" + side or (r["action"] == "flip" and r["reason"].endswith("chose " + side)):
-                return sign
-        return None
-
-    def outcome(r, value):
-        label, aim = r["label_bps"], call(r)
-        known = label is not None and aim is not None
-        return {"matured": label is not None, "right": known and aim * label > 0,
-                "wrong": known and aim * label < 0, "waiting": label is None and r["ts"] > cutoff,
-                "missed": label is None and r["ts"] <= cutoff}[value]
-
-    tests = {
-        "bot": lambda r, v: r["bot_id"] == int(v),
-        "kind": lambda r, v: (r["origin"] == "control") == (v == "twin"),
-        "forced": lambda r, v: r["forced"] == int(v),
-        "gate": lambda r, v: r["gate_passed"] == int(v),
-        "outcome": outcome,
-        "q": lambda r, v: v.lower() in r["reason"].lower(),
-        "from": lambda r, v: r["ts"] >= parse_when(v, "from"),
-        "to": lambda r, v: r["ts"] <= parse_when(v, "to", end=True),
-        "hours": lambda r, v: r["ts"] > iso(parse_iso(clock) - int(v) * 3_600_000),
-    }
-    kept = [r for r in rows if all(tests[k](r, v) for k, v in params.items() if k != "action")]
-    counts = {a: sum(r["action"] == a for r in kept) for a in ACTIONS}
-    if "action" in params:
-        kept = [r for r in kept if r["action"] in params["action"].split(",")]
-    kept.sort(key=lambda r: (r["ts"], r["id"]), reverse=True)
-    summary = {"total": len(kept), "forced": sum(r["forced"] for r in kept),
-               "gate_passed": sum(r["gate_passed"] for r in kept),
-               "matured": sum(r["label_bps"] is not None for r in kept),
-               "waiting": sum(outcome(r, "waiting") for r in kept), "missed": sum(outcome(r, "missed") for r in kept),
-               "right": sum(outcome(r, "right") for r in kept), "wrong": sum(outcome(r, "wrong") for r in kept)}
-    return [r["id"] for r in kept], counts, summary
+    return dashkit.expected(cfg, params)
 
 
 def _fetch_all(get, params: dict, per: int = 200) -> tuple[list[dict], dict]:
-    """Every row a filter returns, walking its pages, and the first page's reply."""
-    rows, page, first = [], 1, None
-    while True:
-        code, reply = get("/api/decisions?" + urllib.parse.urlencode({"run": "rich", **params, "page": page,
-                                                                         "per": per}))
-        assert code == 200, reply
-        first = first or reply
-        assert reply["page"] == page and reply["total"] == first["total"]
-        rows += reply["rows"]
-        if page >= reply["pages"]:
-            return rows, first
-        page += 1
+    """Every row a filter returns from the rich run, walking its pages, and the first page's reply."""
+    return dashkit.fetch_all(get, "rich", params, per)
 
 
-FILTERS = [
-    {}, {"bot": "1"}, {"bot": "6"}, {"kind": "learner"}, {"kind": "twin"}, {"action": "close"}, {"action": "flip"},
-    {"action": "hold"}, {"action": "none"}, {"action": "open_long,open_short"}, {"forced": "1"}, {"forced": "0"},
-    {"gate": "1"}, {"gate": "0"}, {"outcome": "matured"}, {"outcome": "right"}, {"outcome": "wrong"},
-    {"outcome": "waiting"}, {"outcome": "missed"}, {"q": "forced"}, {"q": "FORCED BY"}, {"q": "%"}, {"q": "_"},
-    {"q": "\\"}, {"q": "coin chose long"}, {"from": "2026-10-03 04:45"}, {"to": "2026-10-03T04:40:00Z"},
-    {"from": "2026-10-03 04:30", "to": "2026-10-03 04:50:30.5"}, {"to": "2026-10-03"}, {"from": "2026-10-04"},
-    {"hours": "1"},
-    {"kind": "learner", "forced": "1", "action": "open_short"},
-    {"bot": "1", "gate": "1", "outcome": "right"},
-    {"kind": "twin", "q": "coin chose long", "from": "2026-10-03 04:30", "to": "2026-10-03 04:55"},
-    {"hours": "1", "outcome": "matured", "action": "close,open_long", "gate": "0"},
-    {"kind": "learner", "outcome": "wrong", "forced": "0", "q": "below", "action": "none,close,hold"},
-    {"kind": "twin", "outcome": "right"}, {"kind": "twin", "outcome": "wrong"},
-    {"kind": "twin", "outcome": "right", "action": "flip,open_short"}, {"outcome": "wrong", "action": "flip"},
-]
+FILTERS = dashkit.FILTERS
 
 
 @pytest.mark.parametrize("params", FILTERS, ids=lambda p: "&".join(f"{k}={v}" for k, v in p.items()) or "none")

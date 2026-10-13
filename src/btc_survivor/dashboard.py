@@ -2,9 +2,11 @@
 
 It serves one self contained page and a JSON view built from the same read only queries as the status command, so
 it can never change a run. Two more JSON views back the decisions explorer, one page of filtered decisions and one
-decision with the order, fills, trade and label it led to, built from fixed SQL with every filter as a parameter. It
-binds to 127.0.0.1, refuses any request whose Host header names something other than 127.0.0.1 or localhost on its
-own port, and needs nothing beyond the project's own dependencies.
+decision with the order, fills, trade and label it led to, built from fixed SQL with every filter as a parameter. The
+explorer also lists each turn a learner skipped, a phase minute it lived through without a decision row, with the
+cause the database shows for it, paged together with the decisions through a temporary table on the read only
+connection. It binds to 127.0.0.1, refuses any request whose Host header names something other than 127.0.0.1 or
+localhost on its own port, and needs nothing beyond the project's own dependencies.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ import sqlite3
 import threading
 import time
 import urllib.parse
+from bisect import bisect_left, bisect_right
 from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -30,6 +33,7 @@ from btc_survivor.cli.evaluate import SKILL_LAGS, forecasts
 from btc_survivor.cli.stats import diebold_mariano, skill_test
 from btc_survivor.clock import MS_PER_DAY, MS_PER_HOUR, MS_PER_MINUTE, iso, parse_iso
 from btc_survivor.config import Config
+from btc_survivor.features import VOLUME_WINDOW
 
 log = logging.getLogger(__name__)
 
@@ -77,14 +81,43 @@ CALL_SQL = ("CASE WHEN b.origin != ? THEN d.prediction_bps "
             "WHEN d.action = ? OR (d.action = ? AND d.reason LIKE ?) THEN ? END")
 CALL_ARGS = (TWIN_ORIGIN, "open_long", "flip", "%" + COIN_SAYS + "long", 1, "open_short", "flip",
              "%" + COIN_SAYS + "short", -1)
+
+# Skipped turns. A learner decides only at its phase minute, and only in a healthy minute where its prediction exists,
+# so a phase minute it lived through with no decision row is a turn it skipped. Each one is listed beside the
+# decisions with the action SKIPPED, read from a temporary table on the read only connection so the same filters,
+# order and paging apply to both. Its id is minus (minute index times SKIP_ID_BOTS plus the bot id), which never
+# collides with a decision id and stays inside the integers JavaScript holds exactly.
+SKIPPED = "skipped"
+LIST_ACTIONS = ACTIONS + (SKIPPED,)
+SKIP_ID_BOTS = 1_000_000
+SKIP_LAST_MINUTE = int(datetime(9999, 1, 1, tzinfo=timezone.utc).timestamp()) // 60 - 1  # 9998 is the last year
+SKIP_ID_MAX = SKIP_LAST_MINUTE * SKIP_ID_BOTS + SKIP_ID_BOTS - 1  # below 2 ** 53, so JavaScript holds it exactly
+SKIP_CACHE_ENTRIES = 16
+CAUSES = ("not_running", "not_healthy", "inputs", "unknown")
+STATE_KINDS = ("healthy", "recovering", "stale")
+RESTORED = "restored the checkpoint from "  # how Engine._restore words its resume event
+NEAR_BEFORE_MS, NEAR_AFTER_MS = 15 * MS_PER_MINUTE, 5 * MS_PER_MINUTE  # the feed events a skipped turn shows
+NEAR_BEFORE_EVENTS, NEAR_AFTER_EVENTS = 30, 10  # at most, the nearest to its minute on each side
+_SKIP_ID = re.compile(r"-[0-9]{1,16}")
+ROW_COLUMNS = ("id, bot_id, ts, position_before, prediction_bps, required_edge_bps, gate_passed, forced, action, "
+               "reason, label_bps")
+ROWS_SQL = ("(SELECT " + ROW_COLUMNS + ", NULL AS cause FROM decisions UNION ALL SELECT " + ROW_COLUMNS +
+            ", cause FROM temp.skipped_turns) d JOIN bots b USING (bot_id)")
+SKIP_TABLE_SQL = ("CREATE TEMP TABLE IF NOT EXISTS skipped_turns (id INTEGER PRIMARY KEY, bot_id INTEGER NOT NULL, "
+                  "ts TEXT NOT NULL, position_before TEXT, prediction_bps REAL, required_edge_bps REAL, "
+                  "gate_passed INTEGER, forced INTEGER, action TEXT NOT NULL, reason TEXT NOT NULL, label_bps REAL, "
+                  "cause TEXT NOT NULL)")
+SKIP_INSERT_SQL = ("INSERT INTO temp.skipped_turns (id, bot_id, ts, position_before, action, reason, cause) "
+                   "VALUES (?, ?, ?, ?, ?, ?, ?)")
+
 LIST_SQL = ("SELECT d.id, d.ts, d.bot_id, b.origin, b.generation, d.position_before, d.prediction_bps, "
-            "d.required_edge_bps, d.gate_passed, d.forced, d.action, d.reason, d.label_bps, " + CALL_SQL +
-            " AS direction FROM decisions d JOIN bots b USING (bot_id)")
+            "d.required_edge_bps, d.gate_passed, d.forced, d.action, d.reason, d.label_bps, d.cause, " + CALL_SQL +
+            " AS direction FROM " + ROWS_SQL)
 COUNT_SQL = ("SELECT action, count(*) AS n, sum(forced) AS forced, sum(gate_passed) AS gate, "
              "count(label_bps) AS matured, sum(label_bps IS NULL AND ts > ?) AS waiting, "
              "sum(direction * label_bps > 0) AS n_right, sum(direction * label_bps < 0) AS n_wrong "
              "FROM (SELECT d.action, d.forced, d.gate_passed, d.label_bps, d.ts, " + CALL_SQL +
-             " AS direction FROM decisions d JOIN bots b USING (bot_id)")
+             " AS direction FROM " + ROWS_SQL)
 FILLS_SQL = ("SELECT id, trade_id, leg, side, qty, ref_mid, book_avg_price, price, levels_consumed, slippage_bps, fee, "
              "latency_ms, decided_at, filled_at, status, reason FROM fills "
              "WHERE bot_id = ? AND decided_at = ? AND (reason = ? OR status = ?) ORDER BY id")
@@ -253,6 +286,21 @@ def _int(params: dict[str, str], key: str, low: int, high: int, default: int | N
     return int(text)
 
 
+def detail_id(params: dict[str, str]) -> int:
+    """A decision's id, or a skipped turn's negative id, which must name a minute from 1970 to 9998 and a bot."""
+    text = params.get("id")
+    if text is None:
+        raise BadRequest("id is required, the number of one decision")
+    if not text.startswith("-"):
+        return _int(params, "id", 1, MAX_ID)
+    value = -int(text[1:]) if _SKIP_ID.fullmatch(text) else 0
+    minute, bot_id = split_skip_id(value)
+    if value == 0 or -value > SKIP_ID_MAX or minute < 1 or bot_id < 1:
+        raise BadRequest(f"a skipped turn's id is minus its minute index times {SKIP_ID_BOTS:,} plus its bot id, "
+                         f"from -{SKIP_ID_BOTS + 1:,} to -{SKIP_ID_MAX:,}")
+    return value
+
+
 def _choice(params: dict[str, str], key: str, options: tuple[str, ...]) -> str | None:
     text = params.get(key)
     if text is not None and text not in options:
@@ -285,8 +333,8 @@ def parse_filters(params: dict[str, str]) -> Filters:
     actions = None
     if "action" in params:
         actions = tuple(dict.fromkeys(a.strip() for a in params["action"].split(",")))
-        if not all(a in ACTIONS for a in actions):
-            raise BadRequest(f"action must be one or more of {', '.join(ACTIONS)}, separated by commas")
+        if not all(a in LIST_ACTIONS for a in actions):
+            raise BadRequest(f"action must be one or more of {', '.join(LIST_ACTIONS)}, separated by commas")
     flags = {}
     for key in ("forced", "gate"):
         flags[key] = _int(params, key, 0, 1)
@@ -337,8 +385,10 @@ def where(f: Filters, clock: str | None, horizon_ms: int, with_actions: bool = T
     if f.forced is not None:
         add("d.forced = ?", f.forced)
     if f.gate is not None:
-        add("d.gate_passed = ?", f.gate)
+        add("d.gate_passed = ?", f.gate)  # a skipped turn has no gate or forced flag, so these leave it out
     cutoff = label_cutoff(clock, horizon_ms)
+    if f.outcome is not None:
+        add("d.action != ?", SKIPPED)  # nor a label, so no label filter keeps it
     if f.outcome == "matured":
         add("d.label_bps IS NOT NULL")
     elif f.outcome == "right":
@@ -377,25 +427,35 @@ def coin_side(action: str, reason: str | None) -> str | None:
 
 
 def decision_page(conn, cfg: Config, f: Filters) -> dict:
-    """One page of decisions, newest first, with the total, counts per action under the other filters and a summary.
+    """One page of decisions and skipped turns, newest first, with the total, counts per action under the other
+    filters and a summary.
 
     Learners are scored by their prediction and twins by the side their coin chose, so right and wrong judge each
-    bot's own call. Waiting and missed together are the decisions whose label has not matured.
+    bot's own call. Waiting and missed together are the decisions whose label has not matured. A skipped turn counts
+    toward the total and its own skipped figure only, never toward forced, gate, matured, waiting, missed, right or
+    wrong.
     """
     horizon_ms = cfg.time.horizon_minutes * MS_PER_MINUTE
+    skips, skip_error = listed_skips(conn, cfg)
+    load_skips(conn, skips)
     clock = run_clock(conn)
     cutoff = label_cutoff(clock, horizon_ms)
     clause, args = where(f, clock, horizon_ms, with_actions=False)
-    counts = {a: 0 for a in ACTIONS}
-    summary = {"total": 0, "forced": 0, "gate_passed": 0, "matured": 0, "waiting": 0, "missed": 0, "right": 0,
-               "wrong": 0}
+    counts = {a: 0 for a in LIST_ACTIONS}
+    summary = {"total": 0, "skipped": 0, "forced": 0, "gate_passed": 0, "matured": 0, "waiting": 0, "missed": 0,
+               "right": 0, "wrong": 0}
     for r in conn.execute(COUNT_SQL + clause + ") GROUP BY action", [cutoff, *CALL_ARGS, *args]):
         counts[r["action"]] = r["n"]
-        if f.actions is None or r["action"] in f.actions:
-            for key, col in (("total", "n"), ("forced", "forced"), ("gate_passed", "gate"), ("matured", "matured"),
-                             ("waiting", "waiting"), ("right", "n_right"), ("wrong", "n_wrong")):
-                summary[key] += r[col] or 0
-    summary["missed"] = summary["total"] - summary["matured"] - summary["waiting"]
+        if f.actions is not None and r["action"] not in f.actions:
+            continue
+        summary["total"] += r["n"]
+        if r["action"] == SKIPPED:
+            summary["skipped"] += r["n"]
+            continue
+        for key, col in (("forced", "forced"), ("gate_passed", "gate"), ("matured", "matured"),
+                         ("waiting", "waiting"), ("right", "n_right"), ("wrong", "n_wrong")):
+            summary[key] += r[col] or 0
+    summary["missed"] = summary["total"] - summary["skipped"] - summary["matured"] - summary["waiting"]
     pages = max(1, math.ceil(summary["total"] / f.per))
     page = min(f.page, pages)
     clause, args = where(f, clock, horizon_ms)
@@ -405,23 +465,48 @@ def decision_page(conn, cfg: Config, f: Filters) -> dict:
         row = dict(r)
         direction = row.pop("direction")
         row["kind"] = "twin" if row.pop("origin") == TWIN_ORIGIN else "learner"
-        row["label_state"] = "matured" if row["label_bps"] is not None else \
-            "waiting" if row["ts"] > cutoff else "missed"
-        row["coin_side"] = coin_side(row["action"], row["reason"]) if row["kind"] == "twin" else None
-        row["right"] = _right(direction, row["label_bps"])
+        if row["action"] == SKIPPED:
+            row["label_state"] = row["coin_side"] = row["right"] = None
+        else:
+            row["label_state"] = "matured" if row["label_bps"] is not None else \
+                "waiting" if row["ts"] > cutoff else "missed"
+            row["coin_side"] = coin_side(row["action"], row["reason"]) if row["kind"] == "twin" else None
+            row["right"] = _right(direction, row["label_bps"])
         rows.append(row)
     filters = {k: v for k, v in asdict(f).items() if v is not None and k not in ("page", "per")}
     return {"clock": clock, "horizon_minutes": cfg.time.horizon_minutes, "page": page, "per": f.per, "pages": pages,
             "total": summary["total"], "action_counts": counts, "summary": summary, "filters": filters,
-            "rows": rows}
+            "skipped_error": skip_error, "rows": rows}
+
+
+def listed_skips(conn, cfg: Config) -> tuple[list, bool]:
+    """The skipped turns to list, and whether working them out failed.
+
+    A failure is logged and the decisions still list without the skipped turns, so a surprise in a live database
+    never hides the explorer that worked before them. Running out of time stops the whole answer, as any slow query
+    does, since every later query of it would be stopped too.
+    """
+    try:
+        return list(skipped_turns(conn, cfg).values()), False
+    except sqlite3.OperationalError as exc:
+        if "interrupt" in str(exc):
+            log.warning("working out the skipped turns of %s took longer than %.0f s", cfg.db_path, QUERY_BUDGET_S)
+            raise TooSlow("working out the skipped turns took too long, see the dashboard log") from None
+        log.exception("dashboard could not work out the skipped turns of %s", cfg.db_path)
+    except Exception:  # noqa: BLE001, the decisions still list, and the log gets the traceback
+        log.exception("dashboard could not work out the skipped turns of %s", cfg.db_path)
+    return [], True
 
 
 def decision_detail(conn, cfg: Config, decision_id: int) -> dict:
     """One decision with every column, its bot, the fills of the order it sent, the trades they touched and its label.
 
     A decision's order carries the bot and the decision minute, and its fills keep the reason decision, or a rejection
-    reason when refused, so a stop or death close in the same minute is never mistaken for it.
+    reason when refused, so a stop or death close in the same minute is never mistaken for it. A negative id names a
+    skipped turn, answered by skipped_detail.
     """
+    if decision_id < 0:
+        return skipped_detail(conn, cfg, decision_id)
     row = conn.execute("SELECT * FROM decisions WHERE id = ?", (decision_id,)).fetchone()
     if row is None:
         raise NotFound(f"there is no decision {decision_id} in this run")
@@ -472,6 +557,493 @@ def decision_detail(conn, cfg: Config, decision_id: int) -> dict:
             "horizon_minutes": cfg.time.horizon_minutes, "clock": clock}
 
 
+# Skipped turns, found from the database alone.
+
+
+@dataclass(frozen=True)
+class Skip:
+    """One turn a learner skipped, with the cause the database shows and the learner's state at that minute."""
+
+    id: int
+    bot_id: int
+    minute: int  # the minute index of the phase minute, whose boundary is ts
+    ts: str
+    cause: str  # one of CAUSES
+    reason: str  # one sentence, also what the reason filter searches
+    named: tuple  # the feed events the reason names
+    windows: tuple  # for the inputs cause, each feature window that failed
+    pruned: bool  # the candles of that time were pruned, so the cause rests on benchmark rows and feed events
+    position: dict  # what the learner held, flat or the open trade it kept
+    twin: dict | None  # its twin at that minute and what the twin held
+    next: dict | None  # its next decision after the skipped turn
+
+
+def skip_id(minute: int, bot_id: int) -> int | None:
+    """The id of a skipped turn, or None for one beyond the integers a browser holds exactly."""
+    value = minute * SKIP_ID_BOTS + bot_id
+    return -value if 0 < bot_id < SKIP_ID_BOTS and 0 < minute <= SKIP_LAST_MINUTE else None
+
+
+def split_skip_id(value: int) -> tuple[int, int]:
+    """The minute index and bot id inside a skipped turn's id."""
+    return divmod(-value, SKIP_ID_BOTS)
+
+
+def _minute_index(ts: str, days: dict[str, int]) -> int | None:
+    """The minute index of a stored boundary time such as 2026-10-13T20:00:00.000Z, or None for any other time.
+
+    Each day is parsed once, so a long run's decisions and candles are read quickly.
+    """
+    if len(ts) != 24 or ts[10] != "T" or not ts.endswith(":00.000Z"):
+        return None
+    base = days.get(ts[:10])
+    if base is None:
+        base = days[ts[:10]] = parse_iso(ts[:10] + "T00:00:00Z") // MS_PER_MINUTE
+    return base + int(ts[11:13]) * 60 + int(ts[14:16])
+
+
+def _lives(bots: list[dict]) -> dict[int, tuple[int, int, int | None]]:
+    """Each bot's slot and the minute indexes it stepped in, from the first to one past the last.
+
+    A bot is born after the step of its birth minute, at launch or when it replaces a bot that died in that step, so
+    it first steps one minute later. It steps until its death, which is when its successor in the slot is born, even
+    while it waits as dying for a close that sets died_at later.
+    """
+    groups: dict[tuple[int, bool], list[dict]] = {}
+    for b in bots:
+        groups.setdefault((b["slot"], b["origin"] == TWIN_ORIGIN), []).append(b)
+    out = {}
+    for group in groups.values():
+        group.sort(key=lambda b: (b["born_at"], b["bot_id"]))
+        for i, b in enumerate(group):
+            ends = [parse_iso(b["died_at"])] if b["died_at"] else []
+            if i + 1 < len(group):
+                ends.append(parse_iso(group[i + 1]["born_at"]))
+            stop = -(-min(ends) // MS_PER_MINUTE) if ends else None
+            out[b["bot_id"]] = (b["slot"], parse_iso(b["born_at"]) // MS_PER_MINUTE + 1, stop)
+    return out
+
+
+def _say(event: dict | None) -> str:
+    return "" if event is None else f"{event['kind']} {event['detail']}" if event["detail"] else event["kind"]
+
+
+def _ago(start: str, end: str) -> str:
+    return f"{(parse_iso(end) - parse_iso(start)) / MS_PER_MINUTE:.1f} minutes later"
+
+
+class _Judge:
+    """What the database says about each skipped minute, read once for all the skipped turns of one run.
+
+    Benchmark rows are written in exactly the healthy minutes and never pruned, so they say which minutes counted,
+    back to the run's first, and every feature window is worked out from them. The candles, kept for keep_candles_days,
+    tell a minute that was not healthy from one the run never recorded. The feed events say what took the feed out of
+    health and when the run resumed, and where candles were pruned they also tell a stop from a feed outage. Forecast
+    rows say whether a prediction was made.
+    """
+
+    def __init__(self, conn, cfg: Config, bots: list[dict], lives: dict, decided: dict) -> None:
+        self.conn, self.cfg, self.lives, self.decided = conn, cfg, lives, decided
+        self.twins: dict[int, list[int]] = {}
+        for b in bots:
+            if b["origin"] == TWIN_ORIGIN:
+                self.twins.setdefault(b["slot"], []).append(b["bot_id"])
+        days: dict[str, int] = {}
+        self.valid: dict[int, bool] = {}
+        for r in conn.execute("SELECT ts, valid FROM candles"):
+            minute = _minute_index(r["ts"], days)
+            if minute is not None:
+                self.valid[minute] = bool(r["valid"])
+        self.recorded = sorted(self.valid)
+        good = [m for m in (_minute_index(r[0], days) for r in conn.execute("SELECT ts FROM benchmark"))
+                if m is not None]
+        self.good = set(good)
+        # Candles were pruned when a healthy minute is older than the oldest candle kept.
+        self.cut = bool(good and self.recorded and min(good) < self.recorded[0])
+        # Running counts of healthy minutes and of healthy pairs of consecutive minutes, so every feature window is
+        # counted in constant time however long the run.
+        ends = self.recorded[:1] + self.recorded[-1:] + ([min(good), max(good)] if good else [])
+        self.base, self.top = (min(ends), max(ends)) if ends else (None, None)
+        healthy = np.zeros(self.top - self.base + 1 if ends else 0, dtype=np.int64)
+        if good:
+            healthy[np.array(good, dtype=np.int64) - self.base] = 1
+        self.healthy_sum = np.concatenate(([0], np.cumsum(healthy)))
+        self.pair_sum = np.concatenate(([0], np.cumsum(healthy[1:] & healthy[:-1])))
+        history = conn.execute("SELECT ts FROM benchmark ORDER BY ts LIMIT ? OFFSET ?",
+                               (1, max(cfg.time.history_minutes_required - 1, 0))).fetchone()
+        self.history_from = history[0] if history is not None else None  # the first minute with enough history
+        self.events = [dict(r) for r in conn.execute("SELECT id, ts, kind, detail FROM feed_events ORDER BY ts, id")]
+        self.stamps = [e["ts"] for e in self.events]
+        tests = {"healthy": lambda e: e["kind"] == "healthy", "exit": lambda e: e["kind"] in STATE_KINDS[1:],
+                 "restore": lambda e: e["kind"] == "resume" and (e["detail"] or "").startswith(RESTORED),
+                 "resume": lambda e: e["kind"] == "resume" and not (e["detail"] or "").startswith(RESTORED),
+                 "disconnected": lambda e: e["kind"] == "disconnected"}
+        self.groups = {}
+        for name, test in tests.items():
+            picked = [e for e in self.events if test(e)]
+            self.groups[name] = ([e["ts"] for e in picked], picked)
+        self.trades: dict[int, list[dict]] = {}
+        for r in conn.execute("SELECT id, bot_id, side, opened_at, closed_at, entry_price, exit_reason FROM trades "
+                              "ORDER BY opened_at, id"):
+            self.trades.setdefault(r["bot_id"], []).append(dict(r))
+        self.opened = {k: [t["opened_at"] for t in v] for k, v in self.trades.items()}
+        self.seen: dict[tuple[str, str], bool] = {}
+
+    # Reading the tables
+
+    def state(self, minute: int) -> bool | None:
+        """Whether a minute's candle says it counted, False when it was not healthy or has no record, None when the
+        candles of that time were pruned."""
+        if not self.recorded or minute < self.recorded[0]:
+            return None
+        return self.valid.get(minute, False)
+
+    def missing(self, minute: int) -> str:
+        """Why a minute that did not count is missing, from its candle while candles are kept, and before them from
+        the restarts, a stop lasting from the checkpoint a restart restored to the restart itself."""
+        if self.recorded and minute >= self.recorded[0]:
+            return "not healthy" if minute in self.valid else "not recorded"
+        if not self.cut or self.down(iso(minute * MS_PER_MINUTE)) is not None:
+            return "not recorded"  # before the run's first minute, or while it was stopped
+        return "not healthy"
+
+    def down(self, ts: str) -> dict | None:
+        """The restart that ended a stop holding this minute, the first restart after it whose checkpoint is older."""
+        restore = self.first("restore", ts)
+        return restore if restore is not None and restore["detail"][len(RESTORED):][:24] <= ts else None
+
+    def has_row(self, table: str, ts: str) -> bool:
+        key = (table, ts)
+        if key not in self.seen:
+            sql = {"forecasts": "SELECT count(*) FROM forecasts WHERE ts = ?"}[table]
+            self.seen[key] = self.conn.execute(sql, (ts,)).fetchone()[0] > 0
+        return self.seen[key]
+
+    def last(self, group: str, below: str, inclusive: bool = False) -> dict | None:
+        stamps, events = self.groups[group]
+        i = (bisect_right if inclusive else bisect_left)(stamps, below)
+        return events[i - 1] if i else None
+
+    def first(self, group: str, above: str, inclusive: bool = False) -> dict | None:
+        stamps, events = self.groups[group]
+        i = (bisect_left if inclusive else bisect_right)(stamps, above)
+        return events[i] if i < len(events) else None
+
+    def trigger(self, exit_event: dict) -> dict | None:
+        """The feed event logged in the same millisecond just before a change of state, such as the clock skew or
+        the disconnect that caused it."""
+        found = None
+        for e in self.events[bisect_left(self.stamps, exit_event["ts"]):bisect_right(self.stamps, exit_event["ts"])]:
+            if e is exit_event:
+                break
+            if e["kind"] not in STATE_KINDS and e["kind"] != "resume":
+                found = e
+        return found
+
+    def position(self, bot_id: int, ts: str) -> dict:
+        """The position a bot held at a boundary, from its trades, flat when none was open."""
+        trades = self.trades.get(bot_id, [])
+        i = bisect_right(self.opened.get(bot_id, []), ts) - 1
+        if i >= 0 and (trades[i]["closed_at"] is None or trades[i]["closed_at"] > ts):
+            t = trades[i]
+            return {"side": t["side"], "trade_id": t["id"], "opened_at": t["opened_at"],
+                    "entry_price": t["entry_price"], "closed_at": t["closed_at"], "exit_reason": t["exit_reason"]}
+        return {"side": "flat"}
+
+    # The causes, most specific first
+
+    def judge(self, minute: int, bot_id: int, slot: int, sid: int) -> Skip:
+        ts = iso(minute * MS_PER_MINUTE)
+        state, windows, pruned = self.state(minute), [], False
+        if state is None:
+            pruned = True
+            cause, reason, named, windows = self.pruned(minute, ts)
+        elif minute not in self.valid:
+            cause, reason, named = self.not_running(minute, ts)
+        elif not state:
+            cause, reason, named = self.not_healthy(ts)
+        else:
+            cause, reason, windows = self.healthy(minute, ts)
+            named = ()
+        named = tuple(named) + tuple(e for w in windows for e in w.get("events", ()))
+        stamps, rows = self.decided.get(bot_id, ([], []))
+        i = bisect_right(stamps, ts)
+        nxt = dict(zip(("ts", "id", "action"), rows[i])) if i < len(rows) else None
+        twin = next((t for t in self.twins.get(slot, []) if self.lives[t][1] <= minute
+                     and (self.lives[t][2] is None or minute < self.lives[t][2])), None)
+        return Skip(sid, bot_id, minute, ts, cause, reason, tuple(e for e in named if e), tuple(windows), pruned,
+                    self.position(bot_id, ts),
+                    None if twin is None else {"bot_id": twin, "position": self.position(twin, ts)}, nxt)
+
+    def not_running(self, minute: int, ts: str) -> tuple[str, str, tuple]:
+        """No candle at a minute inside the kept candles means the engine never closed it."""
+        i = bisect_left(self.recorded, minute)
+        before = self.recorded[i - 1] if i else None
+        after = self.recorded[i] if i < len(self.recorded) else None
+        text = "the run was not running"
+        if before is not None and after is not None:
+            text += (f", no minute was recorded between {iso(before * MS_PER_MINUTE)} and "
+                     f"{iso(after * MS_PER_MINUTE)}")
+        elif after is not None:
+            text += f", no minute was recorded before {iso(after * MS_PER_MINUTE)}"
+        else:
+            text += f", no minute was recorded after {iso(before * MS_PER_MINUTE)}"
+        lost = self.last("disconnected", ts, inclusive=True)
+        if lost is not None and (before is None or lost["ts"] < iso(before * MS_PER_MINUTE)):
+            lost = None
+        if lost is not None:
+            text += f", after the feed logged {_say(lost)} at {lost['ts']}"
+        restore = self.first("restore", ts)
+        if restore is not None and after is not None and restore["ts"] > iso(after * MS_PER_MINUTE):
+            restore = None
+        text, flatten = self.resumed(text, restore)
+        return "not_running", text, (lost, restore, flatten)
+
+    def resumed(self, text: str, restore: dict | None) -> tuple[str, dict | None]:
+        """Name the restart that ended a stretch, and the resume event its first healthy minute logged, if any."""
+        if restore is None:
+            return text, None
+        text += f", it resumed at {restore['ts']} from the checkpoint of {restore['detail'][len(RESTORED):][:24]}"
+        back = self.first("healthy", restore["ts"], inclusive=True)
+        flatten = self.first("resume", restore["ts"]) if back is not None else None
+        if flatten is not None and flatten["ts"] == back["ts"]:
+            return text + f", and at its first healthy minute it logged {_say(flatten)}", flatten
+        return text, None
+
+    def left_health(self, ts: str) -> tuple[dict | None, dict | None, dict | None]:
+        """For a minute that was not healthy, the restart or the change of state that ended the last healthy stretch
+        before it, as (restore, change, its trigger)."""
+        prev = self.last("healthy", ts)
+        since = prev["ts"] if prev is not None else ""
+        restore = self.last("restore", ts, inclusive=True)
+        if restore is not None and restore["ts"] <= since:
+            restore = None
+        out = self.first("exit", since) if restore is None else None
+        if out is not None and out["ts"] > ts:
+            out = None
+        return restore, out, self.trigger(out) if out is not None else None
+
+    def not_healthy(self, ts: str) -> tuple[str, str, tuple]:
+        """The feed event that took the feed out of health before this minute, and when it was healthy again."""
+        restore, out, cause = self.left_health(ts)
+        back = self.first("healthy", ts)
+        if restore is not None:
+            text = f"the feed was not healthy, it had not been healthy since the run resumed at {restore['ts']}"
+        elif out is not None:
+            text = f"the feed was not healthy, it went {out['kind']} at {out['ts']}"
+            text += f" on {_say(cause)}" if cause else f", {out['detail']}" if out["detail"] else ""
+        else:
+            text = "the feed was not healthy, and no feed event says what took it out of health"
+        start = restore or out
+        if back is not None:
+            text += f", and was healthy again at {back['ts']}" + (f", {_ago(start['ts'], back['ts'])}" if start else "")
+        else:
+            text += ", and no healthy minute has been logged since"
+        return "not_healthy", text, (cause, out, restore, back)
+
+    def healthy(self, minute: int, ts: str) -> tuple[str, str, list[dict]]:
+        """A healthy minute, explained by its feature windows when no prediction was made."""
+        if self.has_row("forecasts", ts):
+            return "unknown", ("no decision recorded, cause not in the database, the minute was healthy and a "
+                               "prediction was made"), []
+        return self.inputs(minute, ts)
+
+    def inputs(self, minute: int, ts: str) -> tuple[str, str, list[dict]]:
+        """A healthy minute with no prediction, explained by the feature windows of features.py that failed. A return
+        window that starts in a minute that was not healthy also names what took the feed out of health."""
+        failed = self.windows(minute)
+        head = "the feed was healthy but the features were incomplete, "
+        if failed:
+            told = set()
+            for w in failed:
+                if w.get("state") != "not healthy":
+                    continue
+                restore, out, cause = self.left_health(w["minute"])
+                said = restore or out
+                if said is None or said["id"] in told:
+                    continue
+                told.add(said["id"])
+                w["events"] = [e for e in (cause, out, restore) if e]
+                w["text"] += (f", as the run had resumed at {restore['ts']}" if restore else
+                              f", as the feed went {out['kind']} at {out['ts']}" +
+                              (f" on {_say(cause)}" if cause else f", {out['detail']}" if out["detail"] else ""))
+            return "inputs", head + ", and ".join(w["text"] for w in failed), failed
+        history = self.cfg.time.history_minutes_required
+        if self.history_from is None or self.history_from > ts:  # benchmark rows are the healthy minutes, all kept
+            have = self.conn.execute("SELECT count(*) FROM benchmark WHERE ts <= ?", (ts,)).fetchone()[0]
+            short = {"window": "history", "text": f"the run had {have} of the {history} healthy minutes of history "
+                                                  f"it needs"}
+            return "inputs", head + short["text"], [short]
+        return "unknown", ("no decision recorded, cause not in the database, the minute was healthy and every "
+                           "feature window looks complete, yet no prediction was written"), []
+
+    def healthy_in(self, first: int, last: int) -> int:
+        """Healthy minutes from first to last inclusive. No minute outside the run's records was healthy."""
+        if self.base is None:
+            return 0
+        lo, hi = max(first, self.base) - self.base, min(last, self.top) - self.base
+        return int(self.healthy_sum[hi + 1] - self.healthy_sum[lo]) if lo <= hi else 0
+
+    def pairs_in(self, first: int, last: int) -> int:
+        """Minutes i from first to last inclusive where i and i minus 1 were both healthy."""
+        if self.base is None:
+            return 0
+        lo, hi = max(first, self.base + 1) - self.base - 1, min(last, self.top) - self.base - 1
+        return int(self.pair_sum[hi + 1] - self.pair_sum[lo]) if lo <= hi else 0
+
+    def windows(self, minute: int) -> list[dict]:
+        """Every feature window that failed at this minute by the rules of FeatureBuilder.compute, counted on the
+        healthy minutes the benchmark rows record."""
+        fc = self.cfg.features
+        cover, failed = fc.min_window_coverage, []
+        for k in fc.return_windows_minutes:
+            start = minute - k
+            if start not in self.good:
+                at, why = iso(start * MS_PER_MINUTE), self.missing(start)
+                failed.append({"window": f"{k} minute return", "minute": at, "state": why,
+                               "text": f"the {k} minute return starts at {at}, which was {why}"})
+        counted = [(f"{w} minute volatility", "pairs of consecutive healthy minutes", max(2, math.ceil(cover * w)),
+                    self.pairs_in(minute - w + 1, minute)) for w in fc.vol_windows_minutes]
+        counted += [(f"{n} minute {name}", "healthy minutes", math.ceil(cover * n),
+                     self.healthy_in(minute - n + 1, minute))
+                    for name, n in (("recent volume", VOLUME_WINDOW), ("volume baseline", fc.volume_baseline_minutes))]
+        for window, unit, need, have in counted:
+            if have < need:
+                failed.append({"window": window, "have": have, "need": need,
+                               "text": f"the {window} had {have} of the {need} {unit} it needs"})
+        return failed
+
+    def pruned(self, minute: int, ts: str) -> tuple[str, str, tuple, list[dict]]:
+        """Before the oldest kept candle, a benchmark row marks a healthy minute, whose feature windows are worked out
+        as for any other, and the feed events tell a stretch the run was down from one the feed was not healthy."""
+        tail = ", the minute records of that time were pruned"
+        if minute in self.good:
+            cause, text, windows = self.healthy(minute, ts)
+            return cause, text + tail, (), windows
+        restore = self.down(ts)
+        if restore is not None:
+            text, flatten = self.resumed("the run was not running", restore)
+            return "not_running", text + tail, (restore, flatten), []
+        cause, text, named = self.not_healthy(ts)
+        return cause, text + tail, named, []
+
+
+def _find_skips(conn, cfg: Config) -> dict[int, Skip]:
+    """Every skipped turn of a run, newest first, keyed by id.
+
+    A learner, a bot whose origin is not control, skips a turn at a phase minute it lived through, from the run's
+    first decision to the newest checkpoint, that has no decision row of its own. The run's first decision is taken
+    no earlier than its first forecast row, which in a real run is the same minute, since both need a prediction.
+    Rows after the newest checkpoint are still buffered in the run, so those minutes are not judged.
+    """
+    newest = conn.execute("SELECT ts FROM checkpoints ORDER BY id DESC LIMIT 1").fetchone()
+    first = conn.execute("SELECT min(ts) FROM decisions").fetchone()[0]
+    if newest is None or first is None:
+        return {}
+    predicted = conn.execute("SELECT min(ts) FROM forecasts").fetchone()[0]
+    start = -(-parse_iso(max(first, predicted or first)) // MS_PER_MINUTE)
+    stop = -(-parse_iso(newest["ts"]) // MS_PER_MINUTE)
+    horizon = cfg.time.horizon_minutes
+    bots = [dict(r) for r in conn.execute("SELECT bot_id, slot, origin, born_at, died_at FROM bots")]
+    lives = _lives(bots)
+    days: dict[str, int] = {}
+    minutes: dict[int, set[int]] = {}
+    decided: dict[int, tuple[list[str], list[tuple]]] = {}
+    for r in conn.execute("SELECT d.id, d.bot_id, d.ts, d.action FROM decisions d JOIN bots b USING (bot_id) "
+                          "WHERE b.origin != ? ORDER BY d.bot_id, d.ts, d.id", (TWIN_ORIGIN,)):
+        stamps, rows = decided.setdefault(r["bot_id"], ([], []))
+        stamps.append(r["ts"])
+        rows.append((r["ts"], r["id"], r["action"]))
+        minute = _minute_index(r["ts"], days)
+        if minute is not None:
+            minutes.setdefault(r["bot_id"], set()).add(minute)
+    found = []
+    for b in bots:
+        if b["origin"] == TWIN_ORIGIN:
+            continue
+        slot, lo, hi = lives[b["bot_id"]]
+        lo, hi = max(lo, start), stop if hi is None else min(hi, stop)
+        have = minutes.get(b["bot_id"], set())
+        found += [(m, b["bot_id"], slot) for m in range(lo + (slot - lo) % horizon, hi, horizon) if m not in have]
+    if not found:
+        return {}
+    judge = _Judge(conn, cfg, bots, lives, decided)
+    skips = []
+    for minute, bot_id, slot in found:
+        sid = skip_id(minute, bot_id)
+        if sid is None:
+            log.warning("bot %d at minute %d has an id too large to list as a skipped turn", bot_id, minute)
+            continue
+        skips.append(judge.judge(minute, bot_id, slot, sid))
+    skips.sort(key=lambda s: (s.ts, s.id), reverse=True)
+    return {s.id: s for s in skips}
+
+
+_skip_cache: dict = {}
+_skip_lock = threading.Lock()
+
+
+def skipped_turns(conn, cfg: Config) -> dict[int, Skip]:
+    """The run's skipped turns, worked out on request and kept until the run commits new rows or feed events.
+
+    Every table they read grows only by rowid, so the newest rowid of each names the database's state cheaply. Rows
+    reach it with checkpoints, but feed events are committed every minute, so in practice the turns are worked out
+    again once per checkpoint or new feed event. Pruning drops the oldest candles, so their oldest rowid counts too.
+    """
+    marks = tuple(conn.execute(
+        "SELECT (SELECT max(id) FROM checkpoints), (SELECT max(ts) FROM checkpoints), (SELECT max(id) FROM decisions), "
+        "(SELECT max(id) FROM feed_events), (SELECT min(rowid) FROM candles), (SELECT max(rowid) FROM candles), "
+        "(SELECT max(rowid) FROM bots), (SELECT count(died_at) FROM bots), (SELECT max(id) FROM trades), "
+        "(SELECT count(closed_at) FROM trades), (SELECT max(rowid) FROM forecasts), "
+        "(SELECT max(rowid) FROM benchmark)").fetchone())
+    key = (str(Path(cfg.db_path).resolve()), marks, cfg.time, cfg.features)
+    with _skip_lock:
+        hit = _skip_cache.get(key)
+    if hit is not None:
+        return hit
+    found = _find_skips(conn, cfg)
+    with _skip_lock:
+        if len(_skip_cache) >= SKIP_CACHE_ENTRIES:
+            _skip_cache.clear()
+        _skip_cache[key] = found
+    return found
+
+
+def load_skips(conn, skips) -> None:
+    """Put the skipped turns in a temporary table on this connection, so the explorer's SQL reads them beside the
+    decisions. Only the connection's own temporary database is written, never the run's."""
+    conn.execute(SKIP_TABLE_SQL)
+    conn.execute("DELETE FROM temp.skipped_turns")
+    conn.executemany(SKIP_INSERT_SQL, [(s.id, s.bot_id, s.ts, s.position["side"], SKIPPED, s.reason, s.cause)
+                                       for s in skips])
+
+
+def skipped_detail(conn, cfg: Config, sid: int) -> dict:
+    """One skipped turn in full, with its cause, the feed events around it, the position kept and the next decision."""
+    skip = skipped_turns(conn, cfg).get(sid)
+    if skip is None:
+        minute, bot_id = split_skip_id(sid)
+        raise NotFound(f"bot {bot_id} has no skipped turn at {iso(minute * MS_PER_MINUTE)} in this run")
+    bot = conn.execute("SELECT bot_id, slot, parent_id, generation, origin, state, born_at, died_at, margin_bps, lr "
+                       "FROM bots WHERE bot_id = ?", (skip.bot_id,)).fetchone()
+    bot = {**dict(bot), "kind": "learner"} if bot is not None else None
+    at = skip.minute * MS_PER_MINUTE
+    # The events nearest the minute, so a storm of reconnects earlier in the window never pushes them out.
+    near = {r["id"]: dict(r) for r in conn.execute(
+        "SELECT id, ts, kind, detail FROM feed_events WHERE ts >= ? AND ts <= ? ORDER BY ts DESC, id DESC LIMIT ?",
+        (iso(at - NEAR_BEFORE_MS), iso(at), NEAR_BEFORE_EVENTS))}
+    near.update({r["id"]: dict(r) for r in conn.execute(
+        "SELECT id, ts, kind, detail FROM feed_events WHERE ts > ? AND ts <= ? ORDER BY ts, id LIMIT ?",
+        (iso(at), iso(at + NEAR_AFTER_MS), NEAR_AFTER_EVENTS))})
+    named = {e["id"] for e in skip.named}
+    near.update({e["id"]: e for e in skip.named})
+    events = [{**e, "named": e["id"] in named} for e in sorted(near.values(), key=lambda e: (e["ts"], e["id"]))]
+    return {"skipped": {"id": skip.id, "bot_id": skip.bot_id, "ts": skip.ts, "action": SKIPPED, "cause": skip.cause,
+                        "reason": skip.reason, "pruned": skip.pruned, "windows": list(skip.windows)},
+            "bot": bot, "position": skip.position, "twin": skip.twin, "next": skip.next, "events": events,
+            "horizon_minutes": cfg.time.horizon_minutes, "clock": run_clock(conn)}
+
+
 def read_run(cfg: Config, name: str, work):
     """Run work on a read only connection, stopped once it passes QUERY_BUDGET_S.
 
@@ -485,6 +1057,7 @@ def read_run(cfg: Config, name: str, work):
     deadline = time.monotonic() + QUERY_BUDGET_S
     try:
         conn.set_progress_handler(lambda: time.monotonic() > deadline, PROGRESS_STEPS)
+        conn.execute("PRAGMA temp_store = MEMORY")  # the skipped turns table stays in memory, it cannot be set in BEGIN
         conn.execute("BEGIN")
         return work(conn)
     except sqlite3.OperationalError as exc:
@@ -567,9 +1140,7 @@ def make_handler(configs: list[Config]):
                 body = recent.get((route, name, f), lambda: _json(
                     {"run": name, **read_run(cfg, name, lambda conn: decision_page(conn, cfg, f))}))
             else:
-                decision_id = _int(params, "id", 1, MAX_ID)
-                if decision_id is None:
-                    raise BadRequest("id is required, the number of one decision")
+                decision_id = detail_id(params)
                 body = recent.get((route, name, decision_id), lambda: _json(
                     {"run": name, **read_run(cfg, name, lambda conn: decision_detail(conn, cfg, decision_id))}))
             return 200, body

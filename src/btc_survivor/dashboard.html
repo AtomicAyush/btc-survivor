@@ -82,6 +82,7 @@ td.l, th.l { text-align: left; }
 td.reason { text-align: left; white-space: normal; color: var(--muted); min-width: 180px; max-width: 360px; }
 .chip { display: inline-block; padding: 1px 8px; border-radius: 999px; background: var(--chip); font-size: 12px; }
 .chip.active { color: var(--good); } .chip.dying, .chip.dead { color: var(--bad); } .chip.warmup { color: var(--warn); }
+.chip.skipped, .skipnote { color: var(--warn); }
 .pos { color: var(--good); } .neg { color: var(--bad); } .muted { color: var(--muted); }
 .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
 .panel { min-width: 0; }
@@ -138,6 +139,7 @@ table.dx tr.dxrow > td { padding: 4px 10px 14px; text-align: left; white-space: 
 .dxdetail dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .dxdetail p { margin: 4px 0; font-size: 12.5px; line-height: 1.5; }
 .dxdetail .leg { border-top: 1px solid var(--line); padding-top: 6px; margin-top: 6px; }
+.dxdetail .named { color: var(--ink); font-weight: 600; }
 .pager { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; font-size: 12.5px; color: var(--muted); }
 .pager .grow { flex: 1; }
 .verdict { font-weight: 600; }
@@ -170,6 +172,7 @@ table.dx tr.dxrow > td { padding: 4px 10px 14px; text-align: left; white-space: 
     <p><b>Freshness.</b> The page refreshes every 10 seconds. Bot rows come from the newest save, made every 5 minutes with every decision and fill since the one before, and the Bots header says when that was. The price and the feed state are written once a minute, so they can be a little over a minute old, and the price card says how old the price is.</p>
     <p><b>Times.</b> The runs keep UTC, and so does this page until you choose Local at the top. Local shows every time here in this computer's time zone with its abbreviation, times quoted inside feed events included, and the from and to filters below then read and show times in that zone too. A time ending in Z is read as UTC in either zone, so one copied from a log or from status can be pasted as it is, and an hour that repeats when the clocks go back is shown that way. The choice is remembered in this browser.</p>
     <p><b>Decisions explorer.</b> The Decisions section at the bottom lists every decision of the open tab, newest first, 50 to a page. Narrow it by bot, learners or twins, action, forced, gate, label, period or words in the reason. The chips count each action under the other filters, and the line below them says what share of the matured calls pointed the right way. Choose learners to score their predictions, or twins to score the coin, which should land near half. Choose a row to see its order, fills, the trade it opened or closed and how it turned out. Filters stay as the page refreshes and when you switch tabs.</p>
+    <p><b>Skipped turns.</b> A learner decides once per horizon at its own minute, but only in a healthy minute and only when its prediction exists. A turn it lived through with no decision is listed as skipped, among the decisions and newest first, with the cause the database shows. The run was not running, the feed was not healthy, or the feed was healthy but a feature window it needs held a minute that was not, such as the 15 minute return starting in a minute a clock skew trip spoiled. Anything else reads as no decision recorded, cause not in the database. The learner keeps whatever position it held until its next decision, unless a stop loss, a death close or the flatten after a long gap or a restart closes it first, and its twin copies nothing either. The reason filter searches the times inside a reason as stored, in UTC, whichever zone is shown. A skipped turn has no prediction, gate, forced mark or label, so those filters leave it out and it never counts toward the matured, right or waiting figures. Choose one to see the cause, the feed events around it, the position kept and the next decision. Only minutes before the newest save are judged, since rows are saved every 5 minutes.</p>
     <p><b>Decision columns.</b> Before is what the bot held. Prediction is the move it expected over the horizon in bps, hundredths of a percent, and a twin shows its learner's. Required edge is the move needed to pay for a round trip plus the bot's margin, and gate says whether the prediction cleared it. Forced marks a trade the timer made. A twin copies its learner's gate but never shows forced, even when it copies a forced trade. Action is what it did, where none means it stayed out and hold means it kept its position. Label is what Bitcoin really did over the horizon, marked right or wrong by whether the bot's own call pointed that way. A learner's call is its prediction and a twin's is the side its coin chose, so a twin's close or wait has no mark. It reads waiting until it matures and never when a feed gap or restart stopped it.</p>
   </div></details></div>
 <main id="main"><p class="empty">Loading the runs.</p></main>
@@ -180,11 +183,11 @@ table.dx tr.dxrow > td { padding: 4px 10px 14px; text-align: left; white-space: 
       <label title="One bot's id. Leave empty for every bot.">bot <input id="dx-bot" inputmode="numeric" autocomplete="off" placeholder="any" size="6" maxlength="12"></label>
       <label title="Learners predict and decide. Twins copy their learner's timing with a coin flip direction.">kind <select id="dx-kind">
         <option value="">learners and twins</option><option value="learner">learners</option><option value="twin">twins</option></select></label>
-      <label title="What the bot did. None means it stayed out, hold means it kept its position.">action <select id="dx-action">
+      <label title="What the bot did. None means it stayed out, hold means it kept its position, and skipped marks a phase minute a learner passed without a decision.">action <select id="dx-action">
         <option value="">any</option><option value="open_long,open_short,close,flip,hold">anything but none</option>
         <option value="open_long,open_short,close,flip">sent an order</option><option value="none">none</option>
         <option value="open_long">open_long</option><option value="open_short">open_short</option><option value="close">close</option>
-        <option value="flip">flip</option><option value="hold">hold</option></select></label>
+        <option value="flip">flip</option><option value="hold">hold</option><option value="skipped">skipped turns</option></select></label>
       <label title="Trades the exploration timer forced, because no prediction had cleared the gate for too long. Twins never show forced, even when they copy a forced trade.">forced <select id="dx-forced">
         <option value="">any</option><option value="1">forced</option><option value="0">not forced</option></select></label>
       <label title="Whether the prediction cleared the required edge. A twin copies its learner's gate.">gate <select id="dx-gate">
@@ -197,7 +200,7 @@ table.dx tr.dxrow > td { padding: 4px 10px 14px; text-align: left; white-space: 
         <option value="24">last day</option><option value="168">last 7 days</option></select></label>
       <label title="UTC, for example 2026-10-12 07:30. A date alone means midnight.">from <input id="dx-from" autocomplete="off" placeholder="YYYY-MM-DD HH:MM" size="18" maxlength="26"></label>
       <label title="UTC and inclusive. A date alone means the whole of that day.">to <input id="dx-to" autocomplete="off" placeholder="YYYY-MM-DD HH:MM" size="18" maxlength="26"></label>
-      <label class="grow" title="Words anywhere in the reason, ignoring case">reason contains <input id="dx-q" type="search" autocomplete="off" placeholder="for example forced, or twin of bot 3" maxlength="100"></label>
+      <label class="grow" title="Words anywhere in the reason, ignoring case. Times inside a skipped turn's reason are searched as stored, in UTC, such as 19:45 or 2026-10-13T19:45.">reason contains <input id="dx-q" type="search" autocomplete="off" placeholder="for example forced, or twin of bot 3" maxlength="100"></label>
       <button class="btn" id="dx-clear" type="button">clear filters</button>
     </div>
     <p class="dxhint" id="dx-hint" role="status" hidden></p>
@@ -312,7 +315,7 @@ function render() {
   document.querySelectorAll("#main .scroll").forEach((el, i) => { el.scrollLeft = scrolled[i] || 0; });
   document.getElementById("decisions").hidden = Boolean(run.error);
   if (!run.error) dxEl("sub").textContent =
-    `every decision of ${run.name}, newest first, each label known ${span(run.config.horizon_minutes)} after its decision`;
+    `every decision and skipped turn of ${run.name}, newest first, each label known ${span(run.config.horizon_minutes)} after its decision`;
   attachHover();
   const t = document.getElementById("twins");
   if (t) t.onchange = () => { showTwins = t.checked; try { localStorage.setItem("twins", showTwins ? "1" : "0"); } catch (e) {} render(); };
@@ -542,7 +545,7 @@ const textTimes = s => esc(s).replace(ISO_IN_TEXT, ts => Number.isNaN(msOf(ts)) 
 // The decisions explorer. Its controls sit outside #main, so typing survives the redraw every ten seconds. The
 // filters are kept for every tab, while the page and the open decision are kept per run.
 const DX_KEYS = ["bot", "kind", "action", "forced", "gate", "outcome", "hours", "from", "to", "q"];
-const DX_ACTIONS = ["none", "open_long", "open_short", "close", "flip", "hold"];
+const DX_ACTIONS = ["none", "open_long", "open_short", "close", "flip", "hold", "skipped"];
 const DX_ORDERS = ["open_long", "open_short", "close", "flip"];
 const DX_PER = ["25", "50", "100", "200"];
 const dx = {f: {}, per: "50", page: {}, open: {}, seq: 0, dseq: 0, run: null, list: "", detail: "", html: "", shown: null,
@@ -605,7 +608,7 @@ try {
   for (const k of DX_KEYS) if (typeof (saved.f || {})[k] === "string") dx.f[k] = saved.f[k];
   if (DX_PER.includes(saved.per)) dx.per = saved.per;
   for (const [k, v] of Object.entries(saved.page || {})) if (Number.isInteger(v) && v > 0) dx.page[k] = v;
-  for (const [k, v] of Object.entries(saved.open || {})) if (Number.isInteger(v) && v > 0) dx.open[k] = v;
+  for (const [k, v] of Object.entries(saved.open || {})) if (Number.isSafeInteger(v) && v !== 0) dx.open[k] = v;  // a skipped turn's id is negative
 } catch (e) {}
 
 function dxSave() {
@@ -776,20 +779,32 @@ async function dxList(name) {
   }
 }
 
+// A server started before skipped turns existed sends no count for them, so their chip only shows when it does.
 function dxCounts(res) {
   const chosen = dx.f.action ? dx.f.action.split(",") : [];
-  return DX_ACTIONS.map(a => {
+  return DX_ACTIONS.filter(a => a !== "skipped" || a in res.action_counts).map(a => {
     const n = res.action_counts[a] || 0, on = chosen.includes(a), only = dx.f.action === a;
+    const tip = only ? "Show every action again" : a === "skipped" ? "Show only the turns learners skipped, with why" : `Show only ${a}`;
     return `<button type="button" class="facet${on ? " on" : ""}${n ? "" : " zero"}" data-action="${a}" aria-pressed="${on}"
-      title="${only ? "Show every action again" : `Show only ${a}`}">${a}<b>${count(n)}</b></button>`;
+      title="${tip}">${a}<b>${count(n)}</b></button>`;
   }).join("");
 }
 
-// Learners are scored by their prediction and twins by the side their coin chose, the call each one made itself.
+// When the server could not work out the skipped turns it still lists the decisions, and the summary says so.
 function dxSummary(res) {
+  const text = dxSummaryText(res);
+  return res.skipped_error ? `${text} <span class="skipnote">The skipped turns could not be worked out, so only decisions are listed. The dashboard log says why.</span>` : text;
+}
+
+// Learners are scored by their prediction and twins by the side their coin chose, the call each one made itself. A
+// skipped turn is counted on its own and never scored.
+function dxSummaryText(res) {
   const s = res.summary, graded = s.right + s.wrong, kind = dx.f.kind || "", H = span(res.horizon_minutes);
+  const skipped = s.skipped || 0, made = s.total - skipped;
   if (!s.total) return "No decisions match these filters.";
-  let text = `<b>${count(s.total)}</b> ${s.total === 1 ? "decision matches" : "decisions match"}. ${count(s.forced)} forced, ${count(s.gate_passed)} passed the gate. `;
+  const turns = n => `${count(n)} skipped ${n === 1 ? "turn" : "turns"}`;
+  if (!made) return `<b>${turns(skipped)}</b> ${skipped === 1 ? "matches" : "match"}, phase minutes a learner lived through with no decision. Each says why, and none is ever scored.`;
+  let text = `<b>${count(made)}</b> ${made === 1 ? "decision matches" : "decisions match"}${skipped ? `, with ${turns(skipped)} beside them that ${skipped === 1 ? "is" : "are"} never scored` : ""}. ${count(s.forced)} forced, ${count(s.gate_passed)} passed the gate. `;
   const twins = kind === "learner" ? "" : " Twins copy their learner's gate and never show forced.";
   if (!s.matured) {
     if (!s.missed) return text + `No label has matured among them yet, each takes ${H}.` + twins;
@@ -821,19 +836,39 @@ function dxLabel(r) {
   return `${signed(r.label_bps, 1)} bps ${verdict}`;
 }
 
+// A skipped turn's reason quotes feed event times, written briefly in the chosen zone.
+const dxTimes = s => esc(s).replace(ISO_IN_TEXT, ts => {
+  const ms = msOf(ts);
+  if (Number.isNaN(ms)) return ts;
+  const p = parts(ms);
+  return esc(`${pad(p.mo)}-${pad(p.d)} ${hm(p)}${p.s || p.ms ? ":" + pad(p.s) : ""} ${abbr(ms)}`);
+});
+const DX_NONE = `<span class="muted">–</span>`;
+const DX_CAUSES = {not_running: "the run was not running", not_healthy: "the feed was not healthy",
+  inputs: "the inputs were incomplete", unknown: "cause not in the database"};
+
+function dxSkipRow(r, openId) {
+  return `<tr data-id="${Number(r.id)}" tabindex="0" class="${r.id === openId ? "sel" : ""}" aria-selected="${r.id === openId}">
+    <td class="l">${esc(time(r.ts))}</td><td>${esc(r.bot_id)}</td><td class="l">learner</td>
+    <td class="l" title="The position it kept, since it made no decision">${esc(r.position_before)}</td><td>${DX_NONE}</td><td>${DX_NONE}</td>
+    <td class="l">${DX_NONE}</td><td class="l">${DX_NONE}</td>
+    <td class="l"><span class="chip skipped" title="A phase minute this learner lived through with no decision, ${esc(DX_CAUSES[r.cause] || "")}">skipped</span></td>
+    <td class="reason">${dxTimes(r.reason)}</td><td>${DX_NONE}</td></tr>`;
+}
+
 function dxTable(res, openId) {
   if (!res.rows.length) return `<p class="empty">No decisions match these filters.</p>`;
   return `<table class="dx"><thead><tr><th class="l" title="When the bot decided, in ${esc(zoneWords())}">time ${esc(zoneNow())}</th><th title="The bot's id">bot</th>
     <th class="l" title="A learner predicts and decides. A twin copies its learner's timing and lets a coin pick the side.">kind</th>
-    <th class="l" title="What the bot held just before this decision">before</th>
+    <th class="l" title="What the bot held just before this decision, or kept through a skipped turn">before</th>
     <th title="The move the bot expected over the horizon, in bps. A twin shows its learner's prediction.">prediction bps</th>
     <th title="The move needed to pay for a round trip plus the bot's margin, in bps">required edge</th>
     <th class="l" title="Whether the prediction cleared the required edge. A twin copies its learner's.">gate</th>
     <th class="l" title="Whether the exploration timer forced this trade. Twins never show forced.">forced</th>
-    <th class="l" title="What the bot did. None means it stayed out, hold means it kept its position.">action</th>
-    <th class="l" title="The bot's own words for its choice">reason</th>
+    <th class="l" title="What the bot did. None means it stayed out, hold means it kept its position, and skipped marks a phase minute a learner passed without a decision.">action</th>
+    <th class="l" title="The bot's own words for its choice, or for a skipped turn the cause the database shows">reason</th>
     <th title="What Bitcoin did over the horizon once it is known, and whether the bot's own call pointed that way. A learner's call is its prediction, a twin's is the side its coin chose.">label</th></tr></thead><tbody>
-    ${res.rows.map(r => `<tr data-id="${Number(r.id)}" tabindex="0" class="${r.id === openId ? "sel" : ""}" aria-selected="${r.id === openId}">
+    ${res.rows.map(r => r.action === "skipped" ? dxSkipRow(r, openId) : `<tr data-id="${Number(r.id)}" tabindex="0" class="${r.id === openId ? "sel" : ""}" aria-selected="${r.id === openId}">
     <td class="l">${esc(time(r.ts))}</td><td>${esc(r.bot_id)}</td><td class="l">${r.kind === "twin" ? "twin" : "learner"}</td>
     <td class="l">${esc(r.position_before)}</td><td>${signed(r.prediction_bps, 1)}</td><td>${num(r.required_edge_bps, 1)}</td>
     <td class="l">${r.gate_passed ? "passed" : `<span class="muted">no</span>`}</td>
@@ -874,8 +909,9 @@ function dxPlace() {
   pinned.innerHTML = "";
   if (!id) return;
   const row = holder.querySelector(`tr[data-id="${Number(id)}"]`);
-  const inner = `<div class="dxdetail" id="dx-detail" role="region" aria-label="Decision ${Number(id)}">${row ? ""
-    : `<p class="muted">This decision is not on this page of the list.</p>`}${dx.html || `<p class="empty">Loading decision ${Number(id)}.</p>`}</div>`;
+  const what = id < 0 ? "skipped turn" : "decision";
+  const inner = `<div class="dxdetail" id="dx-detail" role="region" aria-label="${id < 0 ? "Skipped turn" : "Decision"} ${Number(id)}">${row ? ""
+    : `<p class="muted">This ${what} is not on this page of the list.</p>`}${dx.html || `<p class="empty">Loading ${what} ${Number(id)}.</p>`}</div>`;
   if (row) {
     dxWidth();
     row.insertAdjacentHTML("afterend", `<tr class="dxrow"><td colspan="${row.children.length}">${inner}</td></tr>`);
@@ -932,7 +968,7 @@ async function dxDetail(name) {
     if (got.status === 404) { delete dx.open[name]; dxSave(); dxMark(); return dxDetail(name); }
     if (got.status === 0 && dx.detail) return;
     dx.detail = "";
-    dx.html = `<div class="dxhead"><b>Decision ${Number(id)}</b><button class="btn" id="dx-close" type="button">close</button></div>
+    dx.html = `<div class="dxhead"><b>${id < 0 ? "Skipped turn" : "Decision"} ${Number(id)}</b><button class="btn" id="dx-close" type="button">close</button></div>
       <div class="banner">${esc(got.error)}</div>`;
   } else {
     const key = JSON.stringify(got.body);
@@ -943,9 +979,50 @@ async function dxDetail(name) {
   dxPlace();
 }
 
+const dxRow = (k, v, tip) => `<dt${tip ? ` title="${esc(tip)}"` : ""}>${k}</dt><dd>${v}</dd>`;
+
+// The bot behind a decision or a skipped turn, as the bots table has it now.
+function dxBotHtml(b, twin) {
+  const row = dxRow;
+  if (!b) return `<p class="muted">This bot has no row in the bots table.</p>`;
+  const origin = b.origin === "control" ? "coin flip twin" : b.origin === "mutated" ? `mutated child of bot ${esc(b.parent_id)}` : "random newcomer";
+  return `<dl>${row("bot", esc(b.bot_id))}${row("generation", esc(b.generation), "0 is an original bot, 1 the child of a survivor")}
+    ${row("origin", origin)}${row("state now", `<span class="chip ${esc(b.state)}">${esc(b.state)}</span>`)}${row("slot", esc(b.slot))}
+    ${row("born", when(b.born_at))}${b.died_at ? row("died", when(b.died_at)) : ""}
+    ${twin ? "" : row("margin gene", `${num(b.margin_bps, 2)} bps`) + row("learning rate", esc(b.lr))}</dl>`;
+}
+
+// A skipped turn has no prediction, order or label, so its panel says why, what the learner and its twin kept,
+// what the feed logged around that minute and when the learner decided next.
+function dxSkippedHtml(d) {
+  const x = d.skipped, row = dxRow;
+  const held = p => p.side === "flat" ? "flat, no position open" : `${esc(p.side)}, trade ${esc(p.trade_id)} opened ${when(p.opened_at)} at ${usd(p.entry_price)}, `
+    + (p.closed_at ? `held until ${when(p.closed_at)}${p.exit_reason ? `, closed by ${esc(p.exit_reason)}` : ""}` : "still open");
+  let html = `<div class="dxhead"><span><b>Skipped turn</b> <span class="muted">${when(x.ts)}, bot ${esc(x.bot_id)}, a learner</span></span>
+    <button class="btn" id="dx-close" type="button" title="Close, or press Escape">close</button></div>
+    <div class="cols"><section><h3>Why it made no decision</h3><dl>
+    ${row("cause", `<span class="chip skipped">${esc(DX_CAUSES[x.cause] || x.cause)}</span>`)}${row("in full", textTimes(x.reason))}
+    ${x.windows.length ? row("windows", x.windows.map(w => textTimes(w.text)).join("<br>"), "Each feature window that failed, by the rules the bots use") : ""}
+    ${x.pruned ? row("records", "the minute records of that time were pruned, so this rests on benchmark rows and feed events") : ""}
+    ${row("turn id", esc(x.id), "Negative, so it never matches a decision id")}</dl>
+    <p class="muted">A learner decides only at its own minute, only in a healthy minute and only when its prediction exists. With no decision there was no prediction, gate, order or label, so this turn is never scored.</p></section>
+    <section><h3>What it kept</h3><dl>
+    ${row("position", held(d.position), "What it held at this minute, from its trades. It kept it until its next decision unless a stop, a death or a flatten closed it.")}
+    ${row("twin", d.twin ? `bot ${esc(d.twin.bot_id)}, ${held(d.twin.position)}` : "none at this minute", "A twin only copies its learner's decisions, so it could not act either")}
+    ${row("next decision", d.next ? `<button class="btn link" type="button" data-open="${Number(d.next.id)}">decision ${esc(d.next.id)}</button> at ${when(d.next.ts)}, ${esc(d.next.action)}`
+      : "none since")}</dl></section>
+    <section><h3>The bot</h3>${dxBotHtml(d.bot, false)}</section>
+    <section><h3>Feed events around it</h3>`;
+  html += d.events.length ? `<dl>${d.events.map(e => row(when(e.ts), `<span class="${e.named ? "named" : ""}">${esc(e.kind)}</span> ${textTimes(e.detail || "")}`,
+    e.named ? "Named in the cause" : "")).join("")}</dl>${d.events.some(e => e.named) ? `<p class="muted">Bold events are the ones the cause names.</p>` : ""}`
+    : `<p class="muted">No feed event was logged near this minute.</p>`;
+  return html + "</section></div>";
+}
+
 function dxDetailHtml(d) {
+  if (d.skipped) return dxSkippedHtml(d);
   const x = d.decision, b = d.bot, o = d.outcome, H = span(d.horizon_minutes), twin = Boolean(b && b.kind === "twin");
-  const row = (k, v, tip) => `<dt${tip ? ` title="${esc(tip)}"` : ""}>${k}</dt><dd>${v}</dd>`;
+  const row = dxRow;
   const way = right => right == null ? "neither way" : `the <span class="verdict ${right ? "pos" : "neg"}">${right ? "right" : "wrong"}</span> way`;
   let html = `<div class="dxhead"><span><b>Decision ${esc(x.id)}</b> <span class="muted">${when(x.ts)}, bot ${esc(x.bot_id)},
     ${twin ? "a coin flip twin" : "a learner"}</span></span>
@@ -961,16 +1038,7 @@ function dxDetailHtml(d) {
     ${row("gate", x.gate_passed ? "passed" : "not passed", twin ? "Copied from its learner" : "Whether the prediction cleared the required edge")}
     ${row("forced", x.forced ? "yes, by the exploration timer" : twin ? "no, a twin never shows forced" : "no")}
     ${row("label", x.label_bps == null ? "not known" : `${signed(x.label_bps, 2)} bps`)}${row("decision id", esc(x.id))}</dl></section>`;
-  html += `<section><h3>The bot</h3>`;
-  if (b) {
-    const origin = b.origin === "control" ? "coin flip twin" : b.origin === "mutated" ? `mutated child of bot ${esc(b.parent_id)}` : "random newcomer";
-    html += `<dl>${row("bot", esc(b.bot_id))}${row("generation", esc(b.generation), "0 is an original bot, 1 the child of a survivor")}
-      ${row("origin", origin)}${row("state now", `<span class="chip ${esc(b.state)}">${esc(b.state)}</span>`)}${row("slot", esc(b.slot))}
-      ${row("born", when(b.born_at))}${b.died_at ? row("died", when(b.died_at)) : ""}
-      ${twin ? "" : row("margin gene", `${num(b.margin_bps, 2)} bps`) + row("learning rate", esc(b.lr))}</dl>`;
-  } else {
-    html += `<p class="muted">This bot has no row in the bots table.</p>`;
-  }
+  html += `<section><h3>The bot</h3>${dxBotHtml(b, twin)}`;
   if (d.pair) {
     const link = `<button class="btn link" type="button" data-open="${Number(d.pair.id)}">decision ${esc(d.pair.id)}</button>`;
     html += twin ? `<p>It copied learner bot ${esc(d.pair.bot_id)}, ${link}, which chose ${esc(d.pair.action)}.</p>`
