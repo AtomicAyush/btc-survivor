@@ -1,6 +1,9 @@
 """The pooled stock learner on hand built minutes: 8 predictions from one pass, trading only the home symbol, the open
 window, the session close at 15:55, the forced timer from the first Active minute, the stop at 3 label standard
-deviations, the required edge, the short sale restriction and the usable minute rules."""
+deviations, the required edge, the short sale restriction and the usable minute rules. Also the holding rule the owner
+approved on 13 October 2026 at every branch and edge, a flat bot deciding exactly as the version 1 rule, a long and a
+short kept across several decisions while the prediction keeps its sign, a flip only past the full edge of the new side,
+forced exploration only when flat, and stops and the session close still ending a held position."""
 
 import dataclasses
 from datetime import date
@@ -8,7 +11,7 @@ from datetime import date
 import numpy as np
 import pytest
 
-from btc_survivor.bot import ACTIVE, DEAD, WARMUP
+from btc_survivor.bot import ACTIVE, DEAD, WARMUP, decide
 from btc_survivor.model import MLP
 from btc_survivor.types import FLAT, LONG, SHORT
 from btc_survivor.v2 import sessions
@@ -16,7 +19,8 @@ from btc_survivor.v2.config import load_stock_config
 from btc_survivor.v2.stocks import bot as bot_module
 from btc_survivor.v2.stocks import costs
 from btc_survivor.v2.stocks.bot import (SESSION_CLOSE, SESSION_FLATTEN, SESSION_WINDOW, SHORT_SALE_RESTRICTION,
-                                        StockBot, StockMinute, opens_allowed, session_close_due)
+                                        StockBot, StockMinute, clears_edge, decide_v2, opens_allowed,
+                                        session_close_due)
 from btc_survivor.v2.stocks.broker import StockBroker
 from btc_survivor.v2.stocks.finnhub import Print
 from btc_survivor.v2.stocks.learning import PooledWindow, with_news_inputs
@@ -30,6 +34,9 @@ NEXT = sessions.session_on(date(2026, 10, 14))
 EARLY = sessions.session_on(date(2026, 11, 27))
 PRICES = np.array([250.0, 500.0, 180.0, 220.0, 250.0, 700.0, 400.0, 600.0])
 SD = 40.0
+HOLD_COST = costs.holding_cost_bps(CFG.stock_costs, SHORT, 30)   # about 0.0057 bps of borrow, nothing for a long
+LONG_EDGE = costs.round_trip(CFG.stock_costs, "AAPL", LONG, 2.0, 250.0, 30).total_bps    # 4.6 bps
+SHORT_EDGE = costs.round_trip(CFG.stock_costs, "AAPL", SHORT, 2.0, 250.0, 30).total_bps  # 4.6 bps plus the borrow
 
 
 class Window(PooledWindow):
@@ -211,6 +218,218 @@ def test_a_margin_adds_margin_sigma_label_standard_deviations_to_the_required_ed
     assert row["gate_passed"] == 0 and row["action"] == "none"
     row = active(output=(required + 0.01) / SD, cfg=cfg).step(minute(DAY, m), broker(cfg)).decision
     assert row["gate_passed"] == 1 and row["action"] == "open_long"
+
+
+def test_a_flat_bot_decides_exactly_as_the_version_1_rule():
+    for pred in (-9.0, -4.6, np.nextafter(-4.6, 0.0), -0.4, 0.0, 0.4, np.nextafter(4.6, 0.0), 4.6, 9.0):
+        for allow_short in (True, False):
+            for forced in (False, True):
+                action, gate, used, reason = decide_v2(FLAT, pred, 4.6, 0.0, allow_short, forced)
+                assert (action, gate, used) == decide(FLAT, pred, 4.6, allow_short, forced)
+                assert reason == bot_module._reason(action, pred, 4.6, gate, used, allow_short)
+                assert gate == clears_edge(pred, 4.6, allow_short)
+    # Exactly at the full edge opens, just below it does not, and forced exploration opens below it.
+    assert decide_v2(FLAT, 4.6, 4.6, 0.0, True, False) == \
+        ("open_long", True, False, "prediction 4.60 bps clears required edge 4.60 bps")
+    assert decide_v2(FLAT, -4.6, 4.6, 0.0, True, False)[:3] == ("open_short", True, False)
+    assert decide_v2(FLAT, np.nextafter(4.6, 0.0), 4.6, 0.0, True, False)[:3] == ("none", False, False)
+    assert decide_v2(FLAT, 0.4, 4.6, 0.0, True, True) == \
+        ("open_long", False, True, "forced by the exploration timer, prediction 0.40 bps")
+    assert decide_v2(FLAT, 0.0, 4.6, 0.0, True, True) == ("none", False, False, "prediction is exactly zero")
+
+
+def test_a_held_long_is_kept_while_the_prediction_points_up_and_its_holding_cost_is_nothing():
+    kept = "the prediction of {:.3f} bps still points up, above the 0.000 bps holding cost, so the long is kept"
+    assert decide_v2(LONG, 3.1, 4.6, 0.0, True, False) == ("hold", False, False, kept.format(3.1))
+    assert decide_v2(LONG, 1e-9, 4.6, 0.0, True, False)[:3] == ("hold", False, False)
+    assert decide_v2(LONG, 9.0, 4.6, 0.0, True, False) == ("hold", True, False, kept.format(9.0))
+    # Exactly at the holding cost of zero the prediction no longer points up, so the long is closed.
+    assert decide_v2(LONG, 0.0, 4.6, 0.0, True, False) == ("close", False, False, "the prediction of 0.000 bps is "
+                                                         "not above the 0.000 bps holding cost, so the long is closed")
+    # Pointing down, it flips only once it points down by more than the full required edge of a short. Exactly at
+    # that edge it clears the gate a short open needs but closes the long, as the approved rule reads.
+    assert decide_v2(LONG, -2.0, 4.61, 0.0, True, False) == ("close", False, False, "the prediction of -2.000 bps "
+                                                           "points down but not by more than the required edge of "
+                                                           "4.61 bps for a short, so the long is closed")
+    assert decide_v2(LONG, np.nextafter(-4.61, 0.0), 4.61, 0.0, True, False)[:3] == ("close", False, False)
+    assert decide_v2(LONG, -4.61, 4.61, 0.0, True, False) == ("close", True, False, "the prediction of -4.610 bps "
+                                                            "points down but not by more than the required edge of "
+                                                            "4.61 bps for a short, so the long is closed")
+    assert decide_v2(LONG, np.nextafter(-4.61, -5.0), 4.61, 0.0, True, False)[:3] == ("flip", True, False)
+    assert decide_v2(LONG, -4.7, 4.61, 0.0, True, False) == ("flip", True, False, "the prediction of -4.700 bps "
+                                                           "points down by more than the required edge of 4.61 bps "
+                                                           "for a short, so the long flips to a short")
+    assert decide_v2(LONG, -9.0, 4.6, 0.0, False, False) == ("close", False, False, "the prediction of -9.000 bps "
+                                                           "points down and shorts are disabled, so the long is "
+                                                           "closed")
+    # Forced exploration applies only to a flat bot, so a due timer neither keeps nor flips a held position.
+    assert decide_v2(LONG, 0.4, 4.6, 0.0, True, True) == ("hold", False, False, kept.format(0.4))
+    assert decide_v2(LONG, -0.4, 4.61, 0.0, True, True)[:3] == ("close", False, False)
+
+
+def test_a_held_short_is_kept_while_the_prediction_points_down_past_the_borrow_over_the_horizon():
+    assert round(HOLD_COST, 3) == 0.006
+    kept = "the prediction of {:.3f} bps still points down, below minus the 0.006 bps holding cost, so the short " \
+           "is kept"
+    assert decide_v2(SHORT, -3.1, 4.6, HOLD_COST, True, False) == ("hold", False, False, kept.format(-3.1))
+    assert decide_v2(SHORT, np.nextafter(-HOLD_COST, -1.0), 4.6, HOLD_COST, True, False)[:3] == \
+        ("hold", False, False)
+    # Exactly at the holding cost, inside it and at zero the short is closed.
+    closed = "the prediction of {:.3f} bps is not below minus the 0.006 bps holding cost, so the short is closed"
+    for pred in (-HOLD_COST, -HOLD_COST / 2, 0.0):
+        assert decide_v2(SHORT, pred, 4.6, HOLD_COST, True, False) == ("close", False, False, closed.format(pred))
+    assert decide_v2(SHORT, 2.0, 4.6, HOLD_COST, True, False) == ("close", False, False, "the prediction of 2.000 "
+                                                                "bps points up but not by more than the required "
+                                                                "edge of 4.60 bps for a long, so the short is closed")
+    assert decide_v2(SHORT, np.nextafter(4.6, 0.0), 4.6, HOLD_COST, True, False)[:3] == ("close", False, False)
+    assert decide_v2(SHORT, 4.6, 4.6, HOLD_COST, True, False)[:3] == ("close", True, False)
+    assert decide_v2(SHORT, np.nextafter(4.6, 5.0), 4.6, HOLD_COST, True, False)[:3] == ("flip", True, False)
+    assert decide_v2(SHORT, 4.7, 4.6, HOLD_COST, True, False) == ("flip", True, False, "the prediction of 4.700 bps "
+                                                                "points up by more than the required edge of 4.60 "
+                                                                "bps for a long, so the short flips to a long")
+    # With shorts disabled a held short still flips to a long, which needs no short.
+    assert decide_v2(SHORT, 4.7, 4.6, HOLD_COST, False, False)[:3] == ("flip", True, False)
+    assert decide_v2(SHORT, -0.4, 4.6, HOLD_COST, True, True)[:3] == ("hold", False, False)
+
+
+def test_a_long_is_kept_across_decisions_while_its_prediction_points_up_and_closed_once_it_turns():
+    b = broker()
+    bot = active(output=2.0)                              # 80 bps opens a long
+    m = phase(0)
+    assert bot.step(minute(DAY, m), b).decision["action"] == "open_long"
+    settle(bot, b)
+    trade = bot.account.trade_id
+    constant(bot, 0.05)                                   # 2 bps, below the 4.6 bps an open needs, still up
+    for later in (m + 30, m + 60, m + 90, m + 120):
+        res = bot.step(minute(DAY, later), b)
+        row = res.decision
+        assert (row["action"], row["position_before"], row["gate_passed"], row["forced"]) == ("hold", "long", 0, 0)
+        assert row["required_edge_bps"] == pytest.approx(LONG_EDGE) and row["prediction_bps"] == pytest.approx(2.0)
+        assert row["reason"] == "the prediction of 2.000 bps still points up, above the 0.000 bps holding cost, so " \
+                                "the long is kept"
+        assert res.orders == [] and bot.pending_order is None and bot.account.trade_id == trade
+        # The version 1 rule would have closed it, since 2 bps does not clear the 4.6 bps edge.
+        assert decide(LONG, 2.0, LONG_EDGE, True, False)[0] == "close"
+    constant(bot, -0.05)
+    row = bot.step(minute(DAY, m + 150), b).decision
+    assert (row["action"], row["gate_passed"]) == ("close", 0)
+    assert row["reason"] == f"the prediction of -2.000 bps points down but not by more than the required edge of " \
+                            f"{SHORT_EDGE:.2f} bps for a short, so the long is closed"
+    closed = settle(bot, b).closed
+    assert closed.trade_id == trade and closed.exit_reason == "signal" and not bot.account.is_open
+    assert abs(closed.closed_ms - closed.opened_ms - 150 * 60_000) < 1_000      # held over five decisions
+
+
+def test_a_short_is_kept_across_decisions_and_closed_exactly_at_its_holding_cost():
+    b = broker()
+    bot = active(output=-2.0)
+    m = phase(0)
+    bot.step(minute(DAY, m), b)
+    settle(bot, b)
+    assert bot.account.side == SHORT
+    trade = bot.account.trade_id
+    constant(bot, -0.05)                                  # minus 2 bps, below minus the borrow over the horizon
+    restricted = np.ones(N, bool)
+    restricted[0] = False                                 # the short sale restriction stops new shorts, not a held one
+    for later, shorts_ok in ((m + 30, True), (m + 60, restricted), (m + 90, True)):
+        res = bot.step(minute(DAY, later, shorts_ok=shorts_ok), b)
+        assert (res.decision["action"], res.decision["position_before"]) == ("hold", "short") and res.orders == []
+        assert res.decision["reason"] == "the prediction of -2.000 bps still points down, below minus the 0.006 " \
+                                         "bps holding cost, so the short is kept"
+        assert bot.account.trade_id == trade
+    constant(bot, np.nextafter(-1.0, -2.0))               # a label scale of the holding cost puts the prediction
+    row = bot.step(minute(DAY, m + 120, sd=HOLD_COST), b).decision     # a hair past it, so the short is kept
+    assert row["action"] == "hold" and row["prediction_bps"] < -HOLD_COST
+    constant(bot, -1.0)                                   # and then exactly at it, so the short is closed
+    row = bot.step(minute(DAY, m + 150, sd=HOLD_COST), b).decision
+    assert row["prediction_bps"] == -HOLD_COST and row["action"] == "close"
+    assert settle(bot, b).closed.trade_id == trade and not bot.account.is_open
+
+
+@pytest.mark.parametrize("held", [LONG, SHORT])
+def test_a_held_position_flips_only_once_the_prediction_passes_the_full_edge_of_the_new_side(held):
+    b = broker()
+    m = phase(0)
+    new_edge = SHORT_EDGE if held == LONG else LONG_EDGE
+    below = active(output=2.0 * held)
+    below.step(minute(DAY, m), b)
+    settle(below, b)
+    constant(below, -held * 1.0)                          # a label scale of a hair under the edge of the new side
+    row = below.step(minute(DAY, m + 30, sd=np.nextafter(new_edge, 0.0)), b).decision
+    assert (row["action"], row["gate_passed"]) == ("close", 0) and row["required_edge_bps"] == new_edge
+    at_edge = active(output=2.0 * held)
+    at_edge.step(minute(DAY, m), b)
+    settle(at_edge, b)
+    constant(at_edge, -held * 1.0)                        # exactly the edge of the new side clears the open gate
+    row = at_edge.step(minute(DAY, m + 30, sd=new_edge), b).decision     # but closes, by more than is strict
+    assert abs(row["prediction_bps"]) == row["required_edge_bps"] == new_edge
+    assert (row["action"], row["gate_passed"], row["forced"]) == ("close", 1, 0)
+    assert [leg.action for leg in at_edge.pending_order.legs] == ["close"]
+    past = active(output=2.0 * held)
+    past.step(minute(DAY, m), b)
+    settle(past, b)
+    constant(past, -held * 1.0)                           # a hair past the edge of the new side flips
+    row = past.step(minute(DAY, m + 30, sd=np.nextafter(new_edge, np.inf)), b).decision
+    assert abs(row["prediction_bps"]) > row["required_edge_bps"] == new_edge
+    assert (row["action"], row["gate_passed"], row["forced"]) == ("flip", 1, 0)
+    assert [leg.action for leg in past.pending_order.legs] == ["close", "open"]
+    ex = settle(past, b)
+    assert ex.closed.exit_reason == "flip" and past.account.side == -held
+
+
+def test_forced_exploration_opens_only_a_flat_bot_and_is_unchanged():
+    b = broker()
+    bot = active(output=0.01)                             # 0.4 bps, far below the edge
+    bot.minutes_since_open = 500
+    m = phase(0)
+    row = bot.step(minute(DAY, m), b).decision
+    assert (row["action"], row["forced"], row["gate_passed"]) == ("open_long", 1, 0)
+    assert row["reason"] == "forced by the exploration timer, prediction 0.40 bps"
+    settle(bot, b)
+    assert bot.account.forced and bot.minutes_since_open == 0
+    bot.minutes_since_open = 500                          # the timer is due again while the long is held
+    row = bot.step(minute(DAY, m + 30), b).decision
+    assert (row["action"], row["forced"]) == ("hold", 0) and bot.pending_order is None
+    constant(bot, -0.01)
+    row = bot.step(minute(DAY, m + 60), b).decision
+    assert (row["action"], row["forced"]) == ("close", 0)  # never a forced flip
+    settle(bot, b)
+    row = bot.step(minute(DAY, m + 90), b).decision
+    assert (row["action"], row["forced"]) == ("open_short", 1)
+
+
+def test_a_stop_ends_a_held_position_and_a_flat_bot_needs_the_full_edge_again():
+    b = broker()
+    bot = active(output=2.0)
+    m = phase(0)
+    bot.step(minute(DAY, m, sd=40.0), b)
+    settle(bot, b, 250.0)
+    entry, allowance = bot.account.entry_price, costs.allowance_bps(CFG.stock_costs, "AAPL")
+    ref_at = lambda adverse_bps: entry * (1 - adverse_bps / 1e4) / (1 - allowance / 1e4)
+    constant(bot, 0.05)
+    ref = PRICES.copy()
+    ref[0] = ref_at(60.0)
+    assert bot.step(minute(DAY, m + 30, ref=ref), b).decision["action"] == "hold"
+    ref[0] = ref_at(121.0)
+    res = bot.step(minute(DAY, m + 31, ref=ref), b)
+    assert res.stopped and res.orders[0].reason == "stop"
+    assert settle(bot, b, ref[0]).closed.exit_reason == "stop" and not bot.account.is_open
+    row = bot.step(minute(DAY, m + 60, ref=ref), b).decision
+    assert (row["position_before"], row["action"]) == ("flat", "none")
+
+
+def test_a_position_is_kept_after_the_open_window_and_ended_by_the_session_close():
+    b = broker()
+    bot = active(output=2.0)
+    bot.step(minute(DAY, phase(0, after=330)), b)
+    settle(bot, b)
+    constant(bot, 0.05)
+    row = bot.step(minute(DAY, 360), b).decision          # 15:30 ET, after the last open at 15:25
+    assert not opens_allowed(DAY, 360, CFG.session) and row["action"] == "hold"
+    assert row["reason"].endswith("so the long is kept")
+    order = bot.send_close(DAY.boundary(385), 251.0, b, SESSION_CLOSE)
+    assert order.reason == SESSION_CLOSE and settle(bot, b, 251.0).closed.exit_reason == "session_close"
+    assert not bot.account.is_open
 
 
 def test_the_open_window_runs_from_10_00_to_15_25_or_12_25_on_an_early_close():

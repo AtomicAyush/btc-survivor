@@ -380,6 +380,7 @@ def test_the_synthetic_runs_are_valid_and_every_outcome_matches(base):
     trips = ev.tables["round trips"]
     assert [row["run"] for row in trips] == list(evaluate.RUNS) and all(row["learners"] > 0 for row in trips)
     assert all(row["own"] == "0.00" and row["all"] == row["forced"] and float(row["forced"]) > 0 for row in trips)
+    assert all(row["minutes held"] == "30" and row["timer alone"] == "at most about 2" for row in trips)
     assert ev.twin_pairs == 2 * 8 * 2 * 4 and ev.deaths == ()
     assert ev.fallback_share == 0.0 and ev.spend_alert_days == 0
 
@@ -955,6 +956,33 @@ def test_own_trades_are_reported_and_never_judged(copy):
     assert summary["news run learner opens"] == evaluate.output.Count(65)
     assert summary["news run own opens"] == evaluate.output.Count(1)
     assert summary["prices run own opens"] == evaluate.output.Count(0) and ev.valid
+
+
+def test_the_founder_equity_bound_grows_with_the_horizons_positions_were_held(copy):
+    def founder():
+        ev = run_eval(copy)
+        outcome = {(o.run, o.name): o for o in ev.outcomes}[("prices run", "founder equity")]
+        trips = {row["run"]: row for row in ev.tables["round trips"]}["prices run"]
+        return outcome, float(outcome.expected.split(" within ")[1]), trips["minutes held"]
+
+    before, bound, minutes = founder()
+    assert before.matched and minutes == "30"
+    # Every learner trade opened 90 minutes earlier, so each was held four horizons, as the holding rule allows.
+    execute(copy.s1_db, "UPDATE trades SET opened_at = strftime('%Y-%m-%dT%H:%M:%fZ', opened_at, '-90 minutes') "
+                        "WHERE bot_id < ?", (TWIN_BASE,))
+    after, wider, minutes = founder()
+    assert after.matched and minutes == "120" and wider == pytest.approx(2 * bound, abs=0.01)
+
+
+def test_a_position_carried_overnight_or_over_a_weekend_counts_its_session_time_only():
+    fri, mon, thu = (sessions.session_on(date(2026, 10, day)) for day in (16, 19, 15))
+    held = evaluate.session_ms_held
+    assert held(iso(fri.boundary(90)), iso(fri.boundary(240))) == 150 * MS_PER_MINUTE
+    # Opened 15:50 Friday, carried over the weekend and flattened 2 seconds after Monday's open.
+    assert held(iso(fri.boundary(380)), iso(mon.open_ms + 2 * MS_PER_SECOND)) == 10 * MS_PER_MINUTE + 2 * MS_PER_SECOND
+    # Two full sessions and the 15:30 to 16:00 and 09:30 to 10:00 ends around them, never the nights between.
+    assert held(iso(thu.boundary(360)), iso(mon.boundary(30))) == (30 + 390 + 30) * MS_PER_MINUTE
+    assert held(iso(fri.close_ms + MS_PER_MINUTE), iso(mon.open_ms)) == 0
 
 
 def test_the_largest_notional_over_equity(copy):

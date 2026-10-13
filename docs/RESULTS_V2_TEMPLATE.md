@@ -150,7 +150,7 @@ The score streams are defined in [section 8.7 of the plan](../PLAN_V2.md#87-finb
 
 ### Twins
 
-Learner and twin trades from one decision, paired by slot, symbol and decision time, compared on gross profit with one block per session.
+Learner and twin trades from one decision, paired by slot, symbol and decision time, compared on gross profit with one block per session. A twin never copies a hold, so each pair covers one position its learner kept for as long as its prediction pointed its way.
 
 | Run | Pairs | Sessions | Mean difference per session | t | Threshold | Learners' share of long opens |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -161,7 +161,7 @@ Stocks drift up a little over the window, so the share of long opens stands besi
 
 ### Own trades
 
-With no margin a learner opens on its own whenever its prediction clears the round trip cost, so this is reported and never judged.
+With no margin a flat learner opens on its own whenever its prediction clears the round trip cost, and under the holding rule of 13 October 2026 a held position is kept while the prediction points its way, so this is reported and never judged. A flip counts as an open and a kept position does not.
 
 | Run | Learner decisions | Learner opens | Forced opens | Own opens | Own share | Share of decisions that cleared the required edge | Prediction spread, label sd |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -210,9 +210,9 @@ Calibration is described in [section 11.3 of the plan](../PLAN_V2.md#113-squared
 | Outcome | Expected | S1 | S2 | Matched |
 | --- | --- | --- | --- | --- |
 | First trades | session 3, session minutes 60 to 270 |  |  |  |
-| Round trips per full session from session 4, forced and own, from the round trips table | about 2 from the timer alone, own trades beside them, reported only |  |  | reported |
+| Round trips per full session from session 4, forced and own, with the mean minutes held, from the round trips table | at most about 2 from the timer alone, own trades beside them, about 2.3 held about 80 minutes in a synthetic check, reported only |  |  | reported |
 | Burn | the rent and the round trips each learner actually made, within 25 percent, 2.18 dollars a session at two round trips |  |  |  |
-| Founder equity | within about 43 dollars of plan at 75 trades |  |  |  |
+| Founder equity | within the bound `evaluate` prints from the horizons held, about 76 dollars at 230 horizons |  |  |  |
 | No deaths | 0 |  |  |  |
 | Flat at every close | none carried while healthy |  |  |  |
 | Pairing, both runs together | first difference in session 2 or later |  |  |  |

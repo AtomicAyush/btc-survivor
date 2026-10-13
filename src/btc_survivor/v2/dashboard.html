@@ -124,8 +124,9 @@ footer p { border-top: 1px solid var(--line); padding-top: 12px; margin: 0; }
     <p><b>Feed.</b> Finnhub trade prints from the free feed, a partial tape that carries only part of each symbol's trades. A symbol goes stale when no eligible print comes for longer than the limit the run config sets from the gate session's gaps, and stale or recovering pauses everything on it.</p>
     <p><b>News.</b> The news process writes a heartbeat every 30 seconds. Without a fresh healthy heartbeat both runs pause rent, learning and decisions. Model spend has one cap of 20 dollars a month, and a day above a quarter of it raises an alert that stops nothing.</p>
     <p><b>Skill.</b> The correlation of each predictor with the next 30 minute return, pooled over the eight symbols from session 2. Everything here is descriptive until the cutoff, and only the news predictor in S2 is ever tested. At the cutoff its pass or fail word here is the first test, and evaluate runs the second, news beyond the price features, only after a pass.</p>
-    <p><b>Populations.</b> 24 learners per run, three per home symbol, each with a coin flip twin. Learner against twin separates skill from luck. There is no margin over cost, so a learner opens on its own whenever its prediction clears the round trip cost, and the forced timer opens a trade after the configured healthy session hours without one, 3 in the runs and half an hour in the rehearsal.</p>
-    <p><b>Decisions.</b> Every decision of both runs, newest first. A learner decides every 30 session minutes on its home symbol, and its twin copies opens, closes and flips with a coin for the side. Choose a row to see its prediction, the edge it needed, its fill and costs, and its label once the 30 minutes have passed.</p>
+    <p><b>Populations.</b> 24 learners per run, three per home symbol, each with a coin flip twin. Learner against twin separates skill from luck. There is no margin over cost, so a flat learner opens on its own whenever its prediction clears the round trip cost, and the forced timer opens a trade for a flat learner after the configured healthy session hours without one, 3 in the runs and half an hour in the rehearsal.</p>
+    <p><b>Holding.</b> By the owner's decision of 13 October 2026 a learner holding a position has already paid to enter and pays to exit whenever it leaves, so it keeps the position while its prediction still points the position's way by more than the cost of holding it 30 more minutes, nothing for a long and the borrow for a short. It flips only when the prediction points the other way by more than the full required edge of the new side, and otherwise closes. Stops, the 15:55 close and the flattens still end a held position.</p>
+    <p><b>Decisions.</b> Every decision of both runs, newest first. A learner decides every 30 session minutes on its home symbol, and its twin copies opens, closes and flips with a coin for the side, keeping its own position while the learner keeps its. A hold keeps the position with no order, and its reason names the holding cost the prediction beat. The required edge and the gate are always the full edge an open needs, which a flip must pass. Choose a row to see its prediction, the edge it needed, its fill and costs, and its label once the 30 minutes have passed.</p>
     <p><b>Freshness.</b> The overview refreshes every 10 seconds and the newest page of decisions every 30, from views the server recomputes at most every 5 seconds.</p>
     <p><b>Times.</b> The runs keep UTC, and so does this page until you choose Local at the top. Local shows every time here in this computer's time zone with its abbreviation, times quoted inside feed events included, and the from and to filters of the decisions then read and show times in that zone too. Times marked ET are New York time, the market's clock, in either choice. A time ending in Z is read as UTC in either zone, so one copied from a log or from status can be pasted as it is, and an hour that repeats when the clocks go back is shown that way. The choice is remembered in this browser.</p>
   </div></details></div>
@@ -141,7 +142,7 @@ footer p { border-top: 1px solid var(--line); padding-top: 12px; margin: 0; }
     <label>Action<select data-f="action"><option value="">any action</option></select></label>
     <label>Forced<select data-f="forced"><option value="">forced or not</option><option value="yes">forced</option><option value="no">not forced</option></select></label>
     <label>Gate<select data-f="gate"><option value="">passed or not</option><option value="yes">passed</option><option value="no">not passed</option></select></label>
-    <label class="wide">Reason contains<input data-f="reason" type="search" maxlength="100" placeholder="such as forced, warmup or below required edge"></label>
+    <label class="wide">Reason contains<input data-f="reason" type="search" maxlength="100" placeholder="such as forced, kept, warmup or below required edge"></label>
     <label title="In UTC, a date such as 2026-10-19 or a minute such as 2026-10-19 14:30. A date alone means midnight.">From, UTC<input data-f="from" autocomplete="off" spellcheck="false" placeholder="YYYY-MM-DD HH:MM" maxlength="20"></label>
     <label title="In UTC and inclusive, a date such as 2026-10-19 or a minute such as 2026-10-19 14:30. A date alone means the whole of that day.">To, UTC<input data-f="to" autocomplete="off" spellcheck="false" placeholder="YYYY-MM-DD HH:MM" maxlength="20"></label>
     <div class="act"><button id="ex-clear" type="button">Clear filters</button></div>
@@ -563,7 +564,7 @@ function exSummary(data) {
     card("Matching decisions", num(s.decisions, 0), runs.map(([name, r]) => `${esc(name)} ${num(r.decisions, 0)}`).join(" · ")),
     card("Actions", actions || "none", "how the matching decisions acted"),
     card("Forced", num(s.forced, 0) + share(s.forced, s.decisions), "opened by the exploration timer"),
-    card("Gate passed", num(s.gate_passed, 0) + share(s.gate_passed, s.decisions), "prediction cleared the required edge"),
+    card("Gate passed", num(s.gate_passed, 0) + share(s.gate_passed, s.decisions), "prediction cleared the full required edge"),
     card("Labelled", num(s.labelled, 0) + share(s.labelled, s.decisions), "the 30 minute label has matured"),
     card("Direction right", pct(s.hit_rate, 1), `${num(s.right, 0)} of ${num(s.directional, 0)} labelled with a nonzero prediction` +
       runs.map(([name, r]) => ` · ${esc(name)} ${pct(r.hit_rate, 1)}`).join(""), "Share whose prediction had the sign of the label"),
@@ -575,7 +576,7 @@ function exSummary(data) {
 function exList() {
   if (!ex.rows.length) { exEl("ex-list").innerHTML = empty("No decision matches these filters yet."); return; }
   exEl("ex-list").innerHTML = table([[`time ${esc(zoneNow())}`, 1], ["ET", 1], ["run", 1], ["bot", 0], ["slot", 0], ["kind", 1], ["symbol", 1], ["before", 1, "Position before the decision"],
-    ["action", 1], ["forced", 1], ["gate", 1], ["prediction", 0, "bps"], ["required", 0, "Required edge in bps"], ["label", 0, "bps, once matured"], ["reason", 1]],
+    ["action", 1], ["forced", 1], ["gate", 1], ["prediction", 0, "bps"], ["required", 0, "The full required edge in bps, what an open needs and a flip must pass"], ["label", 0, "bps, once matured"], ["reason", 1]],
     ex.rows.map(r => `<tr class="pick${ex.chosen === r.run + ":" + r.id ? " sel" : ""}" tabindex="0" data-run="${esc(r.run)}" data-id="${r.id}">
       <td class="l">${esc(time(r.ts))}</td><td class="l muted">${esc(et(r.ts))}</td><td class="l">${esc(r.run)}</td><td>${r.bot_id}</td><td>${r.slot}</td>
       <td class="l">${esc(r.kind)}</td><td class="l">${esc(r.symbol)}</td><td class="l">${esc(r.position_before)}</td><td class="l">${chip(r.action)}</td>
@@ -636,8 +637,9 @@ function exDetail(d) {
     <div class="cards">
       ${card("Action", `${chip(d.action)}${d.forced ? chip("forced") : ""}`, d.forced ? "opened by the exploration timer" : "")}
       ${card("Prediction", `<span class="${cls(d.prediction_bps)}">${signed(d.prediction_bps, 2)} bps</span>`, `reference price ${num(d.ref_price, 4)}`)}
-      ${card("Required edge", `${num(d.required_edge_bps, 2)} bps`, `cost estimate ${num(d.cost_estimate_bps, 2)} + margin ${num(d.margin_bps, 2)} bps`)}
-      ${card("Gate", d.gate_passed ? chip("passed") : chip("failed"), `size of prediction ${d.edge_gap_bps >= 0 ? "above" : "below"} the required edge by ${num(Math.abs(d.edge_gap_bps), 2)} bps`)}
+      ${card("Required edge", `${num(d.required_edge_bps, 2)} bps`, `cost estimate ${num(d.cost_estimate_bps, 2)} + margin ${num(d.margin_bps, 2)} bps, what an open needs and a flip must pass`)}
+      ${card("Gate", d.gate_passed ? chip("passed") : chip("failed"), `size of prediction ${d.edge_gap_bps >= 0 ? "above" : "below"} the required edge by ${num(Math.abs(d.edge_gap_bps), 2)} bps` +
+        (d.position_before === "long" || d.position_before === "short" ? ", while a held position is kept as long as the prediction points its way past its holding cost" : ""))}
       ${card("Position", `${esc(d.position_before)} → ${settled}`, "before the decision and after its minute's orders settled")}
       ${card("Label", labelText, l.matured ? (l.direction_right == null ? "zero prediction" : l.direction_right ? "the prediction had the right sign" : "the prediction had the wrong sign") : "30 session minutes after the decision")}
     </div>

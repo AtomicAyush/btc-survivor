@@ -1,6 +1,6 @@
 """Stock costs by hand: the SEC fee and trading activity fee rounding, fees only on sales including short opens, the
-round trips of 3.6, 4.6 and 6.6 bps, borrow across a weekend, the required edge with no margin and with one, rent,
-the death line and the Roll diagnostic."""
+round trips of 3.6, 4.6 and 6.6 bps, borrow across a weekend, the required edge with no margin and with one, the
+holding cost of the holding rule, rent, the death line and the Roll diagnostic."""
 
 import dataclasses
 import math
@@ -119,6 +119,17 @@ def test_a_short_round_trip_adds_borrow_over_the_horizon_on_its_whole_share_noti
     assert costs.borrow_bps_per_hour(COSTS) == pytest.approx(0.0114155, abs=1e-7)
     with pytest.raises(ValueError):
         costs.round_trip(COSTS, "TSLA", SHORT, 0.0, 400.0, 30)
+
+
+def test_the_holding_cost_is_nothing_for_a_long_and_the_borrow_over_the_horizon_for_a_short():
+    # What keeping a position over one more horizon costs, the threshold of the holding rule of 13 October 2026.
+    assert costs.holding_cost_bps(COSTS, LONG, 30) == 0.0
+    short = costs.holding_cost_bps(COSTS, SHORT, 30)
+    assert short == pytest.approx(100.0 / 8760 / 2) and round(short, 4) == 0.0057
+    assert short == costs.round_trip(COSTS, "TSLA", SHORT, 1.0, 400.0, 30).borrow_bps
+    assert costs.holding_cost_bps(COSTS, SHORT, 60) == pytest.approx(2 * short)
+    with pytest.raises(ValueError):
+        costs.holding_cost_bps(COSTS, 0, 30)
 
 
 def test_borrow_accrues_across_a_weekend_in_calendar_time():

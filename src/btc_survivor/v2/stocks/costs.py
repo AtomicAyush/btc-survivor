@@ -1,5 +1,6 @@
 """Stock trading costs by PLAN_V2 sections 5.1 to 5.4, the per symbol allowance, the regulatory fees on sales, borrow,
-the round trip estimate behind the gate and the death threshold, the required edge, rent and the Roll diagnostic.
+the round trip estimate behind the gate and the death threshold, the required edge, the holding cost a held position
+must beat, rent and the Roll diagnostic.
 
 There is no commission. The SEC Section 31 fee and the FINRA trading activity fee fall only on sales, the closing leg
 of a long and the opening leg of a short, and each rounds up to the next cent per sale with a minimum of one cent.
@@ -107,6 +108,14 @@ class RoundTrip(NamedTuple):
         return self.total_bps / 1e4 * self.notional
 
 
+def holding_cost_bps(costs: StockCostsConfig, side: int, horizon_minutes: int) -> float:
+    """The cost in bps of keeping a position over one more horizon, nothing for a long and the borrow over the horizon
+    for a short, about 0.0057 bps at 1 percent a year over 30 minutes. Rent is paid either way."""
+    if side not in (LONG, SHORT):
+        raise ValueError("a holding cost needs a side")
+    return borrow_bps_per_hour(costs) * horizon_minutes / 60.0 if side == SHORT else 0.0
+
+
 def round_trip(costs: StockCostsConfig, symbol: str, side: int, qty: float, price: float,
                horizon_minutes: int) -> RoundTrip:
     """The cost of opening and closing qty shares on side at price, with borrow over the horizon for a short."""
@@ -114,7 +123,7 @@ def round_trip(costs: StockCostsConfig, symbol: str, side: int, qty: float, pric
         raise ValueError("a round trip needs a side, a positive quantity and a positive price")
     notional = qty * price
     fees = sec_fee(costs, notional) + taf_fee(costs, qty)
-    borrow = borrow_bps_per_hour(costs) * horizon_minutes / 60.0 if side == SHORT else 0.0
+    borrow = holding_cost_bps(costs, side, horizon_minutes)
     return RoundTrip(2.0 * allowance_bps(costs, symbol), fees / notional * 1e4, borrow, notional)
 
 

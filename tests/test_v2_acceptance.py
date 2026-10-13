@@ -7,8 +7,9 @@ with SIGKILL in the middle of the second session, between the runs' checkpoint c
 checkpoint both runs hold. Then the gate session's coverage record from the day before, evaluate, status and export run
 through the command line. The tests assert no lookahead, S1 and S2 identical until S2 first received a nonzero news
 score, labels equal to those recomputed from the candles, S2's news inputs nonzero, run minutes in every session,
-learners opening on their own under the zero margin, every fill on a recorded print traded at or after its due time,
-the same price_z rows in both runs and the incremental test reading them. The whole path runs once for the module, in
+learners opening on their own under the zero margin, learners keeping positions across decisions under the holding
+rule, every fill on a recorded print traded at or after its due time, the same price_z rows in both runs and the
+incremental test reading them. The whole path runs once for the module, in
 about a minute, and the acceptance mark lets a quick run leave it out with -m "not acceptance".
 """
 
@@ -31,6 +32,7 @@ from btc_survivor.v2.news.health import FINBERT_SCORER
 from btc_survivor.v2.stocks.candles import StockCandle
 from btc_survivor.v2.stocks.labels import MATURED, recompute_labels
 from btc_survivor.v2.stocks.news_inputs import HAIKU_SCORER
+from btc_survivor.v2.stocks.population import LEARNER, TWIN
 from v2_pathkit import (CANARY, DAYS, FIRST_NEWS, HOLD, RESTART, SYMBOLS, cli, gate_record, news_config,
                         planned_news, query, recording_text, run_path, stock_configs)
 
@@ -241,11 +243,27 @@ def test_learners_open_on_their_own_under_the_zero_margin(path_run):
         assert query(path, "SELECT DISTINCT margin_bps FROM bots") == [(0.0,)]
         assert query(path, "SELECT count(*) FROM decisions WHERE margin_bps != 0 "
                            "OR abs(required_edge_bps - cost_estimate_bps) > 1e-9") == [(0,)]
-        own = query(path, "SELECT count(*) FROM decisions d JOIN bots b ON b.bot_id = d.bot_id WHERE b.origin != "
-                          f"'twin' AND d.forced = 0 AND d.gate_passed = 1 AND d.action IN {OPENS}")[0][0]
+        own = query(path, "SELECT count(*) FROM decisions d JOIN bots b ON b.bot_id = d.bot_id WHERE b.origin != ? "
+                          f"AND d.forced = 0 AND d.gate_passed = 1 AND d.action IN {OPENS}", (TWIN,))[0][0]
         assert own > 0 and query(path, "SELECT count(*) FROM decisions WHERE forced = 1")[0][0] > 0
         assert query(path, "SELECT count(*) FROM trades WHERE forced = 0")[0][0] > 0
         assert int(summary(run.commands["evaluate"])[f"{name} own opens"]) > 0
+
+
+def test_learners_keep_positions_across_decisions_under_the_holding_rule(path_run):
+    run = path_run
+    for path in (run.s1, run.s2):
+        holds = query(path, "SELECT b.origin, d.position_before, d.reason FROM decisions d JOIN bots b "
+                            "ON b.bot_id = d.bot_id WHERE d.action = 'hold'")
+        assert len(holds) > 20 and {origin for origin, *_ in holds} == {LEARNER}      # only learners keep
+        assert all(reason.endswith(f"so the {before} is kept") for _, before, reason in holds)
+        # A kept position sends no order, and trades kept across a decision end at a later close.
+        assert query(path, "SELECT count(*) FROM decisions d JOIN fills f ON f.bot_id = d.bot_id AND "
+                           "f.decided_at = d.ts WHERE d.action = 'hold'") == [(0,)]
+        kept = query(path, "SELECT count(*) FROM trades t WHERE t.closed_at IS NOT NULL AND EXISTS (SELECT 1 FROM "
+                           "decisions d WHERE d.bot_id = t.bot_id AND d.action = 'hold' AND d.ts > t.opened_at AND "
+                           "d.ts < t.closed_at)")
+        assert kept[0][0] > 0
 
 
 def test_every_fill_is_on_a_recorded_print_traded_at_or_after_its_due_time(path_run):

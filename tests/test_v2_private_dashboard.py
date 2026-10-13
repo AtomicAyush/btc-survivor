@@ -586,6 +586,19 @@ def test_the_detail_shows_the_report_only_fill_columns_once_the_server_sends_the
     assert '["print after due", 0,' in page and '["news window", 1,' in page and "yesNo(f.news_window)" in page
 
 
+def test_the_help_and_the_decision_detail_explain_the_holding_rule():
+    """The help sets out the holding rule the owner approved on 13 October 2026, and a decision's cards say the
+    required edge is what an open needs and a flip must pass, while a held position needs only to keep pointing its
+    way."""
+    page = dashboard.PAGE.read_text(encoding="utf-8")
+    assert "<b>Holding.</b> By the owner's decision of 13 October 2026" in page
+    for text in ("nothing for a long and the borrow for a short", "by more than the full required edge of the new side",
+                 "Stops, the 15:55 close and the flattens still end a held position",
+                 "keeping its own position while the learner keeps its", "A hold keeps the position with no order",
+                 "what an open needs and a flip must pass", "points its way past its holding cost"):
+        assert text in page, text
+
+
 def test_the_minutes_a_local_from_and_to_send_are_what_the_server_takes(server):
     """A from and to typed in Chicago time reach the server as UTC minutes, and the to minute is included."""
     code, page = server.json("/api/decisions?from=2026-10-21T13:00&to=2026-10-23T04:59&limit=200")

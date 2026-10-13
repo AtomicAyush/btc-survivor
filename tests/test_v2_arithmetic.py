@@ -1,5 +1,6 @@
 """The outcomes fixed by arithmetic of PLAN_V2 section 12, worked by hand from the committed S1 config: the burn of a
-quiet learner, its equity with no gross profit, and how long death would take."""
+quiet learner, its equity with no gross profit within a bound that grows with the horizons positions were held under
+the holding rule of 13 October 2026, and how long death would take."""
 
 import math
 
@@ -51,15 +52,17 @@ def test_founder_equity_by_hand():
     # 15,600 usable minutes and 75 round trips of AAPL at 0.25 dollars each, with no gross profit.
     assert founder_equity(10000.0, RENT, 15600, 75 * 0.25) == pytest.approx(10000 - 15600 * RENT - 18.75)
     assert round(founder_equity(10000.0, RENT, 15600, 75 * 0.25), 2) == 9914.04
-    # Two standard deviations of a 50 bps move on 500 dollars over 75 trades that all move together.
+    # Two standard deviations of a 50 bps move on 500 dollars for each of 75 horizons held, all moving together.
     assert founder_bound(75, 500) == pytest.approx(2 * math.sqrt(75) * 2.5) and 43 < founder_bound(75, 500) <= 45
     assert founder_bound(0, 500) == 0.0
+    # Under the holding rule a no skill learner held about 230 horizons by the cutoff in a synthetic check.
+    assert founder_bound(230, 500) == pytest.approx(2 * math.sqrt(230) * 2.5) and round(founder_bound(230, 500)) == 76
 
 
-def books(equity_offset, trips=75, usable=15600):
+def books(equity_offset, trips=75, usable=15600, horizons_each=1.0):
     paid = trips * 0.25
     return [{"bot_id": i, "home": "AAPL", "equity": founder_equity(10000.0, RENT, usable, paid) + offset,
-             "rent": RENT * usable, "paid": paid, "trips": trips, "usable": usable}
+             "rent": RENT * usable, "paid": paid, "trips": trips, "horizons": trips * horizons_each, "usable": usable}
             for i, offset in enumerate((equity_offset - 5, equity_offset + 5))]
 
 
@@ -69,6 +72,11 @@ def test_founder_equity_and_burn_are_judged_from_the_learners_books():
     assert outcomes["founder equity"].matched is True and outcomes["burn"].matched is True
     assert outcomes["founder equity"].expected == f"{10000 - 15600 * RENT - 18.75:.2f} within 43.30"
     assert outcome_money(run, books(44.0))[1].matched is False
+    # The same round trips each held four horizons, as the holding rule allows, double the bound.
+    held = {o.name: o for o in outcome_money(run, books(80.0, horizons_each=4.0))}
+    assert held["founder equity"].expected.endswith("within 86.60") and held["founder equity"].matched is True
+    assert outcome_money(run, books(87.0, horizons_each=4.0))[1].matched is False
+    assert held["burn"].matched is True                  # burn counts round trips, however long they were held
     # Paying 0.25 a round trip against the planned 0.23 is within a quarter, three times as much is not.
     heavy = [{**book, "paid": 3 * book["paid"]} for book in books(0.0)]
     assert outcome_money(run, heavy)[0].matched is False

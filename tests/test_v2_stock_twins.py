@@ -1,5 +1,6 @@
 """StockTwin on hand built minutes: upkeep on its learner's home symbol only, marking at the reference price, the
-version 1 coin flip rules, the session_close and session_flatten exits, and no LocalBook built or read."""
+version 1 coin flip rules, the session_close and session_flatten exits, keeping its position while its learner keeps its
+own under the holding rule, and no LocalBook built or read."""
 
 import inspect
 from datetime import date
@@ -176,6 +177,41 @@ def test_follow_copies_the_decision_and_exits_with_the_learner():
     t3 = twin(seed=6)
     opened(t3, b)
     assert t3.follow(learner, BotStep(died=True), minute(DAY, 63, healthy=halted), b).orders == []
+
+
+def test_a_twin_keeps_its_position_while_its_learner_keeps_its_own():
+    b = StockBroker.from_config(CFG)
+    learner = StockBot.newborn(CFG, 3, 2, DAY.open_ms)    # home NVDA, deciding where k % 30 == 2
+    learner.state, learner.minutes_since_open = ACTIVE, 0
+    learner.model.W2[:] = 0.0
+    learner.model.b2[0] = 2.0                             # 80 bps, so the learner opens a long
+    t = twin(seed=4)
+    m = next(x for x in range(30, 61) if DAY.k(DAY.boundary(x)) % 30 == 2)
+    ctx = minute(DAY, m)
+    res = learner.step(ctx, b)
+    out = t.follow(learner, res, ctx, b)
+    assert res.decision["action"] == "open_long" and out.decision["action"] in ("open_long", "open_short")
+    settle(learner, b)
+    settle(t, b)
+    held, side = t.account.trade_id, t.account.side
+    learner.model.b2[0] = 0.05                            # 2 bps, below the edge an open needs, still up
+    for later in (m + 30, m + 60, m + 90):
+        ctx = minute(DAY, later)
+        res = learner.step(ctx, b)
+        assert res.decision["action"] == "hold" and res.orders == []
+        out = t.follow(learner, res, ctx, b)
+        assert out.decision is None and out.orders == [] and t.pending_order is None
+        assert (t.account.trade_id, t.account.side) == (held, side)
+    learner.model.b2[0] = -0.05                           # the learner closes, and its twin copies the close
+    ctx = minute(DAY, m + 120)
+    res = learner.step(ctx, b)
+    out = t.follow(learner, res, ctx, b)
+    assert res.decision["action"] == out.decision["action"] == "close"
+    assert [o.legs[0].action for o in out.orders] == ["close"]
+    assert out.orders[0].decided_ms == learner.pending_order.decided_ms == ctx.boundary_ms
+    closed = settle(t, b).closed
+    assert closed.trade_id == held and closed.exit_reason == "signal" and not t.account.is_open
+    assert settle(learner, b).closed.exit_reason == "signal"
 
 
 def test_session_close_and_session_flatten_exits():

@@ -16,8 +16,11 @@ H1 passes is H2 run, the partial test of stats.partial_skill on the same rows wi
 a coverage record before launch, 12 October 2026, whether or not that session was clean, and the first clean full
 session at or after each due session must keep its median ratio within a factor of 2 of it. That session may come
 after the cutoff, so criterion 1.1 alone can change on a later run until its record exists. The trading gate has no
-margin, so the share of learner opens a learner made on its own, and the round trips per session forced by the timer
-and made on the learner's own, are reported, never judged.
+margin, and under the holding rule the owner approved on 13 October 2026 a learner keeps a position while its
+prediction points the position's way past the holding cost, so the share of learner opens a learner made on its own,
+and the round trips per session forced by the timer and made on the learner's own, are reported, never judged. The
+founder equity bound grows with the horizons the learners held their positions, counted in session time, since one
+round trip can now last several horizons.
 
 By default it prints each criterion's verdict, each outcome matched or not, and counts, never a price, a forecast or a
 statistic. --detail adds the problems behind each verdict, every predictor's pooled skill over all rows and event
@@ -92,7 +95,7 @@ EVENT_LINES = {"news": PRIMARY, "news_company": PRIMARY, "news_macro": PRIMARY, 
 SCORE_PAIRS = (("haiku", "finbert_matched"), ("sonnet", "haiku_official"))
 # The outcomes of section 12, judged by reasoning before launch.
 ROUND_TRIPS_PER_SESSION = 2
-MOVE_BPS = 50.0  # a 30 minute move behind the founder equity bound
+MOVE_BPS = 50.0  # a 30 minute move behind the founder equity bound, per horizon a position was held
 FIRST_TRADE_SESSION = 3
 FIRST_TRADE_MINUTES = (60, 270)  # 10:30 to 13:30 ET, plus up to 29 minutes waiting for a phase minute
 BURN_TOLERANCE = 0.25
@@ -634,10 +637,24 @@ def founder_equity(start_equity: float, rent_per_minute: float, usable_minutes: 
     return start_equity - rent_per_minute * usable_minutes - costs_paid
 
 
-def founder_bound(round_trips: float, notional: float) -> float:
+def founder_bound(horizons: float, notional: float) -> float:
     """Two standard deviations of the learners' mean gross profit if all their trades move together, a 50 bps move
-    on the notional per trade, about 45 dollars at 75 trades."""
-    return 2 * math.sqrt(round_trips) * MOVE_BPS / 1e4 * notional
+    on the notional for each horizon a position was held, about 43 dollars at 75 trades of one horizon each and about
+    76 at the 230 horizons a no skill learner held by the cutoff under the holding rule in a one off synthetic
+    check."""
+    return 2 * math.sqrt(horizons) * MOVE_BPS / 1e4 * notional
+
+
+def session_ms_held(opened: str, closed: str) -> int:
+    """The milliseconds of regular session hours between a trade's open and close, so a position carried overnight or
+    over a weekend and flattened at the next open counts the session time it was held, not the night."""
+    start, end = parse_iso(opened), parse_iso(closed)
+    table = sessions.all_sessions()
+    index, total = bisect.bisect_right(table, start, key=lambda s: s.close_ms), 0
+    while index < len(table) and table[index].open_ms < end:
+        total += max(0, min(end, table[index].close_ms) - max(start, table[index].open_ms))
+        index += 1
+    return total
 
 
 def death_line(cfg: StockCostsConfig, symbol: str, notional: float, horizon: int) -> float:
@@ -696,8 +713,11 @@ SNAPSHOT = ("SELECT ts, equity, rent_total, fees_total, funding_total FROM equit
 
 def learner_books(run: Run, usable: dict[str, list[str]], window: Window) -> list[dict]:
     """Each learner's latest snapshot by the end with its usable home minutes, the costs it paid, the allowance
-    between print and fill price plus fees and borrow, and its closed round trips, all up to that snapshot."""
+    between print and fill price plus fees and borrow, its closed round trips and the horizons they were held in all,
+    counted in session time, all up to that snapshot. Under the holding rule one round trip can last several
+    horizons."""
     out = []
+    horizon_ms = run.config.time.horizon_minutes * MS_PER_MINUTE
     for bot_id, home, born in run.conn.execute(LEARNERS, (TWIN_ORIGIN,)).fetchall():
         snap = run.conn.execute(SNAPSHOT, (bot_id, window.end)).fetchone()
         if snap is None:
@@ -705,16 +725,18 @@ def learner_books(run: Run, usable: dict[str, list[str]], window: Window) -> lis
         ts, equity, rent, fees, borrow = snap
         allowance = run.conn.execute("SELECT coalesce(sum(abs(price - print_price) * qty), 0) FROM fills WHERE "
                                      "bot_id = ? AND status = 'filled' AND filled_at <= ?", (bot_id, ts)).fetchone()[0]
-        trips = run.conn.execute("SELECT count(*) FROM trades WHERE bot_id = ? AND closed_at <= ?",
-                                 (bot_id, ts)).fetchone()[0]
+        held = run.conn.execute("SELECT opened_at, closed_at FROM trades WHERE bot_id = ? AND closed_at <= ?",
+                                (bot_id, ts)).fetchall()
         out.append({"bot_id": bot_id, "home": home, "equity": equity, "rent": rent, "paid": allowance + fees + borrow,
-                    "trips": trips, "usable": _between(usable[home], born, ts)})
+                    "trips": len(held), "horizons": sum(session_ms_held(o, c) for o, c in held) / horizon_ms,
+                    "usable": _between(usable[home], born, ts)})
     return out
 
 
 def outcome_money(run: Run, books: list[dict]) -> list[Outcome]:
     """Burn and founder equity, the learners' mean rent and costs against the planned burn over the same usable
-    minutes and round trips, and their mean equity against start equity less rent and costs paid."""
+    minutes and round trips, and their mean equity against start equity less rent and costs paid, within a bound
+    that grows with the horizons the learners held their positions."""
     cfg, trading, horizon = run.config.stock_costs, run.config.trading, run.config.time.horizon_minutes
     if not books:
         return [Outcome(run.name, name, None, "", "no learner snapshot yet") for name in ("burn", "founder equity")]
@@ -724,7 +746,7 @@ def outcome_money(run: Run, books: list[dict]) -> list[Outcome]:
     burned = statistics.fmean(b["rent"] + b["paid"] for b in books)
     expected = statistics.fmean(founder_equity(trading.start_equity, rpm, b["usable"], b["paid"]) for b in books)
     actual = statistics.fmean(b["equity"] for b in books)
-    bound = max(founder_bound(statistics.fmean(b["trips"] for b in books), trading.notional), 0.01)
+    bound = max(founder_bound(statistics.fmean(b["horizons"] for b in books), trading.notional), 0.01)
     return [Outcome(run.name, "burn", abs(burned - planned) <= BURN_TOLERANCE * planned, f"{planned:.2f} dollars",
                     f"{burned:.2f} dollars"),
             Outcome(run.name, "founder equity", abs(actual - expected) <= bound,
@@ -756,29 +778,33 @@ def outcome_timeline(run: Run, books: list[dict], window: Window) -> list[Outcom
     return out
 
 
-TRIPS = "SELECT forced, count(*) FROM trades WHERE bot_id = ? AND closed_at > ? AND closed_at <= ? GROUP BY forced"
+TRIPS = "SELECT forced, opened_at, closed_at FROM trades WHERE bot_id = ? AND closed_at > ? AND closed_at <= ?"
 
 
 def round_trips(run: Run, usable: dict[str, list[str]], books: list[dict], window: Window) -> dict:
     """The learners' mean closed round trips per full session of usable home minutes from session 4, all of them,
     those the timer forced and those the learner opened on its own, descriptive since the zero margin lets own trades
-    come beside the timer and restart it, so section 12's two forced trips a session is no longer a fixed outcome."""
+    come beside the timer and restart it, and the holding rule keeps a position over several decisions, so section
+    12's two forced trips a session is no longer a fixed outcome, with the mean session minutes those round trips were
+    held."""
     steady = nth_session(parse_iso(window.launch), FIRST_TRADE_SESSION + 1)
     row = {"run": run.name, "from session": FIRST_TRADE_SESSION + 1, "learners": 0, "all": "", "forced": "",
-           "own": "", "timer alone": f"about {ROUND_TRIPS_PER_SESSION}"}
+           "own": "", "minutes held": "", "timer alone": f"at most about {ROUND_TRIPS_PER_SESSION}"}
     if window.end < iso(steady.close_ms):
         return row
-    after, rates = iso(steady.open_ms), []
+    after, rates, held = iso(steady.open_ms), [], []
     for b in books:
         minutes = _between(usable[b["home"]], after, window.end)
         if minutes:
-            counts = dict(run.conn.execute(TRIPS, (b["bot_id"], after, window.end)).fetchall())
+            trades = run.conn.execute(TRIPS, (b["bot_id"], after, window.end)).fetchall()
+            forced = sum(1 for f, _, _ in trades if f)
             sessions_seen = minutes / FULL_SESSION_MINUTES
-            rates.append((counts.get(1, 0) / sessions_seen, sum(v for k, v in counts.items() if not k) / sessions_seen))
+            rates.append((forced / sessions_seen, (len(trades) - forced) / sessions_seen))
+            held += [session_ms_held(opened, closed) / MS_PER_MINUTE for _, opened, closed in trades]
     if rates:
         forced, own = (statistics.fmean(r[i] for r in rates) for i in (0, 1))
         row.update({"learners": len(rates), "all": _f(forced + own, ".2f"), "forced": _f(forced, ".2f"),
-                    "own": _f(own, ".2f")})
+                    "own": _f(own, ".2f"), "minutes held": _f(statistics.fmean(held) if held else None, ".0f")})
     return row
 
 
@@ -822,7 +848,8 @@ def own_trades(run: Run, window: Window) -> dict:
     timer forced and how many the learner made on its own once its prediction cleared the required edge, the own
     trade share, the share of decisions that cleared it and the spread of the predictions in label standard
     deviations, all descriptive, since with a margin of 0 a learner trades on its own whenever its prediction beats
-    the cost."""
+    the cost. A flip counts as an open, a decision that kept a position under the holding rule does not, and the gate
+    share counts every decision whose prediction cleared the full required edge, kept positions included."""
     rows = run.conn.execute(
         "SELECT d.action, d.forced, d.gate_passed, d.prediction_bps, d.symbol FROM decisions d JOIN bots b "
         "ON b.bot_id = d.bot_id WHERE b.origin != ? AND d.ts > ? AND d.ts <= ?",

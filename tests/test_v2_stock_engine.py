@@ -8,7 +8,9 @@ session close at 15:55 with a symbol halted into the close, a restart in session
 recomputation from the candles and every decision against its label, the split guard and the short sale restriction
 in the shared layer, a changed news hash stopping news health, orders rejected at a restart, the news_seen bookkeeping
 and S1 and S2 writing identical rows while S2 reads no news. Also the price z scores of every usable symbol at each
-evaluation minute, and the report only fill columns, how long after due each print traded and S2's news window."""
+evaluation minute, and the report only fill columns, how long after due each print traded and S2's news window. Under
+the holding rule, kept positions send no order and still end by stops, closes and flattens, and a learner keeps a long
+across several decisions to the session close while its twin keeps its copy."""
 
 import copy
 import re
@@ -27,12 +29,13 @@ from btc_survivor.v2.config import parse_stock_config
 from btc_survivor.v2.news.health import FINBERT_SCORER
 from btc_survivor.v2.stocks import costs
 from btc_survivor.v2.stocks.candles import StockCandle
-from btc_survivor.v2.stocks.bot import BotStep
+from btc_survivor.v2.stocks.bot import SESSION_CLOSE, BotStep
 from btc_survivor.v2.stocks.engine import NEWS_WINDOW_MS, PERSIST_OFFSET_MS, StockEngine
 from btc_survivor.v2.stocks.finnhub import Print, PrintBatch
 from btc_survivor.v2.stocks.labels import recompute_labels
 from btc_survivor.v2.stocks.market import MarketLayer
 from btc_survivor.v2.stocks.news_inputs import HAIKU_SCORER, HeartbeatLine, Impact, ScoreLine
+from btc_survivor.v2.stocks.population import LEARNER, TWIN
 from btc_survivor.v2.stocks.store import StockStore
 from helpers import ROOT
 
@@ -512,6 +515,71 @@ def test_a_session_close_rejected_while_its_symbol_halts_is_sent_again_at_the_ne
                      (bot_id, iso(at(FRI, "15:55")))) == [("session_close",)]
 
 
+@pytest.fixture(scope="module")
+def keeper(tmp_path_factory):
+    """Two bots per run from Thursday. On Friday the first learner predicts five label standard deviations up from
+    13:20, so it holds a long from its 13:30 decision, and from 13:30:30 a twentieth of one, about 1 bp, below the edge
+    an open needs but still up, so the holding rule keeps the long at 14:00, 14:30, 15:00 and 15:30, the last after the
+    final open at 15:25, until the session close at 15:55. Its twin keeps its own copy beside it."""
+    c1, c2, group, tape = start(tmp_path_factory.mktemp("keeper"), at(THU, "09:00"), size="2", warmup_hours="0.5",
+                                force_trade_after_hours="0.5")
+    tape.run_to(at(THU, "16:05"))
+    tape.skip_to(at(FRI, "09:28"))
+    tape.run_to(at(FRI, "13:20:30"))
+    hold(group.engines, 0)
+    tape.run_to(at(FRI, "13:30:30"))
+    for engine in group.engines:
+        engine.population.learners[0].model.b2[0] = 0.05
+    held = []
+    for clock in ("13:30:30", "13:59:59", "14:00:30", "14:30:30", "15:00:30", "15:30:30", "15:54:59"):
+        tape.run_to(at(FRI, clock))
+        held.append(open_positions(group.engines[0]))
+    tape.run_to(at(FRI, "16:05"))
+    for engine in group.engines:
+        engine.persist(group.now)
+        engine.store.close()
+    learner, twin = group.engines[0].population.learners[0], group.engines[0].population.twins[0]
+    return SimpleNamespace(held=held, learner=learner.bot_id, twin=twin.bot_id, dbs=(c1.db_path, c2.db_path))
+
+
+def test_a_learner_keeps_its_long_across_decisions_to_the_session_close_and_its_twin_keeps_its_copy(keeper):
+    learner, twin = keeper.learner, keeper.twin
+    assert all(held == keeper.held[0] for held in keeper.held)    # every position unchanged from 13:30:30 to 15:54:59
+    (_, side, trade), (_, _, copied) = keeper.held[0][learner], keeper.held[0][twin]
+    assert side == LONG
+    kept = [iso(at(FRI, clock)) for clock in ("14:00", "14:30", "15:00", "15:30")]
+    after, close = iso(at(FRI, "13:30")), iso(at(FRI, "15:55"))
+    for db in keeper.dbs:
+        rows = query(db, "SELECT ts, position_before, action, gate_passed, forced, required_edge_bps, reason "
+                         "FROM decisions WHERE bot_id = ? AND ts > ? AND ts < ? ORDER BY ts", (learner, after, close))
+        assert [row[0] for row in rows] == kept
+        for _, before, action, gate, forced, required, reason in rows:
+            assert (before, action, gate, forced) == ("long", "hold", 0, 0) and required == pytest.approx(4.6)
+            assert re.fullmatch(r"the prediction of 0\.\d{3} bps still points up, above the 0\.000 bps holding cost, "
+                                r"so the long is kept", reason), reason
+        # Neither the learner nor its twin sent an order while the long was kept, and the twin copied nothing.
+        assert query(db, "SELECT count(*) FROM fills WHERE bot_id IN (?, ?) AND decided_at > ? AND decided_at < ?",
+                     (learner, twin, after, close)) == [(0,)]
+        assert query(db, "SELECT count(*) FROM decisions WHERE bot_id = ? AND ts > ? AND ts < ?",
+                     (twin, after, close)) == [(0,)]
+        # The learner's long and the twin's copy opened at the 13:30 decision, so the twin test pairs them, and both
+        # ended at the session close.
+        opened = query(db, "SELECT f.bot_id, f.decided_at, d.action FROM fills f JOIN decisions d ON d.bot_id = "
+                           "f.bot_id AND d.ts = f.decided_at WHERE f.leg = 'open' AND f.trade_id IN (?, ?) "
+                           "ORDER BY f.bot_id", (trade, copied))
+        assert [(bot, ts) for bot, ts, _ in opened] == [(learner, after), (twin, after)]
+        assert opened[0][2] in ("open_long", "flip") and opened[1][2] == opened[0][2]
+        assert query(db, "SELECT bot_id, decided_at, reason FROM fills WHERE leg = 'close' AND trade_id IN (?, ?) "
+                         "ORDER BY bot_id", (trade, copied)) == [(learner, close, SESSION_CLOSE),
+                                                                 (twin, close, SESSION_CLOSE)]
+        assert query(db, "SELECT exit_reason FROM trades WHERE id IN (?, ?)", (trade, copied)) == \
+            [(SESSION_CLOSE,), (SESSION_CLOSE,)]
+    for sql in ("SELECT * FROM decisions ORDER BY id", f"SELECT {FILL_COLUMNS} FROM fills ORDER BY id",
+                "SELECT * FROM trades ORDER BY id"):
+        first, second = (query(db, sql) for db in keeper.dbs)
+        assert first and first == second, sql
+
+
 def test_s2_marks_the_line_each_primary_score_uses_even_when_it_was_read_first(tmp_path):
     c1, c2 = pair(tmp_path, size="1")
     engines = [StockEngine.fresh(c, StockStore.open(c.db_path), MON.open_ms) for c in (c1, c2)]
@@ -669,6 +737,29 @@ def test_the_invariants_hold_at_every_snapshot(week):
                      between(MON, "09:31", "16:00")) == [(78,)]
 
 
+# Trades of learners that kept their position at one decision or more after they opened.
+KEPT_TRADES = """SELECT t.exit_reason, count(*) FROM trades t WHERE EXISTS (SELECT 1 FROM decisions d WHERE d.bot_id =
+    t.bot_id AND d.action = 'hold' AND d.ts > t.opened_at AND (t.closed_at IS NULL OR d.ts < t.closed_at))
+    GROUP BY t.exit_reason"""
+
+
+def test_kept_positions_send_no_order_and_still_end_by_stops_closes_and_flattens(week):
+    for db in week.dbs:
+        holds = dict(query(db, "SELECT position_before, count(*) FROM decisions WHERE action = 'hold' "
+                               "GROUP BY position_before"))
+        assert set(holds) == {"long", "short"} and min(holds.values()) > 50
+        assert query(db, "SELECT DISTINCT b.origin FROM decisions d JOIN bots b ON b.bot_id = d.bot_id WHERE "
+                         "d.action = 'hold'") == [(LEARNER,)]
+        assert query(db, "SELECT count(*) FROM decisions d JOIN bots b ON b.bot_id = d.bot_id WHERE b.origin = ?",
+                     (TWIN,))[0][0] > 0
+        assert query(db, "SELECT count(*) FROM decisions d JOIN fills f ON f.bot_id = d.bot_id AND f.decided_at = "
+                         "d.ts WHERE d.action = 'hold'") == [(0,)]
+        for before, reason in query(db, "SELECT position_before, reason FROM decisions WHERE action = 'hold'"):
+            assert reason.startswith("the prediction of ") and reason.endswith(f"so the {before} is kept"), reason
+        ended = dict(query(db, KEPT_TRADES))
+        assert {"stop", "session_close", "signal", "gap_flatten", "session_flatten"} <= set(ended)
+
+
 FILL_COLUMNS = ("id, bot_id, trade_id, decided_at, filled_at, leg, side, qty, ref_mid, book_avg_price, price, "
                 "levels_consumed, slippage_bps, fee, latency_ms, status, reason, symbol, print_price, allowance_bps, "
                 "notional, sec_fee, taf_fee, print_after_due_ms")
@@ -683,6 +774,7 @@ def test_s1_and_s2_write_identical_rows_while_s2_reads_no_news(week):
                 "predictor"):
         first, second = (query(db, sql) for db in week.dbs)
         assert first and first == second, sql
+    assert query(week.dbs[0], "SELECT count(*) FROM decisions WHERE action = 'hold'")[0][0] > 100   # holds included
     # The news window is S2's alone, null in S1, which reads no news, and 0 in S2, which read none this week.
     assert query(week.dbs[0], "SELECT DISTINCT news_window FROM fills") == [(None,)]
     assert query(week.dbs[1], "SELECT DISTINCT news_window FROM fills") == [(0,)]

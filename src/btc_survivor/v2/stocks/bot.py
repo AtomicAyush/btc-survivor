@@ -1,10 +1,15 @@
 """One pooled stock learner by PLAN_V2 sections 4.7, 4.8, 5.4, 6.4 and 10.2, with the Warmup, Active and Dead states,
-its minute step and the version 1 decision rule.
+its minute step and the version 2 decision rule with the holding rule the owner approved on 13 October 2026.
 
 A learner predicts all eight symbols every usable minute in one forward pass, learns from every symbol, and trades only
 its home symbol, the one at position slot % 8 in config order, deciding at the session minutes where k % 30 equals
-slot % 30. Rent, the forced timer, training, predictions and decisions need a usable minute, price health plus news
-health, while marking, borrow, death and the stop need only the home symbol healthy. Opens, flips and forced opens are
+slot % 30. A flat learner opens only when its prediction clears the full required edge, the round trip cost plus the
+margin, or when the forced timer is due, exactly as the version 1 rule does. A learner holding a position has already
+paid its entry, and pays its exit whenever it leaves, so it keeps the position while the prediction still points the
+position's way by more than the cost of holding it over the next horizon, nothing for a long and the borrow for a
+short, flips only when the prediction points the other way by more than the full required edge of the new side, and
+otherwise closes. Rent, the forced timer, training, predictions and decisions need a usable minute, price health plus
+news health, while marking, borrow, death and the stop need only the home symbol healthy. Opens, flips and forced opens are
 allowed from session minute 30 to 35 minutes before the close, and the engine sends every open position a closing order
 from 5 minutes before the close. The margin and the stop are in label standard deviations of the symbol, and the stop
 is fixed at entry. The forced timer counts usable minutes from the first Active minute, started up to 180 minutes early
@@ -25,7 +30,7 @@ from btc_survivor.bot import ACTIVE, DEAD, POSITION_NAMES, WARMUP, decide
 from btc_survivor.model import MLP, AdamW
 from btc_survivor.seeds import bot_rng
 from btc_survivor.skill import RollingSkill
-from btc_survivor.types import LONG, SHORT, Leg
+from btc_survivor.types import FLAT, LONG, SHORT, Leg
 from btc_survivor.v2.config import SessionConfig, StockConfig
 from btc_survivor.v2.sessions import Session
 from btc_survivor.v2.stocks import costs
@@ -88,6 +93,46 @@ def opens_allowed(session: Session, session_minute: int, rules: SessionConfig) -
 def session_close_due(session: Session, session_minute: int, rules: SessionConfig) -> bool:
     """Whether open positions get their session_close order, from 15:55 ET, or 12:55 on an early close."""
     return session_minute >= session.minutes - rules.flatten_minutes_before_close
+
+
+def clears_edge(pred_bps: float, required_bps: float, allow_short: bool) -> bool:
+    """Whether the prediction clears the full required edge of the side it points to, the version 1 gate an open needs,
+    never for a prediction of exactly zero or a short with shorts disabled."""
+    return decide(FLAT, pred_bps, required_bps, allow_short, False)[1]
+
+
+def decide_v2(position: int, pred_bps: float, required_bps: float, hold_cost_bps: float, allow_short: bool,
+              forced: bool) -> tuple[str, bool, bool, str]:
+    """The version 2 decision rule with the holding rule, returning (action, whether the prediction cleared the full
+    required edge, forced exploration used, reason).
+
+    required_bps is the full required edge of the side the prediction points to, so against a held position it is the
+    edge of the flip, and hold_cost_bps is what the held position costs over the next horizon. A flat bot follows the
+    version 1 rule unchanged, forced exploration included. A held position is kept while the prediction points its way
+    by strictly more than the holding cost, flips when the prediction points the other way by strictly more than the
+    full edge of the new side, as the owner's rule of 13 October 2026 reads, and is closed otherwise. The gate result
+    stays the open gate of the side the prediction points to, so a prediction exactly at the edge clears it but closes
+    a held position rather than flipping it.
+    """
+    if position == FLAT:
+        action, gate, used_forced = decide(FLAT, pred_bps, required_bps, allow_short, forced)
+        return action, gate, used_forced, _reason(action, pred_bps, required_bps, gate, used_forced, allow_short)
+    gate = clears_edge(pred_bps, required_bps, allow_short)
+    held, new = POSITION_NAMES[position], POSITION_NAMES[-position]
+    said = f"the prediction of {pred_bps:.3f} bps"
+    if position * pred_bps > hold_cost_bps:
+        return "hold", gate, False, f"{said} still points {_way(position)}, {_past(position, hold_cost_bps)}, so the " \
+                                    f"{held} is kept"
+    if position * pred_bps < 0:
+        if position == LONG and not allow_short:
+            return "close", gate, False, f"{said} points down and shorts are disabled, so the long is closed"
+        edge = f"the required edge of {required_bps:.2f} bps for a {new}"
+        if abs(pred_bps) > required_bps:
+            return "flip", gate, False, f"{said} points {_way(-position)} by more than {edge}, so the {held} flips " \
+                                        f"to a {new}"
+        return "close", gate, False, f"{said} points {_way(-position)} but not by more than {edge}, so the {held} " \
+                                     f"is closed"
+    return "close", gate, False, f"{said} is not {_past(position, hold_cost_bps)}, so the {held} is closed"
 
 
 class StockBot:
@@ -238,8 +283,11 @@ class StockBot:
                                 self.cfg.time.horizon_minutes)
         margin = trading.margin_sigma * label_sd
         required = costs.required_edge_bps(trip.total_bps, trading.margin_sigma, label_sd)
+        hold_cost = 0.0 if position == FLAT else \
+            costs.holding_cost_bps(self.cfg.stock_costs, position, self.cfg.time.horizon_minutes)
         forced_due = self.state == ACTIVE and self.minutes_since_open >= self.force_minutes
-        action, gate, used_forced = decide(position, pred, required, trading.allow_short, forced_due)
+        action, gate, used_forced, reason = decide_v2(position, pred, required, hold_cost, trading.allow_short,
+                                                      forced_due)
         row = {"bot_id": self.bot_id, "ts": ctx.boundary_ms, "symbol": self.symbol,
                "position_before": POSITION_NAMES[position], "ref_mid": ref, "prediction_bps": pred,
                "required_edge_bps": required, "cost_estimate_bps": trip.total_bps, "margin_bps": margin,
@@ -250,7 +298,6 @@ class StockBot:
             return {**row, "reason": "stop loss fired this minute"}
         if self.pending_order is not None:
             return {**row, "reason": "an order is still pending"}
-        reason = _reason(action, pred, required, gate, used_forced, trading.allow_short)
         opens_short = action == "open_short" or (action == "flip" and position == LONG)
         if action in (*OPENS, "flip") and not opens_allowed(ctx.session, ctx.session_minute, self.cfg.session):
             action, used_forced, reason = ("close" if action == "flip" else "none"), False, SESSION_WINDOW
@@ -300,7 +347,18 @@ def _legs(action: str, position: int, ref: float, broker: StockBroker) -> list[L
     return []
 
 
+def _way(side: int) -> str:
+    return "up" if side == LONG else "down"
+
+
+def _past(side: int, hold_cost: float) -> str:
+    """Where a prediction must be to keep a position on side, strictly past its holding cost."""
+    return f"above the {hold_cost:.3f} bps holding cost" if side == LONG else \
+        f"below minus the {hold_cost:.3f} bps holding cost"
+
+
 def _reason(action: str, pred: float, required: float, gate: bool, forced: bool, short_ok: bool) -> str:
+    """The reason of a flat bot's decision, as in version 1."""
     if forced:
         return f"forced by the exploration timer, prediction {pred:.2f} bps"
     if pred < 0 and not short_ok:
