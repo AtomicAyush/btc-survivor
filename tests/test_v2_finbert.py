@@ -760,6 +760,8 @@ def test_the_environment_check_refuses_the_project_environment_and_other_version
     assert export_finbert.environment_problems(tmp_path, False, pins.get) == []
     inside = export_finbert.environment_problems(ROOT / ".venv-v2", True, pins.get)
     assert len(inside) == 2 and "inside the repository" in inside[0] and "project environment" in inside[1]
+    cpu = export_finbert.environment_problems(tmp_path, False, {**pins, "torch": pins["torch"] + "+cpu"}.get)
+    assert cpu == []
     other = export_finbert.environment_problems(tmp_path, False, {**pins, "torch": "2.13.0", "onnx": None}.get)
     assert other == ["torch is 2.13.0, the export needs torch==2.14.0", "onnx is not installed, the export needs "
                                                                         "onnx==1.23.0"]

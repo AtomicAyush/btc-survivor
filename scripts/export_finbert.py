@@ -172,7 +172,7 @@ def environment_problems(prefix: Path, project_importable: bool,
         problems.append("the btc_survivor package is importable here, so this is a project environment")
     for name, pinned in PINS.items():
         have = version(name)
-        if have != pinned:
+        if (have or "").split("+")[0] != pinned:  # a local build tag such as torch's +cpu is the same release
             problems.append(f"{name} is {have or 'not installed'}, the export needs {name}=={pinned}")
     return problems
 
