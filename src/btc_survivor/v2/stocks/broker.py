@@ -2,10 +2,13 @@
 restriction of section 5.3 and the split guard. Never kinder than reality, and never talks to a broker or exchange.
 
 A decision at B takes the home symbol's reference price at B. The order is due at B plus latency_ms plus a uniform
-jitter up to latency_jitter_ms from the bot's own generator, and fills at the first eligible print of its symbol
-received at or after the due time with vendor time at or after B, moved against the bot by the symbol's allowance. A
-flip fills both legs at one print, bots on one symbol share a print, and paper orders never move the market. Fees fall
-only on sales, and borrow accrues through the version 1 funding accrual.
+jitter up to latency_jitter_ms, drawn from a generator seeded by the master seed, the bot and B alone, so an order never
+moves the generator that draws a bot's training batches. It fills at the first eligible print of its symbol received
+at or after the due time whose vendor time is also at or after the due time, so a late report of a trade made before
+the order could reach the market never fills it, moved against the bot by the symbol's allowance. A fill records how
+long after the due time its print traded, for reports only. A flip fills both legs at one print, bots on one symbol
+share a print, and paper orders never move the market. Fees fall only on sales, and borrow accrues through the version
+1 funding accrual.
 """
 
 from __future__ import annotations
@@ -32,6 +35,8 @@ SYMBOL_STALE, DISCONNECTED, SESSION_CLOSED = "symbol_not_healthy", "disconnected
 NO_POSITION, ALREADY_OPEN, ZERO_QUANTITY = "no_position", "already_open", "zero_quantity"
 # The feed event kind written when the split guard starts.
 SPLIT_GUARD = "split_guard"
+# The seed tag of order jitter, after the bot, population and reconnect tags of version 1's seeds module.
+ORDER_JITTER = 4
 
 
 @dataclass(slots=True)
@@ -78,6 +83,7 @@ class StockFill:
     notional: float | None
     sec_fee: float | None
     taf_fee: float | None
+    print_after_due_ms: int | None = None  # report only, the print's vendor time minus the due time
 
     def stock_columns(self) -> dict[str, float | str | None]:
         """The columns a stock fill adds to the version 1 row, as keyword arguments for records.fill_row."""
@@ -107,11 +113,17 @@ def fill_prints(batch: PrintBatch, session: Session | None, rules: PriceRules,
 
 
 def first_fill(order: StockOrder, recv_ms: int, prints: Sequence[Print]) -> Print | None:
-    """The first print of the order's symbol with vendor time at or after the decision, when the batch was received
-    at or after the due time, exactly at due included."""
+    """The first print of the order's symbol traded at or after the due time, by vendor time, in a batch received at
+    or after the due time, exactly at due included both ways."""
     if recv_ms < order.due_ms:
         return None
-    return next((p for p in prints if p.symbol == order.symbol and p.vendor_ms >= order.decided_ms), None)
+    return next((p for p in prints if p.symbol == order.symbol and p.vendor_ms >= order.due_ms), None)
+
+
+def jitter_rng(master_seed: int, bot_id: int, decided_ms: int) -> np.random.Generator:
+    """The generator one order's latency jitter draws from, seeded by the master seed, the bot and the decision time,
+    so S1 and S2 give one order the same latency and no order ever moves another generator."""
+    return np.random.default_rng(np.random.SeedSequence([master_seed, ORDER_JITTER, bot_id, decided_ms]))
 
 
 def rejection(symbol_healthy: bool, connected: bool, session_open: bool) -> str | None:
@@ -155,16 +167,18 @@ class StockBroker:
 
     def make_order(self, bot_id: int, symbol: str, legs: list[Leg], decided_ms: int, ref_price: float, reason: str,
                    rng: np.random.Generator, forced: bool = False) -> StockOrder:
-        """Latency is latency_ms plus a jitter drawn uniformly from 0 to latency_jitter_ms with the bot's generator."""
+        """Latency is latency_ms plus a jitter drawn uniformly from 0 to latency_jitter_ms with rng, which a bot
+        builds for each order with jitter_rng."""
         jitter = int(rng.integers(0, self.costs.latency_jitter_ms + 1))
         return StockOrder(bot_id, symbol, legs, decided_ms, decided_ms + self.costs.latency_ms + jitter, ref_price,
                           reason, forced)
 
     def execute(self, order: StockOrder, fill: Print, now_ms: int, account: Account) -> StockExecution:
-        """Fill each leg in order at the one print. A rejected leg stops the order, keeping earlier legs."""
+        """Fill each leg in order at the one print, which must have traded at or after the due time. A rejected leg
+        stops the order, keeping earlier legs."""
         if now_ms < order.due_ms:
             raise ValueError("order is not due yet")
-        if fill.symbol != order.symbol or fill.vendor_ms < order.decided_ms:
+        if fill.symbol != order.symbol or fill.vendor_ms < order.due_ms:
             raise ValueError("the print cannot fill this order")
         result = StockExecution()
         has_open = any(leg.action == "open" for leg in order.legs)
@@ -198,6 +212,7 @@ class StockBroker:
                 price=price, levels=None, slippage_bps=slippage, fee=fee, latency_ms=order.latency_ms,
                 status="filled", reason=order.reason, symbol=order.symbol, print_price=fill.price,
                 allowance_bps=allowance, notional=qty * price, sec_fee=sale.sec, taf_fee=sale.taf,
+                print_after_due_ms=fill.vendor_ms - order.due_ms,
             ))
         return result
 

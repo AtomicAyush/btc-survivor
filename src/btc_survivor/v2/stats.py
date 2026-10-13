@@ -7,6 +7,20 @@ allows for the common market move at a minute and slow drift in the forecasts. A
 is left out and named. Beside t it gives the detectable correlation, (2.33 + 1.28) standard errors, and the one sided
 95 percent upper confidence bound, the correlation plus 1.645 standard errors, which a failed test is reported with.
 
+partial_skill is the incremental test H2 of section 11.5, run only after the confirmatory test passed. Within each
+symbol it residualises the prediction and the label on an intercept and the stored price z scores by least squares
+over the rows judged, and its correlation is the pooled correlation of the two residuals, judged with the same
+clustered error and z values. Its small sample correction takes the clustered error from the products of the news
+residual's z score and the label's own z score, each symbol's scaled by the label's standard deviation over its
+residual's, so their mean is still the partial correlation. In 40,000 synthetic null runs at 468 rows per symbol with
+10 exogenous persistent scores, at c of 0.2, 0.5 and 1.0, the uncorrected test rejected 1.4 to 1.6 percent with a mean
+squared t 6 to 8 percent above the raw test's on the same draws, and the corrected test 1.1 to 1.4 percent, as the raw
+test did, with the raw test's mean squared t. With scores built from the label's own past returns, as three of the
+ten are, the corrected test alone rejected 1.4 to 1.6 percent in a review's 20,000 runs per case, so H2 by itself is
+somewhat liberal. The claim rests on the fixed sequence instead, H1 and then H2, which rejected 0.8 to 0.9 percent of
+those null runs and 0.2 to 0.8 percent under seven momentum confounds, so its familywise error stays within one sided
+1 percent.
+
 pooled_dm treats squared errors the same way, dividing each row's difference by its symbol's label variance, and
 session_block_test compares paired trades through the version 1 block_test with one block per session. The lags and
 z values default to the [evaluation] section of PLAN_V2 section 15, and evaluate passes the ones stored in meta.
@@ -25,6 +39,9 @@ LAGS = 12  # evaluation minutes in one full session
 ONE_SIDED_Z = 2.33  # one sided 1 percent
 UPPER_BOUND_Z = 1.645  # one sided 95 percent
 MIN_MINUTES = 3  # fewer per minute values give no statistic, as in the version 1 skill_test
+# A residual whose square sum is at most this share of its column's centred square sum is the scores' own fit and
+# rounding, so its symbol is left out rather than judged on rounding noise.
+EXPLAINED = 1e-12
 
 
 @dataclass(frozen=True)
@@ -106,6 +123,18 @@ def clustered(values: np.ndarray, lags: int) -> tuple[float, float, float] | Non
     return mean, se, mean / se if se > 0 else 0.0
 
 
+def judged(rows: int, values: np.ndarray, used: tuple[str, ...], left_out: tuple[str, ...], lags: int,
+           one_sided_z: float, upper_bound_z: float) -> PooledSkill:
+    """The verdict of section 11.2 on per minute values whose mean is the correlation, with the bound and the
+    detectable correlation from their clustered error."""
+    result = clustered(values, lags)
+    if result is None:
+        return PooledSkill(rows, len(values), used, left_out, None, None, None, False, None, None)
+    corr, se, t = result
+    return PooledSkill(rows, len(values), used, left_out, corr, se, t, t > one_sided_z,
+                       (one_sided_z + POWER_90) * se, corr + upper_bound_z * se)
+
+
 def matrix_skill(pred: np.ndarray, label: np.ndarray, symbols: Sequence[str] | None = None, lags: int = LAGS,
                  one_sided_z: float = ONE_SIDED_Z, upper_bound_z: float = UPPER_BOUND_Z) -> PooledSkill:
     """Pooled skill from minute by symbol matrices with NaN for a missing row, the steps of section 11.2."""
@@ -116,12 +145,7 @@ def matrix_skill(pred: np.ndarray, label: np.ndarray, symbols: Sequence[str] | N
     left_out = tuple(names[j] for j in range(pred.shape[1]) if j not in keep and both[:, j].any())
     values = minute_means(zscores(pred[:, keep]) * zscores(label[:, keep]))
     rows, used = int(both[:, keep].sum()), tuple(names[j] for j in keep)
-    result = clustered(values, lags)
-    if result is None:
-        return PooledSkill(rows, len(values), used, left_out, None, None, None, False, None, None)
-    corr, se, t = result
-    return PooledSkill(rows, len(values), used, left_out, corr, se, t, t > one_sided_z,
-                       (one_sided_z + POWER_90) * se, corr + upper_bound_z * se)
+    return judged(rows, values, used, left_out, lags, one_sided_z, upper_bound_z)
 
 
 def pooled_skill(minute: Sequence[Hashable], symbol: Sequence[str], pred: Sequence[float], label: Sequence[float],
@@ -130,6 +154,56 @@ def pooled_skill(minute: Sequence[Hashable], symbol: Sequence[str], pred: Sequen
     """One predictor's rows in the window, one per evaluation minute and symbol, judged by section 11.2."""
     _, symbols, (p, y) = pivot(minute, symbol, pred, label)
     return matrix_skill(p, y, symbols, lags, one_sided_z, upper_bound_z)
+
+
+def residual(values: np.ndarray, controls: np.ndarray) -> np.ndarray | None:
+    """values minus their least squares fit on an intercept and the controls, one row each, or None when nothing is
+    left beyond the fit's rounding, so the controls explain the values."""
+    design = np.column_stack([np.ones(len(values)), controls])
+    beta, *_ = np.linalg.lstsq(design, values, rcond=None)
+    out = values - design @ beta
+    centred = values - values.mean()
+    return out if out @ out > EXPLAINED * (centred @ centred) else None
+
+
+def matrix_partial_skill(pred: np.ndarray, label: np.ndarray, controls: np.ndarray,
+                         symbols: Sequence[str] | None = None, lags: int = LAGS, one_sided_z: float = ONE_SIDED_Z,
+                         upper_bound_z: float = UPPER_BOUND_Z) -> PooledSkill:
+    """The incremental test from minute by symbol matrices and controls shaped minutes by symbols by scores, a row
+    counting only with every control present. A symbol is left out when its prediction or label never varies, the
+    scores explain either, or it has fewer than two rows beyond its fit's coefficients."""
+    names = tuple(symbols) if symbols is not None else tuple(str(j) for j in range(pred.shape[1]))
+    both = ~np.isnan(pred) & ~np.isnan(label) & np.isfinite(controls).all(axis=2)
+    products = np.full(pred.shape, np.nan)
+    keep = []
+    for j in range(pred.shape[1]):
+        rows = both[:, j]
+        p, y, x = pred[rows, j], label[rows, j], controls[rows, j]
+        if not (varies(p) and varies(y)) or rows.sum() <= x.shape[1] + 2:
+            continue
+        p_resid, y_resid = residual(p, x), residual(y, x)
+        if p_resid is None or y_resid is None:
+            continue
+        scale = y.std() / y_resid.std()
+        products[rows, j] = scale * (p_resid - p_resid.mean()) / p_resid.std() * (y - y.mean()) / y.std()
+        keep.append(j)
+    left_out = tuple(names[j] for j in range(pred.shape[1]) if j not in keep and both[:, j].any())
+    values = minute_means(products[:, keep])
+    rows, used = int(both[:, keep].sum()), tuple(names[j] for j in keep)
+    return judged(rows, values, used, left_out, lags, one_sided_z, upper_bound_z)
+
+
+def partial_skill(minute: Sequence[Hashable], symbol: Sequence[str], pred: Sequence[float], label: Sequence[float],
+                  controls: Sequence[Sequence[float]], lags: int = LAGS, one_sided_z: float = ONE_SIDED_Z,
+                  upper_bound_z: float = UPPER_BOUND_Z) -> PooledSkill:
+    """The incremental test on rows, each with its price z scores in controls, every row with the same number."""
+    if len(minute) == 0:
+        return judged(0, np.array([]), (), (), lags, one_sided_z, upper_bound_z)
+    scores = np.asarray(controls, dtype=float)
+    if scores.ndim != 2 or scores.shape[0] != len(minute):
+        raise ValueError("controls need one row of scores per row, every row with the same number")
+    _, symbols, (p, y, *x) = pivot(minute, symbol, pred, label, *scores.T)
+    return matrix_partial_skill(p, y, np.stack(x, axis=2), symbols, lags, one_sided_z, upper_bound_z)
 
 
 def pooled_dm(minute: Sequence[Hashable], symbol: Sequence[str], pred_a: Sequence[float], pred_b: Sequence[float],

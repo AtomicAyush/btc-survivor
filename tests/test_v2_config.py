@@ -122,7 +122,12 @@ def test_owner_decisions_are_in_the_news_config():
     assert not [f.name for f in dataclasses.fields(cfg.llm.caps) if "daily" in f.name and f.name != "daily_alert_share"]
     assert cfg.finnhub.send_to_llm is True
     assert (cfg.llm.model, cfg.llm.effort, cfg.llm.thinking) == (HAIKU_MODEL, "low", "disabled")
-    assert (cfg.llm.sonnet.model, cfg.llm.sonnet.effort, cfg.llm.sonnet.thinking) == (SONNET_MODEL, "low", "disabled")
+    assert (cfg.llm.sonnet.model, cfg.llm.sonnet.effort) == (SONNET_MODEL, "low")
+    # Disabled stays the default with Sonnet off until one live call chooses a setting, disabled included should
+    # Sonnet accept it, and the chosen setting carries the room section 8.1 names for it.
+    room = {"disabled": 0, "between_tools": 1024, "adaptive": 4096}
+    assert (cfg.llm.sonnet.max_tokens, cfg.llm.sonnet.thinking_tokens) == (1024, room[cfg.llm.sonnet.thinking])
+    assert cfg.llm.sonnet.enabled or cfg.llm.sonnet.thinking == "disabled"
     assert cfg.llm.sonnet.kinds == OFFICIAL_KINDS and cfg.llm.sonnet.cache_control is False
     assert set(re.findall(r"claude-[a-z0-9-]+", NEWS.read_text(encoding="utf-8"))) == {HAIKU_MODEL, SONNET_MODEL}
 
@@ -272,6 +277,8 @@ STOCK_CASES = [
      "history_session_minutes must be at least 391"),
     ("capacity below history", _set("features", "series_capacity_minutes", 300),
      "series_capacity_minutes must be at least [time] history_session_minutes"),
+    ("capacity below the series minimum", _set("features", "series_capacity_minutes", 400),
+     "series_capacity_minutes = 400 must be at least 420, the least a stock series holds"),
     ("notional above equity", _set("trading", "notional", 20000.0), "notional must not exceed start_equity"),
 ]
 
@@ -302,7 +309,7 @@ def test_s2_config_rejects(name, change, message):
 @pytest.mark.parametrize("change", [
     _set("session", "first_open_session_minute", 175),
     _many(_set("time", "horizon_minutes", 175), _set("session", "first_open_session_minute", 30)),
-    _set("stock_feed", "symbol_stale_after_seconds", 5),
+    _many(_set("stock_feed", "feed_stale_after_seconds", 60), _set("stock_feed", "symbol_stale_after_seconds", 60)),
     _many(_set("stock_feed", "max_print_delay_seconds", 5.0), _set("stock_feed", "late_print_seconds", 10.0)),
     _many(_set("stock_feed", "max_print_delay_seconds", 3), _set("stock_feed", "late_print_seconds", 6)),
     _set("persistence", "keep_candles_days", 120),
@@ -334,7 +341,9 @@ def test_pair_refuses_swapped_runs():
 
 def test_pair_refuses_any_other_difference():
     s1 = load_stock_config(S1)
-    for section, key, value in [("model", "hidden_units", 32), ("stock_feed", "symbol_stale_after_seconds", 20),
+    # S1's own symbol threshold plus 30 seconds stays valid whatever the measured thresholds are.
+    other_stale = s1.stock_feed.symbol_stale_after_seconds + 30
+    for section, key, value in [("model", "hidden_units", 32), ("stock_feed", "symbol_stale_after_seconds", other_stale),
                                 ("run", "log_level", "DEBUG"), ("run", "master_seed", 1),
                                 ("trading", "margin_sigma", 0.5), ("news_input", "half_life_session_minutes", 60)]:
         s2 = stock(changed(S2, _set(section, key, value)))
@@ -395,7 +404,16 @@ NEWS_CASES = [
     ("haiku effort", _set("llm", "effort", "high"), "[llm] effort = 'high': must be 'low'"),
     ("haiku thinking", _set("llm", "thinking", "enabled"), "[llm] thinking = 'enabled': must be 'disabled'"),
     ("sonnet effort", _set("llm.sonnet", "effort", "medium"), "[llm.sonnet] effort = 'medium': must be 'low'"),
-    ("sonnet thinking", _set("llm.sonnet", "thinking", "adaptive"), "must be 'disabled'"),
+    ("sonnet thinking", _set("llm.sonnet", "thinking", "enabled"), "must be one of disabled, between_tools, adaptive"),
+    ("sonnet thinking room while disabled", _many(_set("llm.sonnet", "thinking", "disabled"),
+                                                  _set("llm.sonnet", "thinking_tokens", 1024)),
+     "thinking_tokens must be 0 while thinking is disabled"),
+    ("sonnet adaptive without room", _many(_set("llm.sonnet", "thinking", "adaptive"),
+                                           _set("llm.sonnet", "thinking_tokens", 0)), "at least 1 otherwise"),
+    ("sonnet between tools without room", _many(_set("llm.sonnet", "thinking", "between_tools"),
+                                                _set("llm.sonnet", "thinking_tokens", 0)), "at least 1 otherwise"),
+    ("sonnet room too large", _many(_set("llm.sonnet", "thinking", "adaptive"),
+                                    _set("llm.sonnet", "thinking_tokens", 63000)), "must not exceed 64000"),
     ("same scorer names", _set("llm.sonnet", "scorer_name", "haiku_v1"), "scorer_name must differ"),
     ("send_to_llm type", _set("finnhub", "send_to_llm", "yes"), "[finnhub] send_to_llm = 'yes': expected true"),
     ("universe duplicate", _set("news", "universe", ["AAPL", "AAPL"]), "lists a value twice"),
@@ -501,3 +519,10 @@ def test_news_config_hash_is_stable_and_covers_every_section():
                    _set("fed", "press_poll_seconds", 30), _set("bls", "poll_seconds", 900),
                    _set("llm", "prompt_sha256", "0" * 64)]:
         assert news(changed(NEWS, change)).config_hash != committed.config_hash
+
+
+def test_the_series_capacity_check_matches_the_least_a_stock_series_holds():
+    from btc_survivor.v2.config import MIN_SERIES_CAPACITY
+    from btc_survivor.v2.stocks.series import MIN_CAPACITY
+    assert MIN_SERIES_CAPACITY == MIN_CAPACITY == 420
+    stock(changed(S1, _set("features", "series_capacity_minutes", MIN_CAPACITY)))

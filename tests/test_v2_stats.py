@@ -197,3 +197,99 @@ def test_session_blocks_by_hand():
 def test_symbol_slopes_by_hand():
     slopes = symbol_slopes(["AAPL"] * 3 + ["MSFT"] * 3, [1, 2, 3, 5, 5, 5], [2, 4, 6, 1, 2, 3])
     assert slopes == {"AAPL": pytest.approx(2.0), "MSFT": None}
+
+
+# The incremental test H2 of section 11.5
+
+
+def ar(rng, shape, phis):
+    """Unit variance AR(1) processes along axis 1 with persistence phis."""
+    x = np.empty(shape)
+    x[:, 0] = rng.normal(size=(shape[0],) + shape[2:])
+    step = rng.normal(size=shape) * np.sqrt(1 - np.asarray(phis) ** 2)
+    for t in range(1, shape[1]):
+        x[:, t] = phis * x[:, t - 1] + step[:, t]
+    return x
+
+
+def persistent_draws(rng, runs, minutes, c=0.5, phi=0.85):
+    """Persistent predictions with pairwise correlation c, labels with the market factor of section 11.2 and 10
+    price scores per symbol with persistence from 0 to 0.9, 45 percent of it common to the symbols."""
+    pred = math.sqrt(c) * ar(rng, (runs, minutes, 1), phi) + math.sqrt(1 - c) * ar(rng, (runs, minutes, 8), phi)
+    label = (np.sqrt(MARKET_SHARE) * rng.normal(size=(runs, minutes, 1))
+             + np.sqrt(1 - MARKET_SHARE) * rng.normal(size=(runs, minutes, 8)))
+    phis = np.linspace(0, 0.9, 10)
+    scores = math.sqrt(0.45) * ar(rng, (runs, minutes, 1, 10), phis) + math.sqrt(0.55) * ar(rng, (runs, minutes, 8,
+                                                                                                    10), phis)
+    return pred, label, scores
+
+
+def residuals(matrix, scores):
+    return np.column_stack([stats.residual(matrix[:, j], scores[:, j]) for j in range(matrix.shape[1])])
+
+
+def test_h2_is_the_pooled_partial_correlation_with_the_label_s_own_products_in_its_error():
+    rng = np.random.default_rng(12)
+    pred, label, scores = persistent_draws(rng, 1, 120)
+    pred, label, scores = pred[0], 0.3 * pred[0] + label[0], scores[0]
+    result = stats.matrix_partial_skill(pred, label, scores, SYMBOLS)
+    rp, ry = residuals(pred, scores), residuals(label, scores)
+    partial = [np.corrcoef(rp[:, j], ry[:, j])[0, 1] for j in range(8)]
+    assert result.corr == pytest.approx(np.mean(partial), abs=1e-12)
+    assert result.rows == 960 and result.minutes == 120 and result.left_out == ()
+    # Each row's product uses the label's own z score, scaled so the symbol's mean is still its partial correlation.
+    scale = label.std(axis=0) / ry.std(axis=0)
+    u = scale * stats.zscores(rp) * stats.zscores(label)
+    assert result.se == pytest.approx(newey_west_se(u.mean(axis=1), 12))
+    assert result.t == pytest.approx(result.corr / result.se) and result.passed
+    # With one symbol the scale cancels, so t is the residualised prediction's t against the label itself.
+    one = stats.matrix_partial_skill(pred[:, :1], label[:, :1], scores[:, :1])
+    assert one.t == pytest.approx(matrix_skill(rp[:, :1], label[:, :1]).t)
+    m, s, p, y = rows_of(range(120), SYMBOLS, pred, label)
+    controls = [scores[i, SYMBOLS.index(sym)] for i, sym in zip(m, s)]
+    order = np.random.default_rng(1).permutation(len(m))
+    shuffled = stats.partial_skill(*([column[i] for i in order] for column in (m, s, p, y, controls)))
+    assert (shuffled.rows, shuffled.minutes, shuffled.left_out, shuffled.symbols) == (960, 120, (),
+                                                                                       tuple(sorted(SYMBOLS)))
+    assert (shuffled.corr, shuffled.se, shuffled.t) == pytest.approx((result.corr, result.se, result.t), rel=1e-12)
+
+
+def test_h2_leaves_out_symbols_the_scores_explain_or_with_too_few_rows_and_drops_rows_missing_a_score():
+    rng = np.random.default_rng(13)
+    pred, label, scores = persistent_draws(rng, 1, 60)
+    pred, label, scores = pred[0], label[0], scores[0]
+    scores[:, 1, 0] = pred[:, 1]  # MSFT's prediction is its first price score
+    pred[12:, 2], label[12:, 2] = np.nan, np.nan  # NVDA has 12 rows, one beyond its 11 coefficients
+    scores[5, 3, 4] = np.nan  # AMZN loses one row
+    result = stats.matrix_partial_skill(pred, label, scores, SYMBOLS)
+    assert result.left_out == ("MSFT", "NVDA")
+    assert result.symbols == tuple(s for s in SYMBOLS if s not in result.left_out)
+    assert result.rows == 6 * 60 - 1
+    pred[:, 2], label[:, 2] = pred[:, 3], label[:, 3]
+    pred[13:, 2], label[13:, 2] = np.nan, np.nan  # with 13 rows, two beyond, NVDA is judged
+    assert "NVDA" in stats.matrix_partial_skill(pred, label, scores, SYMBOLS).symbols
+
+
+def test_h2_on_no_rows_gives_no_statistic_and_refuses_ragged_scores():
+    empty = stats.partial_skill([], [], [], [], [])
+    assert empty.rows == 0 and empty.corr is None and not empty.passed
+    with pytest.raises(ValueError, match="one row of scores per row"):
+        stats.partial_skill([1, 2], ["AAPL", "AAPL"], [1.0, 2.0], [1.0, 2.0], [[0.1, 0.2]])
+    with pytest.raises(ValueError, match="finite"):
+        stats.partial_skill([1, 2, 3], ["AAPL"] * 3, [1, 2, 3], [1, 2, 3], [[0.1], [float("nan")], [0.3]])
+
+
+def test_the_small_sample_correction_brings_h2_to_h1_s_mean_squared_t_with_exogenous_persistent_scores():
+    # With exogenous persistent scores the uncorrected test's mean squared t sits about 0.08 above H1's on the same
+    # draws and the corrected one's on it. Scores built from the label's own past make H2 alone somewhat liberal, so
+    # the familywise level rests on the fixed sequence, which test_v2_power_script checks.
+    rng = np.random.default_rng(14)
+    pred, label, scores = persistent_draws(rng, 1000, 468)
+    h1, h2, uncorrected = [], [], []
+    for p, y, x in zip(pred, label, scores):
+        h1.append(matrix_skill(p, y).t ** 2)
+        h2.append(stats.matrix_partial_skill(p, y, x).t)
+        uncorrected.append(matrix_skill(residuals(p, x), residuals(y, x)).t ** 2)
+    assert 0.003 <= np.mean(np.array(h2) > 2.33) <= 0.025
+    assert abs(np.mean(np.square(h2)) - np.mean(h1)) < 0.04
+    assert np.mean(uncorrected) - np.mean(h1) > 0.04

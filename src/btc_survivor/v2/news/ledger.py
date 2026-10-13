@@ -6,7 +6,8 @@ the UTC month's spend plus its reservation stays at or under monthly_usd. Spend 
 returned usage and the reservation of every other call, whether running, failed after sending or lost. There is no
 daily cap of any kind, only an alert once a UTC day's spend passes daily_alert_share of the monthly cap, which stops
 nothing. Dollars are worked out exactly and rounded once, and spend is an exactly rounded sum, so no rounding step lets
-a cost pass its reservation or the spend pass the cap.
+a cost pass its reservation or the spend pass the cap. Thinking tokens bill as output and count toward max_tokens, so a
+reservation already prices them with the rest of max_tokens, and a cost books them as output.
 """
 
 from __future__ import annotations
@@ -74,12 +75,20 @@ class Rates:
 
 @dataclass(frozen=True)
 class Usage:
-    """The token counts a response reports."""
+    """The token counts a response reports. thinking_tokens is the part of the output spent on thinking, which the API
+    reports inside output_tokens."""
 
     input_tokens: int
     output_tokens: int
     cache_creation_input_tokens: int = 0
     cache_read_input_tokens: int = 0
+    thinking_tokens: int = 0
+
+    @property
+    def billed_output_tokens(self) -> int:
+        """The output tokens a cost books, output_tokens, which includes thinking, or the thinking count should a
+        response ever report it larger."""
+        return max(self.output_tokens, self.thinking_tokens)
 
 
 def _dollars(terms: Iterable[tuple[int, float, float]]) -> float:
@@ -98,14 +107,16 @@ def reserve_usd(rates: Rates, counted: int, max_tokens: int) -> float:
 
 
 def cost_usd(rates: Rates, usage: Usage) -> float:
-    """What a call cost from the usage it reported, cache writes and reads at their multipliers."""
-    counts = (usage.input_tokens, usage.output_tokens, usage.cache_creation_input_tokens, usage.cache_read_input_tokens)
+    """What a call cost from the usage it reported, cache writes and reads at their multipliers and thinking as
+    output."""
+    counts = (usage.input_tokens, usage.output_tokens, usage.cache_creation_input_tokens, usage.cache_read_input_tokens,
+              usage.thinking_tokens)
     if min(counts) < 0:
         raise ValueError("token counts are never negative")
     return _dollars([(usage.input_tokens, rates.in_rate, 1.0),
                      (usage.cache_creation_input_tokens, rates.in_rate, rates.write),
                      (usage.cache_read_input_tokens, rates.in_rate, rates.read),
-                     (usage.output_tokens, rates.out_rate, 1.0)])
+                     (usage.billed_output_tokens, rates.out_rate, 1.0)])
 
 
 def request_bytes(request: Mapping[str, Any]) -> int:

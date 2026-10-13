@@ -155,8 +155,8 @@ def test_a_restored_group_equals_its_saved_copy_and_continues_with_exactly_the_s
     stores = [StockStore.open(cfg.db_path) for cfg in restored_cfgs]
     from_checkpoint = StockGroup(*checkpoint.load(restored_cfgs, stores), adapter(), RESTART)
     # Before the resume only what a resume rebuilds differs, the candles, price health apart from its epochs, the
-    # heartbeat clock and the Roll accumulators.
-    rebuilt = {"candles", "health", "rolls", "restarted", "_beats", "_beat_ms", "_channels"}
+    # heartbeat lines and the Roll accumulators.
+    rebuilt = {"candles", "health", "rolls", "restarted", "_beats", "_beat", "_channels"}
     found = differences(from_copy.market, from_checkpoint.market)
     assert found and {re.match(r"\.(\w+)", d).group(1) for d in found} <= rebuilt
     assert [h.epoch for h in from_copy.market.health.symbols.values()] == \

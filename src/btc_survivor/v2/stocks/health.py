@@ -402,18 +402,21 @@ class Heartbeat(NamedTuple):
     hashes_match: bool
 
 
-def news_minute(boundary_ms: int, previous_ms: int | None, lines: Sequence[Heartbeat], max_age_ms: int) -> str | None:
-    """Why the minute ending at boundary_ms is not news healthy, or None when it is. previous_ms stamps the newest line
-    before the minute and lines are those received in it in order, the newest of which must never be more than
-    max_age_ms old during the minute, each saying healthy with the launch hashes."""
+def news_minute(boundary_ms: int, previous: Heartbeat | None, lines: Sequence[Heartbeat],
+                max_age_ms: int) -> str | None:
+    """Why the minute ending at boundary_ms is not news healthy, or None when it is. previous is the newest line before
+    the minute, still in force at its start, and lines are those received in it in order. The newest line must never be
+    more than max_age_ms old during the minute, and the line in force at the start and every line in it must say
+    healthy with the launch hashes, so a minute with no line after an unhealthy one stays unhealthy."""
     stamps = [line.recv_ms for line in lines]
-    if previous_ms is None and (not stamps or stamps[0] > boundary_ms - MS_PER_MINUTE):
+    if previous is None and (not stamps or stamps[0] > boundary_ms - MS_PER_MINUTE):
         return NO_HEARTBEAT
-    points = ([] if previous_ms is None else [previous_ms]) + stamps + [boundary_ms]
+    judged = ([] if previous is None else [previous]) + list(lines)
+    points = [line.recv_ms for line in judged] + [boundary_ms]
     if any(later - earlier > max_age_ms for earlier, later in pairwise(points)):
         return OLD_HEARTBEAT
-    if not all(line.hashes_match for line in lines):
+    if not all(line.hashes_match for line in judged):
         return HASH_MISMATCH
-    if not all(line.healthy for line in lines):
+    if not all(line.healthy for line in judged):
         return UNHEALTHY_HEARTBEAT
     return None

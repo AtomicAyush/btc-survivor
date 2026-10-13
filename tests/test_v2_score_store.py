@@ -11,9 +11,10 @@ import pytest
 from btc_survivor.clock import iso
 from btc_survivor.v2.news import db
 from btc_survivor.v2.news.llm_validate import Impact
+from btc_survivor.v2.news.llm_validate import CONFIDENCES, DIRECTIONS, HORIZONS, SURPRISES
 from btc_survivor.v2.news.score_store import (
-    EXPIRED, FAILED, FINAL, IRRELEVANT, MALFORMED, SCORED, SKIPPED_CAP, SKIPPED_OFF, Final, ScoreStoreError,
-    call_recorded, has_final, impact_row, strength, write_call, write_finals)
+    EXPIRED, FAILED, FINAL, HORIZON_WEIGHTS, IRRELEVANT, MALFORMED, SCORED, SKIPPED_CAP, SKIPPED_OFF, Final,
+    ScoreStoreError, call_recorded, has_final, impact_row, strength, write_call, write_finals)
 
 NOW = 1_792_000_000_000
 HAIKU, SONNET = "haiku_v1", "sonnet_v1"
@@ -112,11 +113,27 @@ def test_rows_the_rules_forbid_are_refused(conn, final, reason):
     assert rows(conn, "item_scores") == []
 
 
-def test_a_model_strength_is_direction_times_confidence_over_five(conn):
-    assert [strength(1, 4), strength(-1, 5), strength(0, 3), strength(-1, 1)] == [0.8, -1.0, 0.0, -0.2]
-    assert impact_row(7, HAIKU, DOWN) == {"item_seq": 7, "scorer": HAIKU, "ticker": "MACRO", "strength": -1.0,
+def test_a_model_strength_folds_horizon_and_surprise_into_direction_times_confidence_over_five(conn):
+    # direction * confidence / 5 * H[horizon] * (2 + surprise) / 5, with H = minutes 0.25, hours 1 and days 0.5.
+    assert HORIZON_WEIGHTS == {"minutes": 0.25, "hours": 1.0, "days": 0.5} and set(HORIZON_WEIGHTS) == set(HORIZONS)
+    assert strength(1, 5, "hours", 3) == 1.0 and strength(-1, 5, "hours", 3) == -1.0
+    assert strength(1, 5, "hours", 0) == 0.4                       # a routine item at full confidence
+    assert strength(1, 4, "days", 1) == 0.24 and strength(-1, 5, "hours", 2) == -0.8
+    assert strength(1, 3, "minutes", 1) == 0.09 and strength(-1, 1, "minutes", 0) == -0.02
+    assert strength(0, 5, "hours", 3) == 0.0
+    assert impact_row(7, HAIKU, DOWN) == {"item_seq": 7, "scorer": HAIKU, "ticker": "MACRO", "strength": -0.8,
                                          "direction": -1, "surprise": 2, "event_type": "macro_data",
                                          "confidence": 5, "horizon": "hours", "is_new": 1}
+
+
+def test_every_strength_lies_between_minus_one_and_one_with_the_sign_of_its_direction():
+    for d in DIRECTIONS:
+        for c in CONFIDENCES:
+            for h in HORIZONS:
+                for s in SURPRISES:
+                    value = strength(d, c, h, s)
+                    assert -1.0 <= value <= 1.0 and (value > 0) - (value < 0) == d
+                    assert value == pytest.approx(d * (c / 5) * HORIZON_WEIGHTS[h] * (2 + s) / 5, abs=1e-15)
 
 
 def test_a_call_is_written_once_with_its_items_finals_probe_rows_and_state_in_one_transaction(conn):
@@ -133,8 +150,8 @@ def test_a_call_is_written_once_with_its_items_finals_probe_rows_and_state_in_on
     assert set(scores) == {seqs[0], seqs[2]}
     assert {r["call_id"] for r in scores.values()} == {call_id}
     assert {r["scored_at"] for r in scores.values()} == {iso(NOW + 900)}
-    assert sorted((r["ticker"], r["strength"]) for r in rows(conn, "score_impacts")) == [("AAPL", 0.8),
-                                                                                          ("MACRO", -1.0)]
+    assert sorted((r["ticker"], r["strength"]) for r in rows(conn, "score_impacts")) == [("AAPL", 0.24),
+                                                                                          ("MACRO", -0.8)]
     assert [r["call_id"] for r in rows(conn, "llm_probes")] == [call_id]
     assert db.get_value(conn, "scorer_state", "haiku_call") == ""
     assert call_recorded(conn, 1) and not call_recorded(conn, 2)

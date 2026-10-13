@@ -20,6 +20,17 @@ cp config.example.toml config.toml
 
 Every setting is explained in [config.example.toml](config.example.toml).
 
+## Version 2
+
+Version 2 adds seven large US technology stocks and the QQQ fund, priced from Finnhub's free websocket, and news scored by language models, and asks one question before launch, whether scored news predicts the next 30 minute return. It lives on the `feat/v2-stocks` branch in its own worktree with the console script `btc_survivor_v2` and its own environments, and leaves version 1 and its runs untouched. Every command prints counts and verdicts by default and rows only with `--detail`, and every dashboard stays on `127.0.0.1`. The design and every decision behind it are in [PLAN_V2.md](PLAN_V2.md), and these guides explain it.
+
+* [v2_overview.md](docs/v2_overview.md) explains what version 2 does and why, from prices and news to the confirmatory test.
+* [v2_data_and_licensing.md](docs/v2_data_and_licensing.md) covers the data sources, the cost and fill model, shorts, margin, secrets and licensing.
+* [v2_news.md](docs/v2_news.md) covers news collection, the model and FinBERT scoring, spend controls and the score streams.
+* [v2_evaluation.md](docs/v2_evaluation.md) covers the `evaluate` command, the criteria, the outcomes, power, the planted news check and the learning rate.
+* [v2_operations.md](docs/v2_operations.md) covers running the processes, the coverage report and stale thresholds, the rehearsal, the soak and the secret scan.
+* [RESULTS_V2_TEMPLATE.md](docs/RESULTS_V2_TEMPLATE.md) is the empty template the results are written into after the window.
+
 ## License
 
 BTC Survivor is released under the [MIT License](LICENSE).

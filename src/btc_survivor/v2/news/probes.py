@@ -1,10 +1,11 @@
-"""The daily probe of PLAN_V2 section 8.8, the 20 fictional items of probes_v1.json sent to Haiku as one call.
+"""The daily probe of PLAN_V2 section 8.8, the 20 fictional items of probes_v2.json sent to Haiku as one call.
 
-The file also holds a written answer key, the tickers, event types, novelty and directions a careful reader would give
-each item, for judging the first live calls by hand. Sonnet runs no probe. Results go only to llm_probes, one row per
-impact plus an empty ticker row for a valid answer that names no instrument, so a probe answered with no impacts
-differs from one that failed. Agreement between two runs, or between a run and the key, is counted field by field
-over the probes both answered, and changes nothing automatically.
+The file also holds a written answer key, the tickers, event types, novelty, directions, surprise and horizons a careful
+reader would give each item under prompt_v2, every field of a strength but the confidence, for judging the first live
+calls by hand. Sonnet runs no probe. Results go only to llm_probes, one row per impact plus an empty ticker row for a
+valid answer that names no instrument, so a probe answered with no impacts differs from one that failed. Agreement
+between two runs, or between a run and the key, is counted field by field over the probes both answered, and changes
+nothing automatically.
 """
 
 from __future__ import annotations
@@ -18,13 +19,13 @@ from btc_survivor.clock import MS_PER_DAY, MS_PER_HOUR, MS_PER_MINUTE, parse_iso
 from btc_survivor.v2.config import NEWS_KINDS, LlmConfig
 from btc_survivor.v2.news import llm_request
 from btc_survivor.v2.news.llm_request import Request, RequestItem
-from btc_survivor.v2.news.llm_validate import DIRECTIONS, EVENT_TYPES, TICKERS, Validation
+from btc_survivor.v2.news.llm_validate import DIRECTIONS, EVENT_TYPES, HORIZONS, SURPRISES, TICKERS, Validation
 
-PROBE_FILE = "probes_v1.json"
+PROBE_FILE = "probes_v2.json"
 PROBE_COUNT = 20
 NO_IMPACT = ""
 FIELDS = ("event_type", "is_new", "direction", "surprise", "horizon", "confidence")
-KEY_FIELDS = ("event_type", "is_new", "direction")
+KEY_FIELDS = ("event_type", "is_new", "direction", "surprise", "horizon")
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,8 @@ class KeyImpact:
     event_type: str
     is_new: bool
     direction: int
+    surprise: int
+    horizon: str
 
 
 @dataclass(frozen=True)
@@ -49,10 +52,13 @@ class Probe:
 
 
 def _key_impact(probe_id: str, raw: Mapping[str, Any]) -> KeyImpact:
-    """One key impact, refused unless every field is a level the schema allows."""
-    impact = KeyImpact(raw["ticker"], raw["event_type"], raw["is_new"], raw["direction"])
+    """One key impact, refused unless every field is present and a level the schema allows."""
+    impact = KeyImpact(*(raw.get(name) for name in ("ticker", "event_type", "is_new", "direction", "surprise",
+                                                     "horizon")))
     if (impact.ticker not in TICKERS or impact.event_type not in EVENT_TYPES or type(impact.is_new) is not bool
-            or type(impact.direction) is not int or impact.direction not in DIRECTIONS):
+            or type(impact.direction) is not int or impact.direction not in DIRECTIONS
+            or type(impact.surprise) is not int or impact.surprise not in SURPRISES
+            or impact.horizon not in HORIZONS):
         raise ValueError(f"probe {probe_id} has a key impact outside the schema")
     return impact
 
@@ -112,7 +118,8 @@ def key_rows(probes: Sequence[Probe]) -> list[dict[str, Any]]:
         if not probe.key:
             rows.append({"probe_id": probe.probe_id, "ticker": NO_IMPACT, **dict.fromkeys(KEY_FIELDS)})
         rows.extend({"probe_id": probe.probe_id, "ticker": k.ticker, "event_type": k.event_type,
-                     "is_new": int(k.is_new), "direction": k.direction} for k in probe.key)
+                     "is_new": int(k.is_new), "direction": k.direction, "surprise": k.surprise,
+                     "horizon": k.horizon} for k in probe.key)
     return rows
 
 

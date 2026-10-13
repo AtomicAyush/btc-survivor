@@ -179,24 +179,38 @@ def test_a_news_outage_pauses_rent_training_predictions_and_decisions():
     assert bot.account.rent == pytest.approx(costs.rent_per_minute(CFG.stock_costs))
 
 
-def test_required_edge_is_round_trip_plus_a_quarter_label_sd_and_gates_the_decision():
+def test_with_no_margin_the_required_edge_is_the_round_trip_and_gates_the_decision():
+    # margin_sigma is 0, so a learner opens on its own whenever its prediction clears the round trip cost.
+    assert CFG.trading.margin_sigma == 0.0
     b = broker()
     m = phase(0)
     trip = costs.round_trip(CFG.stock_costs, "AAPL", LONG, 2.0, 250.0, 30).total_bps
-    required = trip + 0.25 * SD
-    assert required == pytest.approx(4.6 + 10.0, abs=1e-6)
-    below = active(output=(required - 0.01) / SD)
+    assert trip == pytest.approx(4.6, abs=1e-6)
+    below = active(output=(trip - 0.01) / SD)
     row = below.step(minute(DAY, m), b).decision
-    assert row["required_edge_bps"] == pytest.approx(required) and row["margin_bps"] == pytest.approx(10.0)
+    assert row["required_edge_bps"] == pytest.approx(trip) and row["margin_bps"] == 0.0
     assert row["cost_estimate_bps"] == pytest.approx(trip) and row["gate_passed"] == 0 and row["action"] == "none"
-    above = active(output=(required + 0.01) / SD)
+    above = active(output=(trip + 0.01) / SD)
     row = above.step(minute(DAY, m), b).decision
-    assert row["gate_passed"] == 1 and row["action"] == "open_long"
-    short = active(output=-(required + 1.0) / SD)
+    assert row["gate_passed"] == 1 and row["forced"] == 0 and row["action"] == "open_long"
+    short = active(output=-(trip + 1.0) / SD)
     row = short.step(minute(DAY, m), b).decision
     short_trip = costs.round_trip(CFG.stock_costs, "AAPL", SHORT, 2.0, 250.0, 30).total_bps
     assert row["action"] == "open_short" and row["cost_estimate_bps"] == pytest.approx(short_trip)
+    assert row["required_edge_bps"] == pytest.approx(short_trip)
     assert short.pending_order.legs[0].qty == 2.0
+
+
+def test_a_margin_adds_margin_sigma_label_standard_deviations_to_the_required_edge():
+    cfg = dataclasses.replace(CFG, trading=dataclasses.replace(CFG.trading, margin_sigma=0.25))
+    m = phase(0)
+    trip = costs.round_trip(cfg.stock_costs, "AAPL", LONG, 2.0, 250.0, 30).total_bps
+    required = trip + 0.25 * SD
+    row = active(output=(required - 0.01) / SD, cfg=cfg).step(minute(DAY, m), broker(cfg)).decision
+    assert row["required_edge_bps"] == pytest.approx(required) and row["margin_bps"] == pytest.approx(10.0)
+    assert row["gate_passed"] == 0 and row["action"] == "none"
+    row = active(output=(required + 0.01) / SD, cfg=cfg).step(minute(DAY, m), broker(cfg)).decision
+    assert row["gate_passed"] == 1 and row["action"] == "open_long"
 
 
 def test_the_open_window_runs_from_10_00_to_15_25_or_12_25_on_an_early_close():

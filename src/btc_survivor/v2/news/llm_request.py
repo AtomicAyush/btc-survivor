@@ -1,10 +1,13 @@
 """The one model request of PLAN_V2 sections 8.1 to 8.3, built as exact bytes from cleaned items.
 
 Haiku and Sonnet get the same system prompt, schema and user message. Haiku's single system block carries cache
-control and Sonnet's does not, and each scorer sends its own model id and max_tokens. A request holds no sampling
-parameter, tool, metadata, stop sequence, fallback, beta header or date, and identical items always give identical
-bytes. The prompt and schema are committed files read as bytes, never templated, and pinned here by SHA 256, the
-schema hash over canonical JSON with sorted keys. A guard refuses a request above max_input_tokens, by the exact
+control and Sonnet's does not, and each scorer sends its own model id, thinking setting and max_tokens. Haiku always
+sends thinking disabled. Sonnet 5.5 answers thinking disabled with a 400, so its config may instead choose
+between_tools, the lowest setting Anthropic's docs list for it, or adaptive at effort low, and then max_tokens grows by
+the configured thinking_tokens, because thinking counts toward max_tokens and bills as output. A request holds no
+sampling parameter, tool, metadata, stop sequence, fallback, beta header or date, and identical items always give
+identical bytes. The prompt and schema are committed files read as bytes, never templated, and pinned here by SHA 256,
+the schema hash over canonical JSON with sorted keys. A guard refuses a request above max_input_tokens, by the exact
 count when one exists and by bytes over 3 otherwise.
 """
 
@@ -25,13 +28,16 @@ from btc_survivor.v2.config import HAIKU_MODEL, SONNET_MODEL, LlmConfig
 from btc_survivor.v2.news.edgar_docs import html_text
 
 HERE = Path(__file__).resolve().parent
-PROMPT_FILE = "prompt_v1.txt"
-SCHEMA_FILE = "schema_v1.json"
-PROMPT_SHA256 = "0fe8e7e3d2bb4a0071c243d1be7286f06e259e0f10ea76a5371b0107d8d551f1"
-SCHEMA_SHA256 = "8790e26b03adebcc245fee6ea9c85eafcaf68c158c1d4e440cb7d211da8a58a6"
+PROMPT_FILE = "prompt_v2.txt"
+SCHEMA_FILE = "schema_v2.json"
+PROMPT_SHA256 = "e69bb9a9c6ba328094b71cb5ffd8f54718942b4b175d4bad85a4bd6daf058417"
+SCHEMA_SHA256 = "c2fcd2cee2da72d5d177c79fef86d2070fa997c2066d18dd9c2630cacd99e81f"
 MODELS = (HAIKU_MODEL, SONNET_MODEL)
 EFFORTS = ("low",)
-THINKING = {"disabled": {"type": "disabled"}}
+DISABLED, BETWEEN_TOOLS, ADAPTIVE = "disabled", "between_tools", "adaptive"
+THINKING = {DISABLED: {"type": "disabled"}, BETWEEN_TOOLS: {"type": "between_tools"}, ADAPTIVE: {"type": "adaptive"}}
+# The thinking settings each model may send. Haiku stays disabled, and only Sonnet 5.5 accepts between_tools.
+MODEL_THINKING = {HAIKU_MODEL: (DISABLED,), SONNET_MODEL: (DISABLED, BETWEEN_TOOLS, ADAPTIVE)}
 CACHE_CONTROL = {"type": "ephemeral"}
 MAX_ITEMS = 25                   # ids run from i01 to i25
 BYTES_PER_TOKEN = 3              # the guard's estimate when no exact count exists
@@ -141,7 +147,8 @@ def user_message(items: Sequence[RequestItem]) -> str:
 
 @dataclass(frozen=True)
 class ScorerSpec:
-    """The settings of one scorer that shape its requests."""
+    """The settings of one scorer that shape its requests. max_tokens is the room for the answer and thinking_tokens
+    the room added for thinking, zero while thinking is disabled."""
 
     name: str
     model: str
@@ -149,17 +156,24 @@ class ScorerSpec:
     thinking: str
     max_tokens: int
     cache_control: bool
+    thinking_tokens: int = 0
+
+    @property
+    def request_max_tokens(self) -> int:
+        """The max_tokens a request sends and a reservation prices at the output rate, answer and thinking together."""
+        return self.max_tokens + self.thinking_tokens
 
 
 def haiku_spec(llm: LlmConfig) -> ScorerSpec:
-    """Haiku, whose one system block always carries cache control."""
+    """Haiku, whose one system block always carries cache control and whose thinking stays disabled."""
     return ScorerSpec(llm.scorer_name, llm.model, llm.effort, llm.thinking, llm.max_tokens, True)
 
 
 def sonnet_spec(llm: LlmConfig) -> ScorerSpec:
-    """Sonnet, with its own max_tokens and cache control as configured, false by the plan."""
+    """Sonnet, with its own max_tokens, thinking setting and thinking room, and cache control as configured, false by
+    the plan."""
     s = llm.sonnet
-    return ScorerSpec(s.scorer_name, s.model, s.effort, s.thinking, s.max_tokens, s.cache_control)
+    return ScorerSpec(s.scorer_name, s.model, s.effort, s.thinking, s.max_tokens, s.cache_control, s.thinking_tokens)
 
 
 @dataclass(frozen=True)
@@ -187,15 +201,19 @@ class Request:
 
 
 def _check_spec(spec: ScorerSpec) -> None:
-    """Refuse a model, effort or thinking setting the plan does not allow."""
+    """Refuse a model, effort or thinking setting the plan does not allow, and thinking room that does not fit the
+    thinking setting, none while disabled and at least one token otherwise."""
     if spec.model not in MODELS:
         raise RequestError(f"model {spec.model!r} is not one of {', '.join(MODELS)}")
     if spec.effort not in EFFORTS:
         raise RequestError(f"effort {spec.effort!r} is not one of {', '.join(EFFORTS)}")
-    if spec.thinking not in THINKING:
-        raise RequestError(f"thinking {spec.thinking!r} is not one of {', '.join(THINKING)}")
+    allowed = MODEL_THINKING[spec.model]
+    if spec.thinking not in allowed:
+        raise RequestError(f"thinking {spec.thinking!r} is not one of {', '.join(allowed)} for {spec.model}")
     if spec.max_tokens < 1:
         raise RequestError("max_tokens must be at least 1")
+    if (spec.thinking == DISABLED) != (spec.thinking_tokens == 0) or spec.thinking_tokens < 0:
+        raise RequestError("thinking_tokens must be 0 while thinking is disabled and at least 1 otherwise")
 
 
 def build_request(spec: ScorerSpec, items: Sequence[RequestItem]) -> Request:
@@ -208,7 +226,7 @@ def build_request(spec: ScorerSpec, items: Sequence[RequestItem]) -> Request:
         system["cache_control"] = CACHE_CONTROL
     params = {
         "model": spec.model,
-        "max_tokens": spec.max_tokens,
+        "max_tokens": spec.request_max_tokens,
         "thinking": THINKING[spec.thinking],
         "output_config": {"effort": spec.effort, "format": {"type": "json_schema", "schema": load_schema()}},
         "system": [system],

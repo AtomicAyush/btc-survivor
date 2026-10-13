@@ -8,7 +8,9 @@ health, while marking, borrow, death and the stop need only the home symbol heal
 allowed from session minute 30 to 35 minutes before the close, and the engine sends every open position a closing order
 from 5 minutes before the close. The margin and the stop are in label standard deviations of the symbol, and the stop
 is fixed at entry. The forced timer counts usable minutes from the first Active minute, started up to 180 minutes early
-by a delay drawn at birth, so first forced trades spread over the 3 hours after warmup ends.
+by a delay drawn at birth, so first forced trades spread over the 3 hours after warmup ends. The bot's own generator
+draws its weights, that delay and its training batches, while each order's latency jitter comes from a generator of
+its own, so an order sent in one run only, as news can cause, never shifts the batches of the next steps.
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ from btc_survivor.types import LONG, SHORT, Leg
 from btc_survivor.v2.config import SessionConfig, StockConfig
 from btc_survivor.v2.sessions import Session
 from btc_survivor.v2.stocks import costs
-from btc_survivor.v2.stocks.broker import StockBroker, StockExecution, StockOrder
+from btc_survivor.v2.stocks.broker import StockBroker, StockExecution, StockOrder, jitter_rng
 from btc_survivor.v2.stocks.features import N_PRICE_FEATURES
 from btc_survivor.v2.stocks.learning import PooledWindow, predict_rows, with_news_inputs
 
@@ -127,6 +129,10 @@ class StockBot:
         bot.head_start = int(rng.integers(0, max(1, bot.force_minutes)))
         bot.minutes_since_open = bot.head_start if bot.state == ACTIVE else 0
         return bot
+
+    def order_rng(self, decided_ms: int) -> np.random.Generator:
+        """The generator of the latency jitter of the order this bot decides at decided_ms, never self.rng."""
+        return jitter_rng(self.cfg.run.master_seed, self.bot_id, decided_ms)
 
     def is_phase_minute(self, k: int) -> bool:
         horizon = self.cfg.time.horizon_minutes
@@ -262,12 +268,12 @@ class StockBot:
         if not self.account.is_open or self.pending_order is not None:
             return None
         self.pending_order = broker.make_order(self.bot_id, self.symbol, [Leg("close", self.account.side)], now_ms,
-                                               ref_price, reason, self.rng)
+                                               ref_price, reason, self.order_rng(now_ms))
         return self.pending_order
 
     def _send(self, broker: StockBroker, legs: list[Leg], now: int, ref: float, reason: str, res: BotStep,
               forced: bool = False) -> None:
-        order = broker.make_order(self.bot_id, self.symbol, legs, now, ref, reason, self.rng, forced=forced)
+        order = broker.make_order(self.bot_id, self.symbol, legs, now, ref, reason, self.order_rng(now), forced=forced)
         self.pending_order = order
         res.orders.append(order)
 

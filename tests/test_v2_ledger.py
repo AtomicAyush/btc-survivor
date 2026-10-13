@@ -111,6 +111,20 @@ def test_a_call_that_uses_every_bound_costs_exactly_its_reservation():
         assert PRICES.cost(SONNET_MODEL, Usage(counted, max_tokens)) == reserved
 
 
+def test_thinking_tokens_are_booked_as_output_and_a_thinking_room_reservation_covers_them():
+    # Sonnet with 1,024 tokens of answer room and 1,024 of thinking room on a short item, (1900 * 2 + 2048 * 10) / 1e6.
+    reserved = PRICES.reserve(SONNET_MODEL, 1900, 1024 + 1024)
+    assert reserved == pytest.approx(0.02428, rel=1e-12)
+    # output_tokens already holds the thinking, so 900 thinking tokens inside 1,000 output cost as 1,000 output.
+    thought = Usage(1900, 1000, thinking_tokens=900)
+    assert thought.billed_output_tokens == 1000
+    assert PRICES.cost(SONNET_MODEL, thought) == PRICES.cost(SONNET_MODEL, Usage(1900, 1000)) < reserved
+    # A thinking count above output_tokens, which the API never reports, still books every thinking token as output.
+    assert PRICES.cost(SONNET_MODEL, Usage(1900, 100, thinking_tokens=2048)) == reserved
+    with pytest.raises(ValueError):
+        cost_usd(PRICES.sonnet, Usage(0, 0, thinking_tokens=-1))
+
+
 def test_bad_inputs_and_unknown_models_are_refused():
     with pytest.raises(LedgerError, match="no prices"):
         PRICES.rates("not-a-model")

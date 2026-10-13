@@ -59,7 +59,7 @@ FROM decisions d JOIN bots b ON b.bot_id = d.bot_id WHERE d.id = ?
 """
 FILLS = """
 SELECT id, trade_id, leg, side, qty, status, reason, decided_at, filled_at, latency_ms, ref_mid, print_price, price,
-  allowance_bps, slippage_bps, notional, fee, sec_fee, taf_fee
+  allowance_bps, slippage_bps, notional, fee, sec_fee, taf_fee, print_after_due_ms, news_window
 FROM fills WHERE bot_id = ? AND decided_at = ? ORDER BY id
 """
 TRADES = """

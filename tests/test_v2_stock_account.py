@@ -88,10 +88,11 @@ class Sequence:
         return costs.mark_price(self.price, acct.side, self.allowance) if acct.is_open else None
 
     def send(self, legs, reason):
-        """Fill an order on one print after its latency, checking each fill's fees and the shadow ledger."""
+        """Fill an order on one print traded at or after its due time, checking each fill's fees and the shadow
+        ledger."""
         order = self.broker.make_order(1, self.symbol, legs, self.now, self.price, reason, self.rng)
         print_price = self.price * math.exp(self.rng.normal(0, 0.0005))
-        fill = Print(self.symbol, print_price, 1.0, order.due_ms - int(self.rng.integers(0, 500)), ())
+        fill = Print(self.symbol, print_price, 1.0, order.due_ms + int(self.rng.integers(0, 500)), ())
         held = (self.acct.side, self.acct.qty, self.acct.entry_price)
         ex = self.broker.execute(order, fill, order.due_ms, self.acct)
         for f in ex.fills:

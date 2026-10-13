@@ -139,6 +139,24 @@ def test_thinking_blocks_are_counted_and_never_read_as_the_answer():
     assert (result.status, result.thinking_blocks, result.text) == (OK, 2, '{"items":[]}')
 
 
+def test_thinking_tokens_reported_in_the_usage_details_are_kept_as_part_of_the_output():
+    content = [{"type": "thinking", "thinking": "", "signature": "fixture"}, {"type": "text", "text": '{"items":[]}'}]
+    usage = {"input_tokens": 1900, "output_tokens": 700, "output_tokens_details": {"thinking_tokens": 620}}
+    request = {**REQUEST, "model": SONNET_MODEL, "max_tokens": 2048, "thinking": {"type": "adaptive"}}
+    result, sdk = send(message(model=SONNET_MODEL, content=content, usage=usage), request)
+    assert sdk.messages.created == [request]
+    assert (result.status, result.thinking_blocks, result.text) == (OK, 1, '{"items":[]}')
+    assert result.usage == Usage(1900, 700, 0, 0, thinking_tokens=620) and result.usage.billed_output_tokens == 700
+    result, _ = send(message(), REQUEST)
+    assert result.usage.thinking_tokens == 0
+
+
+def test_sonnet_between_tools_is_sent_as_given():
+    request = {**REQUEST, "model": SONNET_MODEL, "max_tokens": 2048, "thinking": {"type": "between_tools"}}
+    result, sdk = send(message(model=SONNET_MODEL), request)
+    assert sdk.messages.created == [request] and result.status == OK
+
+
 # Errors, each one request and no retry
 
 

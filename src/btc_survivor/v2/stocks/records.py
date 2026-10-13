@@ -4,7 +4,8 @@ Times go in as UTC milliseconds and are written as ISO 8601 text with millisecon
 btc_survivor.clock.iso writes them, and flags as 0 or 1. Where a version 1 table kept its shape, its statement and
 builder are the version 1 ones, imported here so every writer of a run database takes its statements from this one
 module. Comma separated lists, the tickers of a score line and the channels in outage, are written as news.db holds
-them.
+them. The engine writes every fill with its two report only columns, while INSERT_FILL and fill_row write the section
+9.2 columns alone and leave those two null.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from btc_survivor.v2.config import StockConfig
 from btc_survivor.v2.redact import redact
 from btc_survivor.v2.sessions import Session
 from btc_survivor.v2.stocks.candles import StockCandle
+from btc_survivor.v2.stocks.features import N_PRICE_FEATURES
 
 if TYPE_CHECKING:
     from btc_survivor.v2.stocks.broker import StockFill
@@ -47,6 +49,11 @@ INSERT_FILL = ("INSERT INTO fills (bot_id, trade_id, decided_at, filled_at, leg,
                "price, levels_consumed, slippage_bps, fee, latency_ms, status, reason, symbol, print_price, "
                "allowance_bps, notional, sec_fee, taf_fee) "
                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+INSERT_FILL_WITH_REPORTS = ("INSERT INTO fills (bot_id, trade_id, decided_at, filled_at, leg, side, qty, ref_mid, "
+                            "book_avg_price, price, levels_consumed, slippage_bps, fee, latency_ms, status, reason, "
+                            "symbol, print_price, allowance_bps, notional, sec_fee, taf_fee, print_after_due_ms, "
+                            "news_window) "
+                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 OPEN_TRADE = ("INSERT INTO trades (id, bot_id, side, opened_at, qty, entry_price, fee_open, funding, "
               "slippage_bps_open, forced, symbol) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 INSERT_FEED_EVENT = "INSERT INTO feed_events (ts, kind, symbol, detail) VALUES (?, ?, ?, ?)"
@@ -54,6 +61,10 @@ INSERT_CANDLE = ("INSERT INTO stock_candles (symbol, ts, session_date, session_k
                  "volume, buy_volume, sell_volume, prints, price_prints, late_prints, valid) "
                  "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 PRUNE_CANDLES = "DELETE FROM stock_candles WHERE ts < ?"
+# The z score columns of price_z, the 10 price features in the order features.py computes them.
+PRICE_Z_COLUMNS = ("z1", "z2", "z3", "z4", "z5", "z6", "z7", "z8", "z9", "z10")
+INSERT_PRICE_Z = ("INSERT INTO price_z (k, symbol, ts, z1, z2, z3, z4, z5, z6, z7, z8, z9, z10) "
+                  "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 PUT_SESSION = ("INSERT OR REPLACE INTO sessions (session_date, open_ts, close_ts, early_close, healthy_minutes, "
                "run_minutes) VALUES (?, ?, ?, ?, ?, ?)")
 INSERT_LABEL = f"INSERT INTO stock_labels (ts, symbol, entry_price, status) VALUES (?, ?, ?, '{PENDING}')"
@@ -104,6 +115,13 @@ def fill_row(f: StockFill) -> tuple:
     return (*v1.fill_row(f), f.symbol, f.print_price, f.allowance_bps, f.notional, f.sec_fee, f.taf_fee)
 
 
+def fill_row_with_reports(f: StockFill, news_window: bool | None) -> tuple:
+    """A stock fill with its report only columns, how long after the due time its print traded, null on a rejection,
+    and whether S2 received the first line of an item tagged with its symbol in the 30 minutes before its decision,
+    null in S1, which reads no news."""
+    return (*fill_row(f), f.print_after_due_ms, None if news_window is None else int(news_window))
+
+
 def open_trade_row(bot_id: int, symbol: str, acct: Account) -> tuple:
     """The trade row written when a position opens, read from the account right after the fill."""
     return (*v1.open_trade_row(bot_id, acct), symbol)
@@ -151,6 +169,15 @@ def forecast_row(ms: int, symbol: str, predictor: str, prediction: float, items:
     """One predictor's forecast at an evaluation minute, in bps or as a score, with the impacts behind a score and
     the newest receive stamp behind the row, which evaluate requires never to be later than ts."""
     return (iso(ms), symbol, predictor, prediction, items, _iso(inputs_max_recv_ms))
+
+
+def price_z_row(k: int, ms: int, symbol: str, z: Sequence[float] | None) -> tuple:
+    """The 10 price z scores of one usable symbol at the evaluation minute k ending at ms, as the learners and
+    linear_prices saw them, all null where the symbol's vector was invalid and the learners saw zeros."""
+    values = (None,) * N_PRICE_FEATURES if z is None else tuple(float(v) for v in z)
+    if len(values) != N_PRICE_FEATURES:
+        raise ValueError(f"price_z holds {N_PRICE_FEATURES} z scores, not {len(values)}")
+    return (k, symbol, iso(ms), *values)
 
 
 def news_seen_row(*, score_seq: int, item_seq: int, recv_ms: int, scored_at: str, source: str, route: str,

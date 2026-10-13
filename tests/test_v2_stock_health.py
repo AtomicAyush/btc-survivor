@@ -1,5 +1,6 @@
 """Price health of PLAN_V2 section 4.5 on synthetic prints, the reconnect and resubscribe rules of section 4.6 on fixed
-times and against the recorder's inline copy, the delay rule, and the news health of one minute from section 7.8."""
+times and against the recorder's inline copy, the delay rule, and the news health of one minute from section 7.8, alone
+and through the shared market layer, where a silent minute after an unhealthy heartbeat stays unhealthy."""
 
 import sys
 from datetime import date
@@ -17,6 +18,8 @@ from btc_survivor.v2.stocks.health import (CLOSED, HASH_MISMATCH, HEALTHY, NO_HE
                                            RECOVERING, SESSION_CLOSE, SESSION_OPEN, STALE, UNHEALTHY_HEARTBEAT,
                                            DelayRule, HealthEvent, Heartbeat, PriceHealth, delay_rule, news_minute,
                                            quiet_symbols, should_mark_healthy, silence_reason)
+from btc_survivor.v2.stocks.market import NEWS_HEALTHY, NEWS_UNHEALTHY, MarketLayer
+from btc_survivor.v2.stocks.news_inputs import HeartbeatLine
 from btc_survivor.v2.stocks.prints import PriceRules
 from btc_survivor.v2.stocks.runner import BackoffSettings, StockFeedClient
 from helpers import ROOT
@@ -75,7 +78,9 @@ def test_settings_come_from_the_stock_feed_config():
     feed = load_stock_config(S1).stock_feed
     h = PriceHealth.from_config(feed)
     assert tuple(h.symbols) == feed.symbols
-    assert (h.feed_stale_ms, h.symbol_stale_ms, h.max_delay_ms) == (5 * SEC, 15 * SEC, 2 * SEC)
+    assert (h.feed_stale_ms, h.symbol_stale_ms, h.max_delay_ms) == tuple(
+        round(value * SEC) for value in (feed.feed_stale_after_seconds, feed.symbol_stale_after_seconds,
+                                         feed.max_print_delay_seconds))
     assert h.rules == PriceRules.from_config(feed)
     assert set(states(h).values()) == {CLOSED} and h.drain_events() == []
 
@@ -438,15 +443,67 @@ def test_news_health_of_a_minute_needs_a_fresh_healthy_heartbeat_with_the_launch
     def good(t):
         return Heartbeat(t, True, True)
 
-    assert news_minute(b, start - 10 * SEC, [good(start + 20 * SEC), good(start + 50 * SEC)], age) is None
-    assert news_minute(b, b - age, [], age) is None
-    assert news_minute(b, b - age - 1, [], age) == OLD_HEARTBEAT
-    assert news_minute(b, start - 100 * SEC, [good(start + 20 * SEC)], age) is None
-    assert news_minute(b, start - 100 * SEC, [good(start + 20 * SEC + 1)], age) == OLD_HEARTBEAT
+    assert news_minute(b, good(start - 10 * SEC), [good(start + 20 * SEC), good(start + 50 * SEC)], age) is None
+    assert news_minute(b, good(b - age), [], age) is None
+    assert news_minute(b, good(b - age - 1), [], age) == OLD_HEARTBEAT
+    assert news_minute(b, good(start - 100 * SEC), [good(start + 20 * SEC)], age) is None
+    assert news_minute(b, good(start - 100 * SEC), [good(start + 20 * SEC + 1)], age) == OLD_HEARTBEAT
     assert news_minute(b, None, [], age) == NO_HEARTBEAT
     assert news_minute(b, None, [good(start + 1)], age) == NO_HEARTBEAT
     assert news_minute(b, None, [good(start), good(start + 30 * SEC)], age) is None
     unhealthy = [good(start + 20 * SEC), Heartbeat(start + 50 * SEC, False, True)]
-    assert news_minute(b, start - 10 * SEC, unhealthy, age) == UNHEALTHY_HEARTBEAT
+    assert news_minute(b, good(start - 10 * SEC), unhealthy, age) == UNHEALTHY_HEARTBEAT
     changed = [Heartbeat(start + 20 * SEC, False, False)]
-    assert news_minute(b, start - 10 * SEC, changed, age) == HASH_MISMATCH
+    assert news_minute(b, good(start - 10 * SEC), changed, age) == HASH_MISMATCH
+    # The line in force at the start of the minute is judged too, so a minute with no line after an unhealthy line or
+    # one with other hashes stays out, as does a minute whose healthy line came after an unhealthy one.
+    sick = Heartbeat(start - 10 * SEC, False, True)
+    assert news_minute(b, sick, [], age) == UNHEALTHY_HEARTBEAT
+    assert news_minute(b, Heartbeat(start - 10 * SEC, True, False), [], age) == HASH_MISMATCH
+    assert news_minute(b, sick, [good(start + 20 * SEC)], age) == UNHEALTHY_HEARTBEAT
+    assert news_minute(b + MIN, good(start + 20 * SEC), [good(b + 10 * SEC)], age) is None
+
+
+def news_reasons(lines, boundaries):
+    """Feed heartbeat lines in stamp order through one shared market layer, closing each boundary before any line
+    stamped at or after it, and return the news reason of every minute with the news feed events written."""
+    market = MarketLayer(load_stock_config(S1), LAUNCH_HASHES)
+    pending = sorted(lines, key=lambda line: line.recv_ms)
+    reasons = []
+    for b in boundaries:
+        while pending and pending[0].recv_ms < b:
+            market.on_heartbeat(pending.pop(0))
+        m = market.close_minute(b)
+        assert m.news_ok == (m.news_reason is None)
+        reasons.append(m.news_reason)
+    news = [(ev.ms, ev.kind, ev.detail) for ev in market.drain_events() if ev.kind.startswith("news_")]
+    return reasons, news
+
+
+LAUNCH_HASHES = ("c" * 64, "p" * 64, "s" * 64)
+
+
+def beat(seq, t, healthy=True, hashes=LAUNCH_HASHES):
+    return HeartbeatLine(seq, t, healthy, None if healthy else "score_wait", *hashes, (), recv_ms=t)
+
+
+def test_a_silent_minute_after_an_unhealthy_heartbeat_stays_unhealthy_in_the_market_layer():
+    # Healthy lines every 30 seconds to 10:00:30, an unhealthy one at 10:00:59, then nothing until 10:02:05, a gap the
+    # 120 second age allows, two more unhealthy lines and two healthy ones from 10:03:10.
+    ten = OPEN + 30 * MIN
+    stamps = [(ten - 2 * MIN + i * 30 * SEC, True) for i in range(6)] + [
+        (ten + 59 * SEC, False), (ten + 2 * MIN + 5 * SEC, False), (ten + 2 * MIN + 35 * SEC, False),
+        (ten + 3 * MIN + 10 * SEC, True), (ten + 3 * MIN + 40 * SEC, True)]
+    lines = [beat(i, t, ok) for i, (t, ok) in enumerate(stamps, start=1)]
+    boundaries = [ten + i * MIN for i in range(6)]
+    reasons, news = news_reasons(lines, boundaries)
+    assert reasons == [None] + [UNHEALTHY_HEARTBEAT] * 4 + [None]
+    assert news == [(ten + MIN, NEWS_UNHEALTHY, UNHEALTHY_HEARTBEAT), (ten + 5 * MIN, NEWS_HEALTHY, "")]
+    # A line with other hashes, then a silent minute, stays a hash mismatch until a line with the launch hashes is in
+    # force for a whole minute.
+    other = ("d" * 64, *LAUNCH_HASHES[1:])
+    changed = [beat(i, ten - (3 - i) * 30 * SEC) for i in range(4)] + [
+        beat(4, ten + 59 * SEC, hashes=other), beat(5, ten + 2 * MIN + 5 * SEC, hashes=other)]
+    reasons, news = news_reasons(changed, boundaries[:4])
+    assert reasons == [None] + [HASH_MISMATCH] * 3
+    assert news == [(ten + MIN, NEWS_UNHEALTHY, HASH_MISMATCH)]

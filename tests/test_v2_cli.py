@@ -79,6 +79,16 @@ def test_the_console_script_points_at_main():
     assert 'btc_survivor_v2 = "btc_survivor.v2.__main__:main"' in (ROOT / "pyproject.toml").read_text()
 
 
+def test_the_package_data_ships_every_version_2_data_file():
+    import tomllib
+    data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["setuptools"]["package-data"]
+    shipped = {f"src/{package.replace('.', '/')}/{name}" for package, names in data.items()
+               if package.startswith("btc_survivor.v2") for name in names}
+    found = {p.relative_to(ROOT).as_posix() for p in (ROOT / "src" / "btc_survivor" / "v2").rglob("*")
+             if p.is_file() and p.suffix not in (".py", ".pyc") and "__pycache__" not in p.parts}
+    assert shipped == found
+
+
 @pytest.mark.parametrize("argv, module", LATER, ids=[a[0] for a, _ in LATER])
 def test_a_later_subcommand_reaches_its_module_with_the_arguments_that_module_parses(argv, module, monkeypatch):
     seen = []
@@ -308,12 +318,14 @@ def test_tape_check_runs_through_the_command_line_on_a_synthetic_recording(tmp_p
     symbols = synthetic.SYMBOLS
     official = tmp_path / "official_2026_10_13.toml"
     official.write_text("consolidated_label = true\n" + "".join(
-        f"\n[symbols.{s}]\nvolume = {tape.truth[(day.day, s)]}\nclose = 123.25\n" for s in symbols), encoding="utf-8")
+        f"\n[symbols.{s}]\nvolume = {tape.truth[(day.day, s)] * 25}\nclose = 123.25\n" for s in symbols),
+        encoding="utf-8")
     assert main(["tape-check", str(tmp_path / "raw"), str(official), "--config", str(S1)]) == 0
     lines = capsys.readouterr().out.splitlines()
-    assert lines[:2] == ["tape check", "verdict: consolidated"]
-    assert "clean session: pass" in lines and "delay verdict: pass" in lines
-    assert lines[-1] == "8 rows hidden, pass --detail in your own terminal to see them"
+    assert lines[:3] == ["tape coverage", "clean session: pass", "reason: a full session connected throughout"]
+    assert "delay verdict: pass" in lines and "outage time: 0.000 s" in lines
+    assert lines[-1] == "9 rows hidden, pass --detail in your own terminal to see them"
+    assert [r.median_ratio for r in tapecheck.read_records(tmp_path)] == [pytest.approx(0.04)]
     assert main(["tape-check", str(tmp_path / "missing"), str(official), "--config", str(S1)]) == 2
     assert capsys.readouterr().err.startswith("error: no recording files")
 

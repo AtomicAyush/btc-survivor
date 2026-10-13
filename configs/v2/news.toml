@@ -153,10 +153,10 @@ model = "claude-haiku-5-5"                # the only accepted value
 effort = "low"                            # the only accepted value
 thinking = "disabled"                     # the only accepted value
 scorer_name = "haiku_v1"
-prompt_file = "prompt_v1.txt"
-prompt_sha256 = "0fe8e7e3d2bb4a0071c243d1be7286f06e259e0f10ea76a5371b0107d8d551f1"   # pinned at build
-schema_file = "schema_v1.json"
-schema_sha256 = "8790e26b03adebcc245fee6ea9c85eafcaf68c158c1d4e440cb7d211da8a58a6"   # pinned at build
+prompt_file = "prompt_v2.txt"
+prompt_sha256 = "e69bb9a9c6ba328094b71cb5ffd8f54718942b4b175d4bad85a4bd6daf058417"   # pinned at build
+schema_file = "schema_v2.json"
+schema_sha256 = "c2fcd2cee2da72d5d177c79fef86d2070fa997c2066d18dd9c2630cacd99e81f"   # pinned at build
 request_timeout_seconds = 60
 max_tokens = 4096
 flush_max_items = 20
@@ -174,20 +174,22 @@ max_requeues = 1                          # a missing item only, never a failed 
 rate_limit_pause_minutes = 15
 refusal_pause_share = 0.2
 refusal_window_calls = 50
-probe_file = "probes_v1.json"
+probe_file = "probes_v2.json"
 probe_time_utc = "06:00"
 probe_alert_direction_agreement = 0.8     # probes run on Haiku only
 
 [llm.sonnet]                              # the comparison scorer, official items only
-enabled = false                           # off until the owner picks a thinking setting, because Sonnet 5.5 answers
-                                          # thinking disabled with a 400, section 8.1
+enabled = false                           # off until one live call settles the thinking setting, section 8.1
 model = "claude-sonnet-5-5"               # the only accepted value, and Opus is never accepted
 effort = "low"                            # the only accepted value
-thinking = "disabled"                     # the only accepted value
+thinking = "disabled"                     # disabled, between_tools or adaptive, chosen by the live call of section 8.1,
+                                          # since Anthropic's docs say Sonnet 5.5 answers disabled with a 400
 scorer_name = "sonnet_v1"
 kinds = ["8k", "fed_press", "fed_monetary", "fed_speech", "bls_release"]
 max_tokens = 1024                         # one item with up to 10 impacts
-cache_control = false                     # Sonnet cache prices are not in the research
+thinking_tokens = 0                       # room added to max_tokens for thinking, reserved and booked as output, 0
+                                          # exactly while thinking is disabled, 1024 for between_tools, 4096 adaptive
+cache_control = false                    # Sonnet cache prices are not in the research
 
 [llm.caps]                                # one ledger and one cap for both models
 ledger_file = "~/.config/btc_survivor/llm_ledger.db"

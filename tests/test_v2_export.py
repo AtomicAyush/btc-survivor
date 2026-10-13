@@ -18,8 +18,8 @@ from test_v2_store import contents, news_database, v1_database
 import v2_runkit as kit
 
 EXPECTED_TABLES = ("meta", "bots", "decisions", "trades", "fills", "equity_snapshots", "deaths", "feed_events",
-                   "stock_candles", "sessions", "stock_labels", "stock_forecasts", "news_seen", "news_minutes",
-                   "spread_checks", "benchmark", "runtime_status", "symbol_status")
+                   "stock_candles", "sessions", "stock_labels", "stock_forecasts", "price_z", "news_seen",
+                   "news_minutes", "spread_checks", "benchmark", "runtime_status", "symbol_status")
 CANARIES = (str(kit.CANARY_PRICE), str(kit.CANARY_FILL))
 
 

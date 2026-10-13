@@ -1,4 +1,4 @@
-"""Validation of a model's answer against schema_v1.json, PLAN_V2 section 8.4.
+"""Validation of a model's answer against schema_v2.json, PLAN_V2 section 8.4.
 
 The answer is checked against strict Pydantic models that forbid extra fields, then each id must belong to the batch
 once, tickers must be unique within an item, and an item may hold at most 10 impacts. Each item is checked on its
@@ -22,7 +22,7 @@ EVENT_TYPES = ("earnings", "guidance", "product", "legal_regulatory", "mergers_a
                "market_commentary", "other")
 DIRECTIONS = (-1, 0, 1)
 SURPRISES = (0, 1, 2, 3)
-HORIZONS = ("hours", "days", "weeks")
+HORIZONS = ("minutes", "hours", "days")
 CONFIDENCES = (1, 2, 3, 4, 5)
 MAX_IMPACTS = 10
 

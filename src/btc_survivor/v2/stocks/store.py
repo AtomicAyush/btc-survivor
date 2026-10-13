@@ -4,10 +4,12 @@ and kind check that every reader of a run database calls.
 StockStore keeps the version 1 Store's one writer connection, its queue and its flush, and replaces the schema.
 equity_snapshots, deaths and checkpoints keep their version 1 shape, and lineage, candles and forecasts are not
 created. bots gains home_symbol, decisions and trades gain symbol, fills gains symbol, print_price, allowance_bps,
-notional, sec_fee and taf_fee, and feed_events gains symbol, null for a whole feed event, each as the last columns.
-Every table after checkpoints is the SQL block of section 9.2 as written. A version 1 database has no meta.kind and
-a news database has kind news, so the stock process, evaluate, status, export and the dashboard all refuse both.
-Times are ISO 8601 UTC text with milliseconds and a trailing Z, as btc_survivor.clock.iso writes them.
+notional, sec_fee and taf_fee and then the report only print_after_due_ms and news_window, and feed_events gains
+symbol, null for a whole feed event, each as the last columns. Every table after checkpoints is the SQL block of
+section 9.2 as written, price_z holding the 10 price z scores of every usable symbol at each evaluation minute. A
+version 1 database has no meta.kind and a news database has kind news, so the stock process, evaluate, status, export
+and the dashboard all refuse both. Times are ISO 8601 UTC text with milliseconds and a trailing Z, as
+btc_survivor.clock.iso writes them.
 """
 
 from __future__ import annotations
@@ -50,7 +52,8 @@ CREATE TABLE fills (
   leg TEXT NOT NULL, side TEXT NOT NULL, qty REAL NOT NULL, ref_mid REAL NOT NULL, book_avg_price REAL, price REAL,
   levels_consumed INTEGER, slippage_bps REAL, fee REAL, latency_ms INTEGER NOT NULL, status TEXT NOT NULL,
   reason TEXT NOT NULL,
-  symbol TEXT NOT NULL, print_price REAL, allowance_bps REAL NOT NULL, notional REAL, sec_fee REAL, taf_fee REAL);
+  symbol TEXT NOT NULL, print_price REAL, allowance_bps REAL NOT NULL, notional REAL, sec_fee REAL, taf_fee REAL,
+  print_after_due_ms INTEGER, news_window INTEGER);
 CREATE INDEX fills_bot ON fills (bot_id);
 CREATE TABLE equity_snapshots (
   bot_id INTEGER NOT NULL, ts TEXT NOT NULL, cash REAL NOT NULL, equity REAL NOT NULL, unrealized REAL NOT NULL,
@@ -83,6 +86,9 @@ CREATE TABLE stock_forecasts (ts TEXT NOT NULL, symbol TEXT NOT NULL, predictor 
   prediction REAL NOT NULL,
   items INTEGER, inputs_max_recv_at TEXT,
   PRIMARY KEY (ts, symbol, predictor));
+CREATE TABLE price_z (k INTEGER NOT NULL, symbol TEXT NOT NULL, ts TEXT NOT NULL,
+  z1 REAL, z2 REAL, z3 REAL, z4 REAL, z5 REAL, z6 REAL, z7 REAL, z8 REAL, z9 REAL, z10 REAL,
+  PRIMARY KEY (k, symbol));
 CREATE TABLE news_seen (
   score_seq INTEGER PRIMARY KEY, item_seq INTEGER NOT NULL, recv_at TEXT NOT NULL, scored_at TEXT NOT NULL,
   source TEXT NOT NULL, route TEXT NOT NULL, scorer TEXT NOT NULL, status TEXT NOT NULL,
@@ -106,7 +112,7 @@ CREATE TABLE symbol_status (symbol TEXT PRIMARY KEY, ts TEXT NOT NULL, state TEX
 
 # Every table in schema order, the version 1 shapes first and then the tables of the section 9.2 block.
 TABLES = ("meta", "bots", "decisions", "trades", "fills", "equity_snapshots", "deaths", "feed_events", "checkpoints",
-          "stock_candles", "sessions", "stock_labels", "stock_forecasts", "news_seen", "news_minutes",
+          "stock_candles", "sessions", "stock_labels", "stock_forecasts", "price_z", "news_seen", "news_minutes",
           "spread_checks", "benchmark", "runtime_status", "symbol_status")
 
 
@@ -203,6 +209,7 @@ class StockStore(Store):
             ("DELETE FROM decisions WHERE ts > ?", (ts,)),
             ("UPDATE decisions SET label_bps = NULL WHERE ts > ?", (labels_from,)),
             ("DELETE FROM stock_forecasts WHERE ts > ?", (ts,)),
+            ("DELETE FROM price_z WHERE ts > ?", (ts,)),
             ("DELETE FROM stock_labels WHERE ts > ?", (ts,)),
             ("UPDATE stock_labels SET exit_price = NULL, label_bps = NULL, status = 'pending' WHERE ts > ?",
              (labels_from,)),

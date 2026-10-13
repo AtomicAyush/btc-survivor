@@ -1,11 +1,13 @@
-"""The tape check of PLAN_V2 section 4.9 on seeded synthetic raw recordings with no database: the synthetic recordings
-against the recorder's format and faults, every connection rule, refused disconnected time, a pause close read past
-the margin, an incomplete recording refused, verdicts at the band edges, two inconclusive clean sessions, the delay
-rule either way, the official figures, which git must ignore, and a default output of verdicts only."""
+"""The tape coverage report of PLAN_V2 section 4.9 on seeded synthetic raw recordings with no database: the synthetic
+recordings against the recorder's format and faults, every connection rule, a pause close read past the margin, an
+incomplete recording refused, the ratios and their median on a partial tape, lost time left out of the covered ratio,
+outages, the clean flag, the coverage record and its reader, the factor of criterion 1.1, the delay rule either way,
+the official figures, which git must ignore, and a default output of verdicts, counts and timings only."""
 
 import gzip
 import json
 import re
+import statistics
 import subprocess
 import zlib
 from datetime import date
@@ -21,11 +23,11 @@ from btc_survivor.v2.stocks.prints import OTHER, POST, PRE, REGULAR, PriceRules,
 from btc_survivor.v2.stocks.synthetic import (DISCONNECT, DROPPED, EARLY_PRINTS, HALT, KILL, LATE_PRINTS, PAUSE,
                                               PROCESS_KILL, PROCESS_START, REPLAYED_PRINTS, SHUTDOWN, SILENCE,
                                               SILENT, Fault, SyntheticTape, recorded, write_recording)
-from btc_survivor.v2.stocks.tapecheck import (ABOVE_BAND, CONSOLIDATED, IN_BAND, INCONCLUSIVE, LOW, NOT_CLEAN,
-                                              NOT_CONSOLIDATED, UNDER_FLOOR, UNDER_HALF, Connections, Official,
-                                              TapeCheckError, band, check, clean_reason, final_verdict,
-                                              load_official, measure, parse_official, percentile, previous_verdict,
-                                              ratio_verdict, report, session_files, window, write_record)
+from btc_survivor.v2.stocks.tapecheck import (CLEAN_REASON, DISCONNECTED_REASON, EARLY_CLOSE_REASON, OUTAGE,
+                                              OUTAGE_REASON, Connections, CoverageRecord, Gap, Official,
+                                              TapeCheckError, check, clean_reason, connected_stretches, load_official,
+                                              measure, parse_official, percentile, read_records, record_of, report,
+                                              session_files, silences, window, within_factor, write_record)
 from helpers import ROOT
 
 S1 = ROOT / "configs" / "v2" / "s1_prices.toml"
@@ -33,12 +35,17 @@ EXAMPLE = ROOT / "configs" / "v2" / "official_example.toml"
 SYMBOLS = load_stock_config(S1).stock_feed.symbols
 RULES = PriceRules(late_ms=4_000)
 SEC, MIN = 1_000, 60_000
+STALE = 30 * SEC
 DAY = sessions.session_on(date(2026, 10, 13))       # EDT, so 20:00 New York time is UTC midnight
 EST_DAY = sessions.session_on(date(2026, 11, 3))    # EST, so UTC midnight falls at 19:00 in post market
 EARLY_CLOSE = sessions.session_on(date(2026, 11, 27))
 # Official closes no synthetic price, count or timing could print by chance.
 CANARY_CLOSES = {symbol: 187.4321 + i for i, symbol in enumerate(SYMBOLS)}
+# A partial tape, each symbol carrying its own share of the official volume, with a median of 0.0375.
+SHARES = {symbol: 0.02 + 0.005 * i for i, symbol in enumerate(SYMBOLS)}
 ALLOWED = re.compile(r"[a-z_ ]+: (pass|fail|\d+|\d+\.\d{3} s|[a-z ]+)")
+RECORD_KEYS = {"kind", "session", "clean", "reason", "early_close", "median_ratio", "median_ratio_covered", "ratios",
+               "ratios_covered", "disconnected_seconds", "outage_seconds", "covered_share"}
 
 
 def full_day(session, seed=11, faults=(), regular_rate=0.3, extended_rate=0.02):
@@ -55,16 +62,39 @@ def official_toml(volumes, closes):
     return text
 
 
-def write_official(folder, session, tape, ratio=1.0):
-    """official_YYYY_MM_DD.toml whose volumes make each symbol's ratio the given one on a recording with no loss."""
-    volumes = {s: tape.truth[(session.day, s)] / ratio for s in SYMBOLS}
+def write_official(folder, session, tape, shares=None):
+    """official_YYYY_MM_DD.toml whose volumes give each symbol the share given, all of the volume by default, on a
+    recording with no loss."""
+    shares = shares or dict.fromkeys(SYMBOLS, 1.0)
+    volumes = {s: tape.truth[(session.day, s)] / shares[s] for s in SYMBOLS}
     path = folder / f"official_{session.day:%Y_%m_%d}.toml"
     path.write_text(official_toml(volumes, CANARY_CLOSES), encoding="utf-8")
     return path
 
 
-def run_main(capsys, recording, official, *extra):
-    code = tapecheck.main([str(recording), str(official), "--config", str(S1), *extra])
+def pin_config(folder, source=S1, **values):
+    """A copy of a committed run config with the given [stock_feed] settings, so later edits to the committed file
+    change no outcome of these tests."""
+    text = source.read_text(encoding="utf-8")
+    for key, value in values.items():
+        text, found = re.subn(rf"^{key} = .*$", f"{key} = {value}", text, flags=re.M)
+        assert found == 1, key
+    path = folder / source.name
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+PINNED = {"feed_stale_after_seconds": 5, "symbol_stale_after_seconds": 15, "max_print_delay_seconds": 2.0,
+          "late_print_seconds": 4, "price_excluded_conditions": "[]"}
+
+
+@pytest.fixture(scope="module")
+def config(tmp_path_factory):
+    return pin_config(tmp_path_factory.mktemp("config"), **PINNED)
+
+
+def run_main(capsys, config, recording, official, *extra):
+    code = tapecheck.main([str(recording), str(official), "--config", str(config), *extra])
     out, err = capsys.readouterr()
     return code, out, err
 
@@ -80,6 +110,14 @@ def trade_prints(lines):
         if kind == MESSAGE and '"trade"' in raw:
             found += [(recv_ms, conn_id, item) for item in json.loads(raw)["data"]]
     return found
+
+
+def flat(volume=1.0):
+    return Official(DAY.day, dict.fromkeys(SYMBOLS, volume), dict.fromkeys(SYMBOLS, 1.0))
+
+
+def record_file(folder, day=DAY.day):
+    return json.loads((folder / f"coverage_{day:%Y_%m_%d}.json").read_text(encoding="utf-8"))
 
 
 @pytest.fixture(scope="module")
@@ -179,6 +217,7 @@ def test_a_full_day_holds_pre_and_post_market_prints(clean_day):
 # Connections and disconnected time.
 
 W0, W1 = window(DAY)
+O, C = DAY.open_ms, DAY.close_ms
 
 
 def gaps(lines, start=W0, end=W1):
@@ -233,6 +272,7 @@ def test_connection_ids_are_never_used(clean_day):
     renumbered = [(kind, raw, ms, 7 if i % 2 else 2) for i, (kind, raw, ms, _) in enumerate(recorded(lines))]
     same, other = measure(recorded(lines), DAY, SYMBOLS, RULES), measure(renumbered, DAY, SYMBOLS, RULES)
     assert (other.gaps, other.connections, other.symbols) == (same.gaps, same.connections, same.symbols)
+    assert other.messages == same.messages
 
 
 def test_reading_stops_at_the_first_line_ten_minutes_after_the_window_which_still_extends_the_connection():
@@ -256,7 +296,7 @@ def test_a_pause_close_written_just_after_waking_past_the_margin_still_counts():
              (OPEN, "", woke + 7 * SEC, 2)]
     tape = measure(lines, DAY, SYMBOLS, RULES)
     assert [(g.start_ms, g.end_ms) for g in tape.gaps] == [(W1 - 60 * MIN, W1)]
-    assert clean_reason(tape) == "disconnected time in the window" and tape.complete
+    assert clean_reason(tape) == DISCONNECTED_REASON and tape.complete
     late = lines[:3] + [(MESSAGE, synthetic.PING, woke + tapecheck.TRAIL_MS, 1)] + lines[4:]
     assert measure(late, DAY, SYMBOLS, RULES).gaps == []       # a close later than the trail is not read
 
@@ -272,32 +312,34 @@ def test_a_recording_that_ends_inside_its_connection_before_the_margin_is_incomp
     assert measure([], DAY, SYMBOLS, RULES).complete
 
 
-def test_an_incomplete_recording_exits_with_code_2_and_writes_no_record(tmp_path, capsys):
+def test_an_incomplete_recording_exits_with_code_2_and_writes_no_record(tmp_path, config, capsys):
     trade = synthetic.trade_message([{"p": 10.0, "s": "AAPL", "t": W1 - 2 * MIN - 150, "v": 100}])
     lines = [(PROCESS_START, "", W0 - MIN, 0), (OPEN, "", W0 - MIN, 1), (MESSAGE, trade, W1 - 2 * MIN, 1)]
     write_recording(tmp_path / "raw", lines)
     official = tmp_path / "official_2026_10_13.toml"
     official.write_text(official_toml(dict.fromkeys(SYMBOLS, 1000), CANARY_CLOSES), encoding="utf-8")
-    code, out, err = run_main(capsys, tmp_path / "raw", official)
+    code, out, err = run_main(capsys, config, tmp_path / "raw", official)
     assert (code, out) == (2, "") and err == f"error: {tapecheck.INCOMPLETE}\n"
-    assert not list(tmp_path.glob("tape_*.json"))
+    assert not list(tmp_path.glob("coverage_*.json"))
     write_recording(tmp_path / "stopped", lines + [(CLOSE, SHUTDOWN, W1 + 5 * MIN, 1)])
-    code, out, _ = run_main(capsys, tmp_path / "stopped", official)
-    assert code == 1 and summary(out)["clean session"] == "pass"
-    assert [p.name for p in tmp_path.glob("tape_*.json")] == ["tape_2026_10_13.json"]
+    code, out, _ = run_main(capsys, config, tmp_path / "stopped", official)
+    fields = summary(out)                                     # connected all day, but silent through the session
+    assert code == 1 and fields["clean session"] == "fail" and fields["reason"] == OUTAGE_REASON
+    assert fields["disconnected time"] == "0.000 s" and fields["outage time"] == "23400.000 s"
+    assert [p.name for p in tmp_path.glob("coverage_*.json")] == ["coverage_2026_10_13.json"]
 
 
-def test_an_official_file_that_git_would_track_is_refused(clean_day, tmp_path, capsys):
+def test_an_official_file_that_git_would_track_is_refused(clean_day, tmp_path, config, capsys):
     tape, _, _, folder = clean_day
     repo = tmp_path / "repo"
     subprocess.run(["git", "init", "-q", str(repo)], check=True, capture_output=True)
     official = write_official(repo, DAY, tape)
-    code, out, err = run_main(capsys, folder, official)
+    code, out, err = run_main(capsys, config, folder, official)
     assert (code, out) == (2, "") and err == f"error: {tapecheck.NOT_IGNORED}\n"
-    assert not list(repo.glob("tape_*.json"))
-    (repo / ".gitignore").write_text("official_*.toml\ntape_*.json\n", encoding="utf-8")
-    code, _, _ = run_main(capsys, folder, official)
-    assert code == 0 and (repo / "tape_2026_10_13.json").stat().st_mode & 0o777 == 0o600
+    assert not list(repo.glob("coverage_*.json"))
+    (repo / ".gitignore").write_text("official_*.toml\ncoverage_*.json\n", encoding="utf-8")
+    code, _, _ = run_main(capsys, config, folder, official)
+    assert code == 0 and (repo / "coverage_2026_10_13.json").stat().st_mode & 0o777 == 0o600
 
 
 def test_lines_of_other_kinds_belong_to_no_connection():
@@ -317,51 +359,116 @@ def test_session_files_start_from_the_last_file_begun_before_04_00(tmp_path):
     assert session_files(files[3:], W0) == files[3:]
 
 
-# The tape verdict on whole synthetic days.
+# Silences and outages.
 
-def test_a_clean_day_is_consolidated_from_the_raw_recording_alone(clean_day, tmp_path, capsys):
+def test_connected_stretches_and_silences_never_span_disconnected_time():
+    lost = [Gap(O + 10 * SEC, O + 20 * SEC, DROPPED), Gap(O + 50 * SEC, O + 60 * SEC, DROPPED)]
+    stretches = connected_stretches(lost, O, O + MIN)
+    assert stretches == [(O, O + 10 * SEC), (O + 20 * SEC, O + 50 * SEC)]
+    times = [O + 4 * SEC, O + 4 * SEC, O + 30 * SEC, O + 55 * SEC, O + MIN]
+    assert list(silences(stretches, times)) == [(O, O + 4 * SEC), (O + 4 * SEC, O + 10 * SEC),
+                                                (O + 20 * SEC, O + 30 * SEC), (O + 30 * SEC, O + 50 * SEC)]
+    assert list(silences(stretches, [])) == stretches
+    assert connected_stretches([Gap(O - SEC, O + MIN + SEC, DROPPED)], O, O + MIN) == []
+    assert tapecheck.longest([(0, 5), (10, 15), (20, 24)]) == (0, 5) and tapecheck.longest([]) is None
+
+
+def test_an_outage_counts_in_full_on_an_open_connection_in_session_only():
+    """Pings every 10 s across the window, a 40 s hole in the session and a 2 minute hole in pre market."""
+    hole = (O + 60 * MIN, O + 60 * MIN + 40 * SEC)
+    early = (W0 + 30 * MIN, W0 + 32 * MIN)
+    times = [t for t in range(W0, W1 + 11 * MIN, 10 * SEC)
+             if not (hole[0] < t < hole[1] or early[0] < t < early[1])]
+    lines = [(OPEN, "", W0 - MIN, 1)] + [(MESSAGE, synthetic.PING, t, 1) for t in times]
+    result = check(lines, flat(), SYMBOLS, RULES, STALE)
+    assert result.coverage.outages == (Gap(*hole, OUTAGE),)
+    assert not result.clean and result.reason == OUTAGE_REASON and result.tape.disconnected_ms == 0
+    assert result.coverage.shares == {PRE: 1.0, REGULAR: (23_400 - 40) / 23_400, POST: 1.0}
+    assert record_of(result)["outage_seconds"] == 40.0
+    longer = check(lines, flat(), SYMBOLS, RULES, 41 * SEC)
+    assert longer.coverage.outages == () and longer.clean and longer.reason is None
+
+
+def test_an_outage_ends_at_a_silence_close_and_starts_again_at_the_next_open():
+    lines = [(OPEN, "", W0 - MIN, 1), *((MESSAGE, synthetic.PING, t, 1) for t in range(W0, O + 10 * MIN + 1, 5 * SEC)),
+             (CLOSE, "no message for 30 s in session", O + 10 * MIN + 35 * SEC, 1),
+             (OPEN, "", O + 10 * MIN + 40 * SEC, 2),
+             *((MESSAGE, synthetic.PING, t, 2) for t in range(O + 11 * MIN + 20 * SEC, W1 + 11 * MIN, 5 * SEC))]
+    result = check(lines, flat(), SYMBOLS, RULES, STALE)
+    assert result.coverage.outages == (Gap(O + 10 * MIN, O + 10 * MIN + 35 * SEC, OUTAGE),
+                                       Gap(O + 10 * MIN + 40 * SEC, O + 11 * MIN + 20 * SEC, OUTAGE))
+    assert [(g.start_ms, g.end_ms) for g in result.tape.gaps] == [(O + 10 * MIN + 35 * SEC, O + 10 * MIN + 40 * SEC)]
+    assert result.tape.silence_closes == 1 and result.coverage.lost_ms[REGULAR] == 80 * SEC
+    assert result.reason == DISCONNECTED_REASON
+
+
+# Coverage on whole synthetic days.
+
+def test_a_clean_day_reports_its_partial_coverage_from_the_raw_recording_alone(clean_day, tmp_path, config, capsys):
     tape, _, _, folder = clean_day
-    official = write_official(tmp_path, DAY, tape)
-    code, out, err = run_main(capsys, folder, official)
+    official = write_official(tmp_path, DAY, tape, SHARES)
+    code, out, err = run_main(capsys, config, folder, official)
     assert (code, err) == (0, "")
     fields = summary(out)
-    assert fields["verdict"] == CONSOLIDATED and fields["clean session"] == "pass"
-    assert fields["symbols in band"] == "8" and fields["disconnected time"] == "0.000 s"
+    assert out.splitlines()[0] == "tape coverage"
+    assert fields["clean session"] == "pass" and fields["reason"] == CLEAN_REASON
+    assert fields["symbols"] == fields["symbols with prints"] == "8" and fields["covered ratio computed"] == "pass"
+    assert fields["disconnected time"] == fields["outage time"] == "0.000 s"
     assert fields["connections"] == "1" and fields["files"] == "2" and fields["delay verdict"] == "pass"
     assert fields["max_print_delay_seconds"] == "2.000 s" and fields["late_print_seconds"] == "4.000 s"
-    assert sorted(p.name for p in tmp_path.iterdir()) == [official.name, "tape_2026_10_13.json"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["coverage_2026_10_13.json", official.name]
     assert sorted(p.suffix for p in folder.iterdir()) == [".gz", ".gz"]   # no database anywhere
-    record = json.loads((tmp_path / "tape_2026_10_13.json").read_text(encoding="utf-8"))
-    assert record == {"session": "2026-10-13", "clean": True, "ratio_verdict": CONSOLIDATED, "verdict": CONSOLIDATED}
-    assert (tmp_path / "tape_2026_10_13.json").stat().st_mode & 0o777 == 0o600
-    result = check(read_recording(sorted(folder.iterdir())), load_official(official), SYMBOLS, RULES)
-    assert set(result.ratios.values()) == {1.0}
+    record = record_file(tmp_path)
+    assert set(record) == RECORD_KEYS and record["kind"] == "coverage" and record["session"] == "2026-10-13"
+    assert record["clean"] is True and record["early_close"] is False and record["reason"] == CLEAN_REASON
+    assert record["ratios"] == pytest.approx(SHARES) and record["median_ratio"] == pytest.approx(0.0375)
+    assert record["ratios_covered"] == record["ratios"] and record["median_ratio_covered"] == record["median_ratio"]
+    assert record["median_ratio"] == statistics.median(record["ratios"].values())
+    assert record["covered_share"] == {PRE: 1.0, REGULAR: 1.0, POST: 1.0}
+    assert (record["disconnected_seconds"], record["outage_seconds"]) == (0.0, 0.0)
+    assert (tmp_path / "coverage_2026_10_13.json").stat().st_mode & 0o777 == 0o600
+    assert read_records(tmp_path) == [CoverageRecord(DAY.day, True, False, record["median_ratio"],
+                                                     record["median_ratio"], record["ratios"], record["ratios"],
+                                                     0.0, 0.0)]
 
 
-def test_default_output_holds_only_verdicts_counts_and_timings(clean_day, tmp_path, capsys):
+def test_a_rerun_replaces_its_record_whole(clean_day, tmp_path, config, capsys):
     tape, _, _, folder = clean_day
-    official = write_official(tmp_path, DAY, tape)
+    official = write_official(tmp_path, DAY, tape, SHARES)
+    run_main(capsys, config, folder, official)
+    write_official(tmp_path, DAY, tape)
+    assert run_main(capsys, config, folder, official)[0] == 0
+    assert record_file(tmp_path)["ratios"] == pytest.approx(dict.fromkeys(SYMBOLS, 1.0))
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["coverage_2026_10_13.json", official.name]
+
+
+def test_default_output_holds_only_verdicts_counts_and_timings(clean_day, tmp_path, config, capsys):
+    tape, _, _, folder = clean_day
+    official = write_official(tmp_path, DAY, tape, SHARES)
     figures = [f"{v:.4f}" for v in CANARY_CLOSES.values()] + [f"{tape.truth[(DAY.day, s)]}" for s in SYMBOLS]
     figures += [f"{tape.closes[(DAY.day, s)]:.4f}" for s in SYMBOLS]
-    _, out, _ = run_main(capsys, folder, official)
+    _, out, _ = run_main(capsys, config, folder, official)
     lines = out.splitlines()
-    assert lines[0] == "tape check" and lines[-1].startswith("8 rows hidden")
+    assert lines[0] == "tape coverage" and lines[-1].startswith("9 rows hidden")
     assert all(ALLOWED.fullmatch(line) for line in lines[1:-1]), lines
-    assert [f for f in figures if f in out] == []
-    _, detail, _ = run_main(capsys, folder, official, "--detail")
-    assert [f for f in figures if f not in detail] == []
-    for title in ("tape prints", "condition histogram", "disconnected intervals", "parse counts"):
+    ratios = [f"{r:.6f}" for r in record_file(tmp_path)["ratios"].values()] + ["0.037500"]
+    assert [f for f in figures + ratios if f in out] == []
+    _, detail, _ = run_main(capsys, config, folder, official, "--detail")
+    assert [f for f in figures + ratios if f not in detail] == []
+    for title in ("tape prints", "covered time", "condition histogram", "disconnected intervals", "outage intervals",
+                  "parse counts"):
         assert title in detail.splitlines()
     assert "hidden" not in detail
 
 
-def test_a_file_begun_at_utc_midnight_in_post_market_continues_the_connection(tmp_path, capsys):
+def test_a_file_begun_at_utc_midnight_in_post_market_continues_the_connection(tmp_path, config, capsys):
     tape, lines = full_day(EST_DAY, seed=21, regular_rate=0.1, extended_rate=0.01)
     files = write_recording(tmp_path / "raw", lines)
     assert [f.name[:13] for f in files] == ["2026-11-03_08", "2026-11-04_00"]
     assert list(read_recording(files[1:]))[0][0] == MESSAGE
-    code, out, _ = run_main(capsys, tmp_path / "raw", write_official(tmp_path, EST_DAY, tape))
-    assert code == 0 and summary(out)["clean session"] == "pass" and summary(out)["verdict"] == CONSOLIDATED
+    code, out, _ = run_main(capsys, config, tmp_path / "raw", write_official(tmp_path, EST_DAY, tape))
+    assert code == 0 and summary(out)["clean session"] == "pass"
+    assert record_file(tmp_path, EST_DAY.day)["median_ratio"] == pytest.approx(1.0)
 
 
 def disconnected_after(lines, kind, raw):
@@ -373,7 +480,7 @@ def disconnected_after(lines, kind, raw):
     raise AssertionError(kind)
 
 
-def test_disconnected_time_by_every_rule_makes_the_session_not_clean(tmp_path, capsys):
+def test_disconnected_time_by_every_rule_makes_the_session_not_clean(tmp_path, config, capsys):
     faults = [Fault(DISCONNECT, DAY.open_ms - 3 * 60 * MIN, refused=1),
               Fault(KILL, DAY.open_ms + 60 * MIN, 45 * SEC, refused=1),
               Fault(PAUSE, DAY.close_ms + 60 * MIN, 25 * SEC)]
@@ -383,13 +490,48 @@ def test_disconnected_time_by_every_rule_makes_the_session_not_clean(tmp_path, c
     kept = [line for line in lines if line[0] != PROCESS_START]
     expected = (disconnected_after(kept, CLOSE, DROPPED) + disconnected_after(kept, PROCESS_KILL, None)
                 + 25 + disconnected_after(kept, CLOSE, "process paused for 25 s"))
-    code, out, _ = run_main(capsys, tmp_path / "raw", write_official(tmp_path, DAY, tape))
+    code, out, _ = run_main(capsys, config, tmp_path / "raw", write_official(tmp_path, DAY, tape))
     fields = summary(out)
-    assert code == 1 and fields["verdict"] == NOT_CLEAN and fields["clean session"] == "fail"
-    assert fields["reason"] == "disconnected time in the window"
+    assert code == 1 and fields["clean session"] == "fail" and fields["reason"] == DISCONNECTED_REASON
     assert fields["disconnected time"] == f"{expected:.3f} s" and fields["connections"] == "4"
-    record = json.loads((tmp_path / "tape_2026_10_13.json").read_text(encoding="utf-8"))
-    assert record["clean"] is False and record["verdict"] == NOT_CLEAN
+    record = record_file(tmp_path)
+    assert record["clean"] is False and record["reason"] == DISCONNECTED_REASON
+    assert record["disconnected_seconds"] == pytest.approx(expected)
+
+
+def test_lost_time_is_left_out_of_the_covered_ratio_on_an_even_tape(tmp_path, config, capsys):
+    """Half an hour killed in session on a tape with an even rate in each phase, against the true volumes, so the plain
+    median falls by about the lost share while the covered median stays near 1."""
+    tape, lines = full_day(DAY, seed=14, faults=[Fault(KILL, DAY.open_ms + 120 * MIN, 30 * MIN)])
+    write_recording(tmp_path / "raw", lines)
+    code, _, _ = run_main(capsys, config, tmp_path / "raw", write_official(tmp_path, DAY, tape))
+    record = record_file(tmp_path)
+    lost = 1 - record["covered_share"][REGULAR]
+    assert code == 1 and 0.07 < lost < 0.08 and record["covered_share"][PRE] == record["covered_share"][POST] == 1.0
+    assert record["median_ratio"] < 0.95 and record["median_ratio_covered"] == pytest.approx(1.0, abs=0.02)
+
+
+def test_the_covered_ratio_scales_each_phase_by_its_length_over_its_covered_length():
+    """A recording that starts halfway through pre market, with one AAPL print of 100 shares in pre market, 1000 in
+    the session and 50 in post market, against an official volume of 10000."""
+    half = W0 + (O - W0) // 2
+
+    def trade(vendor, size):
+        return MESSAGE, synthetic.trade_message([{"p": 10.0, "s": "AAPL", "t": vendor, "v": size}]), vendor + 100, 1
+    pings = [(MESSAGE, synthetic.PING, t, 1) for t in range(half, W1 + 11 * MIN, 10 * SEC)]
+    prints = [trade(half + 10 * MIN, 100), trade(O + 60 * MIN, 1000), trade(C + 60 * MIN, 50)]
+    lines = sorted([(OPEN, "", half, 1), *pings, *prints], key=lambda line: (line[2], line[0] != OPEN))
+    result = check(lines, flat(10_000.0), SYMBOLS, RULES, STALE)
+    cov = result.coverage
+    assert cov.shares == {PRE: 0.5, REGULAR: 1.0, POST: 1.0} and cov.outages == ()
+    assert cov.ratios["AAPL"] == 1150 / 10_000 and cov.covered["AAPL"] == 0.125
+    assert cov.ratios["MSFT"] == cov.covered["MSFT"] == 0.0 and cov.median == cov.median_covered == 0.0
+    assert result.reason == DISCONNECTED_REASON
+    unknown = check([line for line in lines if line[2] >= O], flat(10_000.0), SYMBOLS, RULES, STALE)
+    assert unknown.coverage.shares[PRE] == 0.0 and unknown.coverage.covered is None
+    record = record_of(unknown)
+    assert record["ratios_covered"] is None and record["median_ratio_covered"] is None
+    assert summary(output.render(report(unknown, 1)))["covered ratio computed"] == "fail"
 
 
 def test_replayed_prints_are_left_out_of_the_volume():
@@ -408,69 +550,81 @@ def test_replayed_prints_are_left_out_of_the_volume():
         assert measured.symbols[symbol].prints == len(own)
 
 
-# Verdicts.
+def test_eligible_stamps_follow_live_health():
+    """Only an eligible print received in the session with its vendor time there, and not replayed, renews a symbol,
+    once per message."""
+    at = O + MIN
+    items = [{"p": 10.0, "s": "AAPL", "t": at - 100, "v": 100}, {"p": 10.0, "s": "AAPL", "t": at - 50, "v": 100},
+             {"p": 10.0, "s": "MSFT", "t": at - 6 * SEC, "v": 100},          # late
+             {"p": 10.0, "s": "NVDA", "t": at + 3 * SEC, "v": 100},          # early
+             {"p": 10.0, "s": "META", "t": at - 100, "v": 100, "c": ["12"]},  # an excluded condition
+             {"p": 10.0, "s": "TSLA", "t": at - 100, "v": 100}]
+    replayed = [{"p": 10.0, "s": "QQQ", "t": at - 3 * SEC, "v": 100}]
+    before_open = [{"p": 10.0, "s": "AMZN", "t": O - 50, "v": 100}]      # received after the open, traded before
+    lines = [(OPEN, "", W0, 1), (MESSAGE, synthetic.trade_message(before_open), O + 50, 1),
+             (CLOSE, DROPPED, at - 2 * SEC, 1), (OPEN, "", at, 2),
+             (MESSAGE, synthetic.trade_message(replayed), at, 2), (MESSAGE, synthetic.trade_message(items), at, 2)]
+    tape = measure(lines, DAY, SYMBOLS, PriceRules(4_000, frozenset({"12"})))
+    renewed = {s: list(t.eligible_ms) for s, t in tape.symbols.items() if t.eligible_ms}
+    assert renewed == {"AAPL": [at], "TSLA": [at]}
+    assert list(tape.messages) == [O + 50, at, at] and tape.symbols["QQQ"].replayed == 1
+    assert tape.symbols["AMZN"].prints == 1 and tape.symbols["AMZN"].late == 0
 
-@pytest.mark.parametrize("ratios, expected", [
-    ([0.85] * 8, CONSOLIDATED), ([1.15] * 8, CONSOLIDATED), ([0.70] + [1.0] * 7, CONSOLIDATED),
-    ([0.8499] * 8, INCONCLUSIVE), ([1.1501] * 8, INCONCLUSIVE), ([0.6999] + [1.0] * 7, INCONCLUSIVE),
-    ([0.50] * 8, INCONCLUSIVE), ([0.4999] * 8, NOT_CONSOLIDATED), ([0.1] * 4 + [1.0] * 4, INCONCLUSIVE),
-    ([0.1] * 5 + [1.0] * 3, NOT_CONSOLIDATED), ([0.0] * 8, NOT_CONSOLIDATED),
-])
-def test_ratios_map_to_verdicts_at_the_band_edges(ratios, expected):
-    assert ratio_verdict(ratios)[0] == expected
 
-
-def test_a_median_above_the_band_points_at_a_single_venue_reference():
-    assert ratio_verdict([1.2] * 8) == (INCONCLUSIVE, "median ratio above band so the reference looks single venue")
-
-
-@pytest.mark.parametrize("ratio, expected", [
-    (0.4999, UNDER_HALF), (0.50, UNDER_FLOOR), (0.6999, UNDER_FLOOR), (0.70, LOW), (0.8499, LOW), (0.85, IN_BAND),
-    (1.15, IN_BAND), (1.1501, ABOVE_BAND),
-])
-def test_bands_at_their_edges(ratio, expected):
-    assert band(ratio) == expected
-
+# The clean flag, the record and criterion 1.1.
 
 def test_an_early_close_or_a_missing_recording_is_never_clean():
     early = measure([], EARLY_CLOSE, SYMBOLS, RULES)
-    assert clean_reason(early) == "an early close is never a clean session"
+    assert clean_reason(early) == EARLY_CLOSE_REASON
     missing = measure([], DAY, SYMBOLS, RULES)
-    assert clean_reason(missing) == "disconnected time in the window"
+    assert clean_reason(missing) == DISCONNECTED_REASON
     assert missing.disconnected_ms == W1 - W0 and missing.connections == 0
-    assert final_verdict((CONSOLIDATED, "x"), clean_reason(missing), None)[0] == NOT_CLEAN
+    assert clean_reason(measure([(OPEN, "", W0 - MIN, 1), (CLOSE, SHUTDOWN, W1 + MIN, 1)], DAY, SYMBOLS, RULES),
+                        [Gap(O, O + STALE, OUTAGE)]) == OUTAGE_REASON
 
 
-def test_two_inconclusive_clean_sessions_become_not_consolidated(clean_day, tmp_path, capsys):
-    tape, _, _, folder = clean_day
-    official = write_official(tmp_path, DAY, tape, ratio=0.8)
-    code, out, _ = run_main(capsys, folder, official)
-    assert code == 1 and summary(out)["verdict"] == INCONCLUSIVE and summary(out)["symbols low"] == "8"
-    write_record(tmp_path, date(2026, 10, 12), True, INCONCLUSIVE, INCONCLUSIVE)
-    code, out, _ = run_main(capsys, folder, official)
-    fields = summary(out)
-    assert code == 1 and fields["verdict"] == NOT_CONSOLIDATED and fields["ratio verdict"] == INCONCLUSIVE
-    assert fields["reason"] == "two inconclusive clean sessions in a row"
-    record = json.loads((tmp_path / "tape_2026_10_13.json").read_text(encoding="utf-8"))
-    assert (record["ratio_verdict"], record["verdict"]) == (INCONCLUSIVE, NOT_CONSOLIDATED)
+@pytest.mark.parametrize("baseline, median, expected", [
+    (0.04, 0.02, True), (0.04, 0.08, True), (0.04, 0.04, True), (0.04, 0.0199, False), (0.04, 0.0801, False),
+    (0.04, None, False), (None, 0.04, False), (0.0, 0.0, False), (0.04, 0.0, False), (0.04, float("nan"), False),
+    (float("inf"), 0.04, False),
+])
+def test_criterion_1_1_compares_within_a_factor_of_2_either_way(baseline, median, expected):
+    assert within_factor(baseline, median) is expected
 
 
-def test_the_previous_verdict_is_the_latest_earlier_clean_session(tmp_path):
-    day = date(2026, 10, 20)
-    assert previous_verdict(tmp_path, day) is None
-    write_record(tmp_path, date(2026, 10, 14), True, INCONCLUSIVE, INCONCLUSIVE)
-    write_record(tmp_path, date(2026, 10, 15), False, CONSOLIDATED, NOT_CLEAN)     # not clean, so skipped
-    write_record(tmp_path, date(2026, 10, 20), True, CONSOLIDATED, CONSOLIDATED)   # this session's own rerun
-    write_record(tmp_path, date(2026, 10, 21), True, CONSOLIDATED, CONSOLIDATED)   # later
-    assert previous_verdict(tmp_path, day) == INCONCLUSIVE
-    write_record(tmp_path, date(2026, 10, 16), True, CONSOLIDATED, CONSOLIDATED)
-    assert previous_verdict(tmp_path, day) == CONSOLIDATED
-    assert final_verdict((INCONCLUSIVE, "x"), None, CONSOLIDATED) == (INCONCLUSIVE, "x")
-    assert final_verdict((INCONCLUSIVE, "x"), None, INCONCLUSIVE)[0] == NOT_CONSOLIDATED
-    assert final_verdict((CONSOLIDATED, "x"), None, INCONCLUSIVE) == (CONSOLIDATED, "x")
-    (tmp_path / "tape_2026_10_17.json").write_text("{}", encoding="utf-8")
-    with pytest.raises(TapeCheckError, match="tape_2026_10_17.json is not a tape check record"):
-        previous_verdict(tmp_path, day)
+def test_records_are_read_in_session_order_and_the_replaced_verdicts_are_ignored(tmp_path):
+    def record(day, clean=True, covered=0.04):
+        return {"kind": "coverage", "session": day, "clean": clean, "reason": CLEAN_REASON, "early_close": False,
+                "median_ratio": 0.03, "median_ratio_covered": covered, "ratios": {"AAPL": 0.03},
+                "ratios_covered": None if covered is None else {"AAPL": covered}, "disconnected_seconds": 0,
+                "outage_seconds": 0.0, "covered_share": {PRE: 1.0, REGULAR: 1.0, POST: 1.0}}
+    assert read_records(tmp_path) == []
+    write_record(tmp_path, record("2026-10-20", covered=None))
+    write_record(tmp_path, record("2026-10-12", clean=False))
+    (tmp_path / "tape_2026_10_13.json").write_text('{"verdict": "consolidated"}', encoding="utf-8")
+    (tmp_path / "coverage_notes.json").write_text("{}", encoding="utf-8")
+    found = read_records(tmp_path)
+    assert [(r.session, r.clean, r.median_ratio_covered, r.ratios_covered) for r in found] == [
+        (date(2026, 10, 12), False, 0.04, {"AAPL": 0.04}), (date(2026, 10, 20), True, None, None)]
+    assert not list(tmp_path.glob(".*"))                      # the temporary file was replaced into place
+
+
+@pytest.mark.parametrize("change", [
+    {"kind": "tape"}, {"session": "2026-10-14"}, {"clean": 1}, {"median_ratio": True}, {"median_ratio": None},
+    {"ratios": {}}, {"ratios": {"AAPL": "0.03"}}, {"median_ratio_covered": None}, {"ratios_covered": None},
+    {"disconnected_seconds": float("inf")}, {"outage_seconds": None}, {"early_close": None},
+])
+def test_a_malformed_record_is_refused(tmp_path, change):
+    record = {"kind": "coverage", "session": "2026-10-13", "clean": True, "reason": CLEAN_REASON,
+              "early_close": False, "median_ratio": 0.03, "median_ratio_covered": 0.03, "ratios": {"AAPL": 0.03},
+              "ratios_covered": {"AAPL": 0.03}, "disconnected_seconds": 0.0, "outage_seconds": 0.0}
+    record.update(change)
+    (tmp_path / "coverage_2026_10_13.json").write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(TapeCheckError, match="coverage_2026_10_13.json is not a coverage record"):
+        read_records(tmp_path)
+    (tmp_path / "coverage_2026_10_13.json").write_text("{", encoding="utf-8")
+    with pytest.raises(TapeCheckError, match="is not a coverage record"):
+        read_records(tmp_path)
 
 
 # The delay rule.
@@ -491,8 +645,7 @@ def test_the_delay_verdict_and_settings_come_from_the_regular_session_delays(age
     message = synthetic.trade_message([{"p": 10.0, "s": "AAPL", "t": at - age, "v": 100} for age in ages])
     pre = synthetic.trade_message([{"p": 10.0, "s": "AAPL", "t": W0 + MIN - 60_000, "v": 100}])
     lines = [(OPEN, "", W0 - MIN, 1), (MESSAGE, pre, W0 + MIN, 1), (MESSAGE, message, at, 1)]
-    official = Official(DAY.day, {s: 1.0 for s in SYMBOLS}, {s: 1.0 for s in SYMBOLS})
-    fields = summary(output.render(report(check(lines, official, SYMBOLS, RULES), 0)))
+    fields = summary(output.render(report(check(lines, flat(), SYMBOLS, RULES, STALE), 0)))
     assert (fields["delay verdict"], fields["max_print_delay_seconds"]) == (verdict, setting)
 
 
@@ -500,11 +653,10 @@ def test_a_delayed_feed_fails_the_delay_verdict_and_caps_the_settings():
     o = DAY.open_ms
     tape = SyntheticTape(17, regular_rate=1.0)
     lines = recorded(tape.lines(o, o + 10 * MIN, [Fault(LATE_PRINTS, o, 10 * MIN, shift_ms=6 * SEC)]))
-    official = Official(DAY.day, {s: 1.0 for s in SYMBOLS}, {s: 1.0 for s in SYMBOLS})
-    fields = summary(output.render(report(check(lines, official, SYMBOLS, RULES), 0)))
+    fields = summary(output.render(report(check(lines, flat(), SYMBOLS, RULES, STALE), 0)))
     assert fields["delay verdict"] == "fail"
     assert (fields["max_print_delay_seconds"], fields["late_print_seconds"]) == ("5.000 s", "10.000 s")
-    empty = summary(output.render(report(check([], official, SYMBOLS, RULES), 0)))
+    empty = summary(output.render(report(check([], flat(), SYMBOLS, RULES, STALE), 0)))
     assert empty["delay verdict"] == "fail" and empty["max_print_delay_seconds"] == "not computed"
 
 
@@ -557,15 +709,15 @@ def test_a_second_display_within_5_percent_is_accepted():
     assert parse_official(data, DAY.day).volumes == {"AAPL": 1000.0}
 
 
-def test_bad_inputs_exit_with_code_2_and_one_error_line(clean_day, tmp_path, capsys):
+def test_bad_inputs_exit_with_code_2_and_one_error_line(clean_day, tmp_path, config, capsys):
     tape, _, _, folder = clean_day
     wrong = tmp_path / "official_2026_10_13.toml"
     wrong.write_text(official_toml({"AAPL": 5}, {"AAPL": 6}), encoding="utf-8")
-    code, out, err = run_main(capsys, folder, wrong)
+    code, out, err = run_main(capsys, config, folder, wrong)
     assert (code, out) == (2, "") and err.startswith("error: the official figures must cover exactly")
     holiday = write_official(tmp_path, DAY, tape).rename(tmp_path / "official_2026_11_26.toml")
-    code, _, err = run_main(capsys, folder, holiday)
+    code, _, err = run_main(capsys, config, folder, holiday)
     assert code == 2 and "2026-11-26 has no regular session" in err
-    code, _, err = run_main(capsys, tmp_path / "missing", write_official(tmp_path, DAY, tape))
+    code, _, err = run_main(capsys, config, tmp_path / "missing", write_official(tmp_path, DAY, tape))
     assert code == 2 and err.startswith("error: no recording files")
-    assert not list(tmp_path.glob("tape_*.json"))
+    assert not list(tmp_path.glob("coverage_*.json"))

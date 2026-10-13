@@ -1,7 +1,8 @@
 """S1 and S2 born identical by PLAN_V2 section 10.3: equal weights and generator states after birth, bitwise identical
 predictions while every batch has zero news inputs, S1's news weights staying zero, and divergence exactly at S2's first
 training step whose batch holds a nonzero news input. Both engines step the same hand built MarketMinutes, and S2 alone
-reads one scored headline."""
+reads one scored headline. Orders that S2 alone sends, as news can cause, draw their latency jitter from a generator of
+their own and leave every training generator, batch and weight in step."""
 
 import re
 import sqlite3
@@ -13,8 +14,10 @@ import pytest
 from btc_survivor.clock import iso
 from btc_survivor.model import MLP
 from btc_survivor.seeds import bot_rng
+from btc_survivor.types import LONG, Leg
 from btc_survivor.v2 import sessions
 from btc_survivor.v2.config import parse_stock_config
+from btc_survivor.v2.stocks.bot import BotStep
 from btc_survivor.v2.stocks.engine import StockEngine
 from btc_survivor.v2.stocks.labels import fits, is_evaluation_minute
 from btc_survivor.v2.stocks.market import MarketMinute, Sample
@@ -187,6 +190,39 @@ def test_generator_states_match_throughout_and_s1_never_stores_a_news_input(runs
     assert engines[0].window.count == engines[1].window.count == 240 * N
     assert not engines[0].window.x[:, 10:].any() and engines[1].window.x[:, 10:].any()
     assert np.array_equal(engines[0].window.x[:, :10], engines[1].window.x[:, :10])
+
+
+def test_orders_sent_by_s2_alone_never_move_a_training_generator(tmp_path):
+    c1, c2 = pair(tmp_path)
+    engines = [StockEngine.fresh(c, StockStore.open(c.db_path), DAY.open_ms - 60_000) for c in (c1, c2)]
+    s1, s2 = engines
+    sent = 0
+    for minute, m in enumerate(synthetic_minutes(5), start=1):
+        for engine in engines:
+            engine.on_minute(m)
+        if minute % 30 == 7:                       # an open, stop or rejected close that only S2 sends
+            for bot in s2.population.slot_bots():
+                bot._send(s2.broker, [Leg("open", LONG, 1.0)], m.boundary_ms, 250.0, "decision", BotStep())
+                bot.pending_order = None
+                sent += 1
+        if minute == 200:                          # an order both runs send gets one latency
+            for e in engines:
+                for bot in e.population.learners:
+                    bot._send(e.broker, [Leg("open", LONG, 1.0)], m.boundary_ms, 250.0, "decision", BotStep())
+            assert [b.pending_order.due_ms for b in s1.population.learners] == \
+                [b.pending_order.due_ms for b in s2.population.learners]
+            assert len({b.pending_order.latency_ms for b in s1.population.learners}) > 10
+            for e in engines:
+                for bot in e.population.learners:
+                    bot.pending_order = None
+        for a, b in zip(s1.population.learners, s2.population.learners):
+            assert a.rng.bit_generator.state == b.rng.bit_generator.state, minute
+            assert same_bits(a.model.params, b.model.params) and same_bits(a.preds, b.preds), minute
+        assert all(a.rng.bit_generator.state == b.rng.bit_generator.state
+                   for a, b in zip(s1.population.twins, s2.population.twins)), minute
+    assert sent == 13 * 48 and all(b.trained_minutes == DAY.minutes - 30 for b in s2.population.learners)
+    for engine in engines:
+        engine.store.close()
 
 
 def test_only_s2_keeps_the_headline_and_its_score_forecasts(runs):

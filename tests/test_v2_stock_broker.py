@@ -1,5 +1,6 @@
-"""Print fills, latency, rejections, flips, quantities, the short sale restriction and the split guard, on hand
-written prints."""
+"""Print fills, latency and its per order generator, rejections, flips, quantities, the short sale restriction and the
+split guard, on hand written prints. A print fills an order only when it traded at or after the due time, so a late
+report of a trade made inside the latency never fills, however the price moved."""
 
 import dataclasses
 from datetime import date
@@ -14,7 +15,8 @@ from btc_survivor.v2.config import load_stock_config
 from btc_survivor.v2.stocks import broker as broker_module
 from btc_survivor.v2.stocks import costs
 from btc_survivor.v2.stocks.broker import (DISCONNECTED, NO_POSITION, SESSION_CLOSED, SPLIT_GUARD, SYMBOL_STALE,
-                                           StockBroker, SymbolGuards, first_fill, fill_prints, floor_to, rejection)
+                                           StockBroker, SymbolGuards, first_fill, fill_prints, floor_to, jitter_rng,
+                                           rejection)
 from btc_survivor.v2.stocks.finnhub import Print, PrintBatch
 from btc_survivor.v2.stocks.prints import PriceRules
 from helpers import ROOT
@@ -53,19 +55,36 @@ def test_latency_is_one_second_plus_seeded_jitter_up_to_300_ms():
                          for _ in range(20)]
 
 
-def test_fills_at_the_first_eligible_print_received_at_or_after_due():
+def test_each_order_draws_its_jitter_from_a_generator_of_its_bot_and_decision_time():
+    b = broker()
+    seed = CFG.run.master_seed
+
+    def latency(bot_id, decided):
+        return b.make_order(bot_id, "AAPL", [Leg("close", LONG)], decided, 250.0, "stop",
+                            jitter_rng(seed, bot_id, decided)).latency_ms
+
+    times = [B + 60_000 * i for i in range(2000)]
+    latencies = [latency(7, t) for t in times]
+    assert min(latencies) == 1000 and max(latencies) == 1300
+    assert latencies[:50] == [latency(7, t) for t in times[:50]]          # the same order always gets one latency
+    assert latencies[:50] != [latency(8, t) for t in times[:50]]          # another bot draws its own
+    first = jitter_rng(seed, 7, B).integers(0, 301)
+    assert first == np.random.default_rng(np.random.SeedSequence([seed, 4, 7, B])).integers(0, 301)
+
+
+def test_fills_at_the_first_eligible_print_traded_and_received_at_or_after_due():
     b = broker()
     o = order(b, [Leg("open", LONG, 2.0)])
     due = o.due_ms
     early = batch(due - 1, p(250.5, due - 50))
     assert first_fill(o, early.recv_ms, fill_prints(early, DAY, RULES, None)) is None
-    at_due = batch(due, p(251.0, due - 40, "MSFT"), p(250.2, due - 30), p(250.9, due - 20))
+    at_due = batch(due, p(251.0, due, "MSFT"), p(250.2, due), p(250.9, due))
     chosen = first_fill(o, at_due.recv_ms, fill_prints(at_due, DAY, RULES, None))
     assert chosen.price == 250.2                       # exactly at due fills, on the first print of the symbol
     acct = Account(10_000.0)
     ex = b.execute(o, chosen, at_due.recv_ms, acct)
     fill = ex.fills[0]
-    assert fill.status == "filled" and fill.filled_ms == due
+    assert fill.status == "filled" and fill.filled_ms == due and fill.print_after_due_ms == 0
     assert fill.print_price == 250.2
     assert fill.price == pytest.approx(250.2 * (1 + 2.0 / 1e4))
     assert fill.allowance_bps == 2.0 and fill.levels is None and fill.book_avg_price is None
@@ -73,16 +92,40 @@ def test_fills_at_the_first_eligible_print_received_at_or_after_due():
     assert acct.side == LONG and acct.entry_price == fill.price and ex.opened_trade_id == 1
 
 
-def test_refuses_a_print_with_vendor_time_before_the_decision():
+def test_refuses_a_print_with_vendor_time_before_due():
     b = broker()
     o = order(b, [Leg("open", LONG, 2.0)])
-    late_arrival = batch(o.due_ms + 5, p(249.0, B - 1), p(249.5, B))
+    due = o.due_ms
+    late_arrival = batch(due + 5, p(249.0, B - 1), p(249.2, B), p(249.4, due - 1), p(249.5, due))
     chosen = first_fill(o, late_arrival.recv_ms, fill_prints(late_arrival, DAY, RULES, None))
-    assert chosen.vendor_ms == B and chosen.price == 249.5
-    only_old = batch(o.due_ms + 5, p(249.0, B - 1))
-    assert first_fill(o, only_old.recv_ms, fill_prints(only_old, DAY, RULES, None)) is None
-    with pytest.raises(ValueError):
-        b.execute(o, p(249.0, B - 1), o.due_ms + 5, Account(10_000.0))
+    assert chosen.vendor_ms == due and chosen.price == 249.5
+    for vendor in (B - 1, B, due - 1):
+        only_old = batch(due + 5, p(249.0, vendor))
+        assert first_fill(o, only_old.recv_ms, fill_prints(only_old, DAY, RULES, None)) is None
+        with pytest.raises(ValueError):
+            b.execute(o, p(249.0, vendor), due + 5, Account(10_000.0))
+
+
+def test_a_stale_print_from_inside_the_latency_never_fills_across_a_jump():
+    # The order goes out at 10:30. AAPL trades at 250.00 400 ms later and jumps to 251.00 at due, and the feed brings
+    # the old print 20 ms after due in one batch with the new ones.
+    b = broker()
+    o = order(b, [Leg("open", LONG, 2.0)])
+    due = o.due_ms
+    rep = batch(due + 20, p(250.0, B + 400), p(251.0, due), p(251.5, due + 10))
+    chosen = first_fill(o, rep.recv_ms, fill_prints(rep, DAY, RULES, None))
+    assert chosen.price == 251.0                       # exactly at due included, the stale print skipped
+    stale = batch(due + 20, p(250.0, B + 400))
+    assert fill_prints(stale, DAY, RULES, None) != ()   # eligible for candles and health, yet it fills no order
+    assert first_fill(o, stale.recv_ms, fill_prints(stale, DAY, RULES, None)) is None
+    with pytest.raises(ValueError, match="cannot fill"):
+        b.execute(o, p(250.0, B + 400), due + 20, Account(10_000.0))
+    later = batch(due + 900, p(251.2, due + 700))
+    fill = b.execute(o, first_fill(o, later.recv_ms, fill_prints(later, DAY, RULES, None)), later.recv_ms,
+                     Account(10_000.0)).fills[0]
+    assert fill.print_price == 251.2 and fill.print_after_due_ms == 700 and fill.filled_ms == due + 900
+    rejected = b.reject(o, SYMBOL_STALE, Account(10_000.0)).fills[0]
+    assert rejected.print_after_due_ms is None
 
 
 def test_only_eligible_regular_session_prints_fill():
@@ -123,9 +166,9 @@ def test_rejects_on_stale_symbol_disconnect_and_session_end():
 def test_a_flip_fills_both_legs_at_one_print():
     b = broker()
     acct = Account(10_000.0)
-    b.execute(order(b, [Leg("open", LONG, 2.0)]), p(250.0, B + 10), B + 2_000, acct)
+    b.execute(order(b, [Leg("open", LONG, 2.0)]), p(250.0, B + 1_500), B + 2_000, acct)
     flip = order(b, [Leg("close", LONG), Leg("open", SHORT, b.open_qty(SHORT, 250.0))], decided=B + 60_000)
-    ex = b.execute(flip, p(260.0, B + 60_010), flip.due_ms, acct)
+    ex = b.execute(flip, p(260.0, flip.due_ms), flip.due_ms, acct)
     close, open_ = ex.fills
     assert close.print_price == open_.print_price == 260.0
     assert close.price == pytest.approx(260.0 * (1 - 2e-4)) and open_.price == close.price
@@ -140,7 +183,7 @@ def test_bots_on_one_symbol_share_a_print():
     accounts = [Account(10_000.0) for _ in range(3)]
     orders = [order(b, [Leg("open", LONG, 2.0)], seed=s) for s in range(3)]
     last_due = max(o.due_ms for o in orders)
-    prints = fill_prints(batch(last_due, p(251.0, last_due - 5)), DAY, RULES, None)
+    prints = fill_prints(batch(last_due, p(251.0, last_due)), DAY, RULES, None)
     fills = [b.execute(o, first_fill(o, last_due, prints), last_due, a).fills[0] for o, a in zip(orders, accounts)]
     assert {f.print_price for f in fills} == {251.0}
     assert [f.trade_id for f in fills] == [1, 2, 3]
@@ -149,7 +192,7 @@ def test_bots_on_one_symbol_share_a_print():
 def test_a_leg_rejects_without_a_matching_position():
     b = broker()
     acct = Account(10_000.0)
-    ex = b.execute(order(b, [Leg("close", SHORT)]), p(250.0, B + 5), B + 2_000, acct)
+    ex = b.execute(order(b, [Leg("close", SHORT)]), p(250.0, B + 1_500), B + 2_000, acct)
     assert ex.rejected == NO_POSITION and ex.closed is None and acct.side == FLAT
 
 
@@ -165,7 +208,7 @@ def test_longs_round_down_to_6_decimals_and_shorts_to_whole_shares_with_their_no
     assert b.open_qty(SHORT, 200.0) == 3.0                      # 2.5, halves round up
     assert b.open_qty(SHORT, 2_000.0) == 1.0                    # 0.25, the one share minimum
     acct = Account(10_000.0)
-    ex = b.execute(order(b, [Leg("open", SHORT, 1.0)], symbol="TSLA", ref=400.0), p(400.0, B + 5, "TSLA"),
+    ex = b.execute(order(b, [Leg("open", SHORT, 1.0)], symbol="TSLA", ref=400.0), p(400.0, B + 1_500, "TSLA"),
                    B + 2_000, acct)
     fill = ex.fills[0]
     assert fill.qty == 1.0 and fill.notional == pytest.approx(400.0 * (1 - 3e-4))

@@ -9,10 +9,13 @@ rebinding, every method that could write gets 405, and every response carries th
 values of the secrets file are registered with the redactor at start and every string of every JSON body passes it,
 so no secret reaches the page even if a row held one. Errors on the page name a run or a panel, never a path.
 
+The server keeps UTC alone. The page shows every time in UTC or in the viewer's own zone, as the version 1 page does,
+and turns a from or to typed in either zone into the UTC minute the explorer's filters take.
+
 The skill panel uses evaluate's own functions, so it shows what evaluate would print. The window and its cutoff come
 from S2's run minutes, the lags and z values from S2's meta, and a row counts only when its label matured by the end
 of the window. Every figure is descriptive until the cutoff, and after it S2's news predictor alone carries the pass or
-fail word of the confirmatory test.
+fail word of H1, the first test of the confirmatory sequence, while H2, the test beyond price, is evaluate's alone.
 
     btc_survivor_v2 dashboard configs/v2/s1_prices.toml configs/v2/s2_news.toml [--port 8060]
 """

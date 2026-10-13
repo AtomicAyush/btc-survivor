@@ -229,6 +229,8 @@ def test_a_forced_open_shows_its_fill_costs_trade_position_and_matured_label(con
         "filled_at": "2026-10-21T14:30:01.200Z", "latency_ms": 1200, "print_price": kit.CANARY_PRICE,
         "price": kit.CANARY_FILL, "allowance_bps": 2.0, "slippage_bps": 0.42, "fee": 0.03, "sec_fee": 0.02,
         "taf_fee": 0.01}
+    # The report only columns reach the decision detail, which the page shows once they hold values.
+    assert {"print_after_due_ms", "news_window"} <= set(fill)
     [trade] = d["trades"]
     assert (trade["id"], trade["side"], trade["closed_at"], trade["pnl_net"], trade["exit_reason"], trade["forced"]) \
         == (1, "long", "2026-10-21T15:00:01.200Z", 0.92, "signal", 1)

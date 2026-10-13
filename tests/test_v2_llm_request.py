@@ -1,6 +1,8 @@
 """The model request of PLAN_V2 sections 8.1 to 8.3 and the probe file of section 8.8, on fictional items and the
 committed news config. Nothing here reaches the network. The SDK checks run the pinned anthropic package against an
-in process transport that answers with a canned body, and every secret is a fake value."""
+in process transport that answers with a canned body, and every secret is a fake value. Haiku always sends thinking
+disabled, and Sonnet sends whichever of disabled, between_tools or adaptive its config names, with max_tokens grown by
+its thinking room."""
 
 import codecs
 import dataclasses
@@ -18,16 +20,21 @@ from btc_survivor.v2.config import HAIKU_MODEL, OFFICIAL_KINDS, SONNET_MODEL, lo
 from btc_survivor.v2.local_secrets import ANTHROPIC, CONTACT, FINNHUB, load_secrets
 from btc_survivor.v2.news import llm_request, probes
 from btc_survivor.v2.news.llm_request import (
-    HERE, INSTRUCTION, PROMPT_FILE, PROMPT_SHA256, SCHEMA_FILE, SCHEMA_SHA256, RequestError, RequestItem,
-    RequestTooLarge, build_request, canonical, check_pins, check_size, clean, haiku_spec, input_tokens, load_prompt,
-    load_schema, request_item, sonnet_spec,
+    HERE, INSTRUCTION, MODEL_THINKING, PROMPT_FILE, PROMPT_SHA256, SCHEMA_FILE, SCHEMA_SHA256, THINKING, RequestError,
+    RequestItem, RequestTooLarge, build_request, canonical, check_pins, check_size, clean, haiku_spec, input_tokens,
+    load_prompt, load_schema, request_item, sonnet_spec,
 )
-from btc_survivor.v2.news.llm_validate import EVENT_TYPES, TICKERS
+from btc_survivor.v2.news.llm_validate import EVENT_TYPES, HORIZONS, SURPRISES, TICKERS
 from helpers import ROOT
 
 LLM = load_news_config(ROOT / "configs" / "v2" / "news.toml").llm
 HAIKU = haiku_spec(LLM)
 SONNET = sonnet_spec(LLM)
+# Sonnet under each thinking setting it may send, with the room the committed config gives thinking when it has any.
+ROOM = SONNET.thinking_tokens or 1024
+SONNETS = {"disabled": dataclasses.replace(SONNET, thinking="disabled", thinking_tokens=0),
+           "between_tools": dataclasses.replace(SONNET, thinking="between_tools", thinking_tokens=ROOM),
+           "adaptive": dataclasses.replace(SONNET, thinking="adaptive", thinking_tokens=ROOM)}
 SENT_KEYS = {"model", "max_tokens", "thinking", "output_config", "system", "messages"}
 NEVER_SENT = {"temperature", "top_p", "top_k", "tools", "tool_choice", "metadata", "stop_sequences", "fallbacks",
               "betas", "service_tier", "inference_geo", "container", "stream", "speed", "mcp_servers",
@@ -136,7 +143,7 @@ def test_the_prompt_is_utf8_with_lf_endings_and_sent_unchanged():
     prompt = (HERE / PROMPT_FILE).read_bytes()
     assert b"\r" not in prompt and not prompt.startswith(codecs.BOM_UTF8) and prompt.endswith(b"\n")
     assert prompt.decode("utf-8") == load_prompt()
-    assert "src/btc_survivor/v2/news/prompt_v1.txt text eol=lf" in (ROOT / ".gitattributes").read_text().splitlines()
+    assert f"src/btc_survivor/v2/news/{PROMPT_FILE} text eol=lf" in (ROOT / ".gitattributes").read_text().splitlines()
     for spec in (HAIKU, SONNET):
         assert build(spec).params()["system"][0]["text"].encode("utf-8") == prompt
 
@@ -169,7 +176,7 @@ def test_the_committed_news_config_pins_the_files():
 # What a request holds
 
 
-@pytest.mark.parametrize("spec", [HAIKU, SONNET], ids=["haiku", "sonnet"])
+@pytest.mark.parametrize("spec", [HAIKU, *SONNETS.values()], ids=["haiku", *(f"sonnet {w}" for w in SONNETS)])
 def test_no_sampling_parameters_tools_metadata_or_fallbacks(spec):
     params = build(spec).params()
     assert set(params) == SENT_KEYS
@@ -177,11 +184,30 @@ def test_no_sampling_parameters_tools_metadata_or_fallbacks(spec):
     assert set(build(spec).count_params()) == SENT_KEYS - {"max_tokens"}
 
 
-@pytest.mark.parametrize("spec", [HAIKU, SONNET], ids=["haiku", "sonnet"])
-def test_thinking_disabled_and_effort_low(spec):
+def test_haiku_sends_thinking_disabled_and_both_models_send_effort_low():
+    params = build(HAIKU).params()
+    assert params["thinking"] == {"type": "disabled"} and LLM.thinking == "disabled" and HAIKU.thinking_tokens == 0
+    for spec in (HAIKU, SONNET, *SONNETS.values()):
+        assert build(spec).params()["output_config"] == {"effort": "low", "format": {"type": "json_schema",
+                                                                                      "schema": load_schema()}}
+
+
+@pytest.mark.parametrize("word, sent", [("disabled", {"type": "disabled"}),
+                                        ("between_tools", {"type": "between_tools"}),
+                                        ("adaptive", {"type": "adaptive"})])
+def test_sonnet_sends_the_thinking_setting_its_config_names_with_room_for_thinking_in_max_tokens(word, sent):
+    spec = SONNETS[word]
     params = build(spec).params()
-    assert params["thinking"] == {"type": "disabled"}
-    assert params["output_config"] == {"effort": "low", "format": {"type": "json_schema", "schema": load_schema()}}
+    assert params["thinking"] == sent == THINKING[word]
+    assert params["max_tokens"] == spec.request_max_tokens == spec.max_tokens + spec.thinking_tokens
+    assert (spec.thinking_tokens == 0) == (word == "disabled")
+    assert params["max_tokens"] == (1024 if word == "disabled" else 1024 + ROOM)
+
+
+def test_the_committed_sonnet_thinking_setting_is_one_sonnet_accepts():
+    assert SONNET.thinking in MODEL_THINKING[SONNET_MODEL] and MODEL_THINKING[HAIKU_MODEL] == ("disabled",)
+    assert (SONNET.thinking == "disabled") == (SONNET.thinking_tokens == 0)
+    assert build(SONNET).params()["thinking"] == THINKING[SONNET.thinking]
 
 
 def test_each_scorer_sends_its_exact_model_id():
@@ -192,10 +218,25 @@ def test_each_scorer_sends_its_exact_model_id():
 
 
 @pytest.mark.parametrize("change", [{"model": "model-x"}, {"effort": "medium"}, {"thinking": "adaptive"},
-                                   {"max_tokens": 0}], ids=["model", "effort", "thinking", "max_tokens"])
-def test_a_setting_outside_the_plan_is_refused(change):
+                                   {"thinking": "between_tools", "thinking_tokens": 1024}, {"thinking": "enabled"},
+                                   {"thinking_tokens": 1024}, {"max_tokens": 0}],
+                         ids=["model", "effort", "adaptive", "between_tools", "enabled", "thinking room", "max_tokens"])
+def test_a_setting_outside_the_plan_is_refused_for_haiku(change):
     with pytest.raises(RequestError):
         build(dataclasses.replace(HAIKU, **change))
+
+
+@pytest.mark.parametrize("change", [{"thinking": "enabled", "thinking_tokens": 1024},
+                                   {"thinking": "adaptive", "thinking_tokens": 0},
+                                   {"thinking": "between_tools", "thinking_tokens": 0},
+                                   {"thinking": "disabled", "thinking_tokens": 1024},
+                                   {"thinking": "adaptive", "thinking_tokens": -1},
+                                   {"effort": "high", "thinking": "adaptive", "thinking_tokens": 1024}],
+                         ids=["enabled", "adaptive without room", "between_tools without room",
+                              "disabled with room", "negative room", "effort"])
+def test_a_setting_outside_the_plan_is_refused_for_sonnet(change):
+    with pytest.raises(RequestError, match="thinking|effort"):
+        build(dataclasses.replace(SONNET, **change))
 
 
 @pytest.mark.parametrize("kind", OFFICIAL_KINDS)
@@ -207,11 +248,13 @@ def test_haiku_and_sonnet_send_the_same_prompt_schema_and_user_message_for_an_of
     assert haiku["output_config"] == sonnet["output_config"]
     assert haiku["messages"] == sonnet["messages"]
     del haiku["system"][0]["cache_control"]
-    assert {**haiku, "model": SONNET_MODEL, "max_tokens": SONNET.max_tokens} == sonnet
+    assert {**haiku, "model": SONNET_MODEL, "max_tokens": SONNET.request_max_tokens,
+            "thinking": THINKING[SONNET.thinking]} == sonnet
 
 
-def test_max_tokens_is_1024_for_sonnet_and_4096_for_haiku():
-    assert build(SONNET).params()["max_tokens"] == 1024
+def test_max_tokens_is_1024_for_sonnet_plus_its_thinking_room_and_4096_for_haiku():
+    assert SONNET.max_tokens == 1024 and LLM.sonnet.thinking_tokens == SONNET.thinking_tokens
+    assert build(SONNET).params()["max_tokens"] == 1024 + SONNET.thinking_tokens
     assert build(HAIKU).params()["max_tokens"] == 4096
 
 
@@ -372,7 +415,7 @@ def send_through_the_sdk(request):
     return [r.content + "".join(f"{k}: {v}\n" for k, v in r.headers.items()).encode("utf-8") for r in seen]
 
 
-@pytest.mark.parametrize("spec", [HAIKU, SONNET], ids=["haiku", "sonnet"])
+@pytest.mark.parametrize("spec", [HAIKU, *SONNETS.values()], ids=["haiku", *(f"sonnet {w}" for w in SONNETS)])
 def test_the_pinned_sdk_sends_exactly_these_parameters(spec, monkeypatch):
     for name in ("ANTHROPIC_BASE_URL", "ANTHROPIC_LOG", "ANTHROPIC_AUTH_TOKEN"):
         monkeypatch.delenv(name, raising=False)
@@ -383,17 +426,24 @@ def test_the_request_fits_the_types_of_the_pinned_sdk():
     anthropic = pytest.importorskip("anthropic")
     from anthropic.resources.messages import AsyncMessages
     from anthropic.types import (CacheControlEphemeralParam, JSONOutputFormatParam, OutputConfigParam,
-                                 TextBlockParam, ThinkingConfigDisabledParam)
+                                 TextBlockParam, ThinkingConfigAdaptiveParam, ThinkingConfigDisabledParam)
     assert anthropic.__version__ == "1.8.0"
     create = inspect.signature(AsyncMessages.create).parameters
     count = inspect.signature(AsyncMessages.count_tokens).parameters
     assert not {"temperature", "top_p", "top_k", "fallbacks", "betas"} & set(create)
     effort = next(a for a in typing.get_args(typing.get_type_hints(OutputConfigParam)["effort"]) if a is not type(None))
-    for spec in (HAIKU, SONNET):
+    # The pinned SDK has no type for between_tools, which Python sends as the plain value the docs show, and which
+    # test_the_pinned_sdk_sends_exactly_these_parameters sees reach the wire unchanged.
+    typed = {"disabled": ThinkingConfigDisabledParam, "adaptive": ThinkingConfigAdaptiveParam}
+    for spec in (HAIKU, *SONNETS.values()):
         params = build(spec).params()
         assert set(params) <= set(create) and set(build(spec).count_params()) <= set(count)
-        hints = typing.get_type_hints(ThinkingConfigDisabledParam)
-        assert typing.get_args(hints["type"]) == (params["thinking"]["type"],)
+        if spec.thinking in typed:
+            hints = typing.get_type_hints(typed[spec.thinking])
+            assert typing.get_args(hints["type"]) == (params["thinking"]["type"],)
+            assert set(params["thinking"]) <= set(typed[spec.thinking].__annotations__)
+        else:
+            assert params["thinking"] == {"type": "between_tools"}
         assert set(params["output_config"]) == set(OutputConfigParam.__annotations__)
         assert params["output_config"]["effort"] in typing.get_args(effort)
         assert set(params["output_config"]["format"]) == set(JSONOutputFormatParam.__annotations__)
@@ -413,6 +463,9 @@ def test_the_probe_file_holds_20_fictional_items_with_a_key():
     keyed = {k.ticker for p in PROBES for k in p.key}
     assert keyed == set(TICKERS)
     assert {k.event_type for p in PROBES for k in p.key} == set(EVENT_TYPES)
+    assert {k.horizon for p in PROBES for k in p.key} == set(HORIZONS)
+    assert {k.surprise for p in PROBES for k in p.key} == set(SURPRISES)
+    assert {k.direction for p in PROBES for k in p.key} == {-1, 0, 1}
     assert any(not p.key for p in PROBES) and any(len(p.key) > 1 for p in PROBES)
     assert {p.kind for p in PROBES} == {"media", "8k", "fed_monetary", "fed_speech", "bls_release"}
     assert all(p.why for p in PROBES)
@@ -440,8 +493,11 @@ def test_a_broken_probe_file_is_refused(tmp_path, monkeypatch):
     monkeypatch.setattr(llm_request, "HERE", tmp_path)
     for broken in (lambda d: d["probes"].pop(),
                    lambda d: d["probes"][0]["key"].append({"ticker": "BTC", "event_type": "other", "is_new": True,
-                                                           "direction": 0}),
+                                                           "direction": 0, "surprise": 0, "horizon": "minutes"}),
                    lambda d: d["probes"][0]["key"][0].update(direction=True),
+                   lambda d: d["probes"][0]["key"][0].update(horizon="weeks"),
+                   lambda d: d["probes"][0]["key"][0].update(surprise=True),
+                   lambda d: d["probes"][0]["key"][0].pop("horizon"),
                    lambda d: d["probes"][15]["key"].append(dict(d["probes"][15]["key"][0])),
                    lambda d: d["probes"][1].update(kind="tweet"),
                    lambda d: d["probes"][2].update(probe_id="p99")):

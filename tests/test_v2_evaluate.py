@@ -4,7 +4,9 @@ Each test builds or copies a prices run and a news run with news.db, a key ledge
 folder, from fictional prices and the committed configs read as if they sat in that folder, so no test opens a real run
 database, the real news.db or the real key ledger. The runs launch on Monday 19 October 2026, record 7 sessions and
 reach their cutoff after 6 sessions of run minutes, so the window holds sessions 2 to 6. Every row of the news
-predictor in the window is built with a correlation of exactly 0.2 with its label within each symbol, or exactly 0."""
+predictor in the window is built with a correlation of exactly 0.2 with its label within each symbol, or exactly 0.
+Both runs store 10 price z scores for every evaluation minute and symbol, noise by default, or with confound built so
+that news carries nothing beyond them. The gate session's coverage record is Monday 12 October 2026."""
 
 import dataclasses
 import json
@@ -12,6 +14,7 @@ import math
 import re
 import shutil
 import sqlite3
+import statistics
 from datetime import date
 from pathlib import Path
 from typing import NamedTuple
@@ -48,6 +51,7 @@ COMMIT = "0123456789abcdef0123456789abcdef01234567"
 TWIN_BASE = 100
 NOTIONAL = 500.0
 SCORES = ("news_company", "news_macro", "finbert", "haiku", "finbert_matched", "sonnet", "haiku_official")
+GATE, BASELINE = date(2026, 10, 12), 0.04  # the gate session and its median ratio, about the free feed's share
 
 
 class Built(NamedTuple):
@@ -115,14 +119,32 @@ def planted(rng, labels, corr):
     return 0.1 * (corr * z + math.sqrt(1 - corr * corr) * e)
 
 
-def make_forecasts(rng, labels, news_corr):
-    """The forecast rows of both runs, (ts, symbol, predictor, prediction, items, inputs_max_recv_ms)."""
+def price_z(zrng, rows, values, confound):
+    """The 10 price z scores of a symbol's window rows, noise, or with confound the first one the news score itself,
+    with the news score returned plus a part orthogonal to the label, the intercept and every score, so the partial
+    correlation of news and label beyond the scores is exactly 0 while the raw one is 0.2 over sqrt(1.09)."""
+    z = zrng.normal(size=(len(rows), 10))
+    if not confound:
+        return z, values
+    y = np.array([row.label_bps for row in rows])
+    z[:, 0] = values / values.std()
+    design = np.column_stack([np.ones(len(rows)), z, y])
+    f = zrng.normal(size=len(rows))
+    f -= design @ np.linalg.lstsq(design, f, rcond=None)[0]
+    return z, values + 0.3 * values.std() * f / f.std()
+
+
+def make_forecasts(rng, labels, news_corr, zrng, confound=False):
+    """The forecast rows of both runs, (ts, symbol, predictor, prediction, items, inputs_max_recv_ms), and the price z
+    scores of every evaluation minute and symbol, drawn from their own generator so the forecasts never change."""
     s1, s2 = [], []
-    news = {}
+    news, scores = {}, {}
     for symbol in SYMBOLS:
         rows = [row for row in labels[symbol] if in_window(row.ts)]
         values = planted(rng, np.array([row.label_bps for row in rows]), news_corr)
+        z, values = price_z(zrng, rows, values, confound)
         news.update({(row.ts, symbol): float(v) for row, v in zip(rows, values)})
+        scores.update({(row.ts, symbol): z[i] for i, row in enumerate(rows)})
     for j, symbol in enumerate(SYMBOLS):
         for row in labels[symbol]:
             i, ts = EVAL_MS.index(row.ts), row.ts
@@ -135,7 +157,9 @@ def make_forecasts(rng, labels, news_corr):
                    (ts, symbol, "news", news.get((ts, symbol), float(rng.normal(0, 0.1))), 2, ts - MS_PER_MINUTE)]
             s2 += [(ts, symbol, p, float(rng.normal(0, 0.1)), 1, ts - MS_PER_MINUTE) for p in SCORES
                    if present(p, i, j)]
-    return s1, s2
+            if (ts, symbol) not in scores:
+                scores[ts, symbol] = zrng.normal(size=10)
+    return s1, s2, scores
 
 
 def news_lines(i, ts):
@@ -209,7 +233,7 @@ def write_configs(folder):
 
 def write_news(built):
     """news.db with one Haiku and one Sonnet call, healthy heartbeats and a few scored items, all with the launch
-    hashes and models, the key ledger with October spend and the consolidated tape check before launch."""
+    hashes and models, the key ledger with October spend and the gate session's coverage record before launch."""
     conn = news_db.open_writer(built.news_db)
     call = {"ledger_id": 1, "kind": "single", "status": "ok", "n_items": 1, "sdk_version": "0",
             "request_sha256": "d" * 64, "effort": "low", "thinking": "disabled", "max_tokens": 1024,
@@ -243,20 +267,36 @@ def write_news(built):
     book.commit()
     book.close()
     built.checks.mkdir(parents=True)
-    (built.checks / "tape_2026_10_12.json").write_text(json.dumps(
-        {"session": "2026-10-12", "clean": True, "ratio_verdict": "consolidated", "verdict": "consolidated"}))
+    write_coverage(built.checks, GATE, BASELINE)
 
 
-def build(folder, news_corr=0.2, seed=11):
-    """Both runs with identical candles, labels, linear_prices rows and trades, S2 with every news predictor."""
+def coverage_record(day, median, clean=True, early_close=False):
+    """A coverage record in the format tape-check writes, every symbol at the median ratio."""
+    ratios = {symbol: median for symbol in SYMBOLS}
+    return {"kind": "coverage", "session": day.isoformat(), "clean": clean and not early_close,
+            "reason": "a full session connected throughout", "early_close": early_close, "median_ratio": median,
+            "median_ratio_covered": median if clean else None, "ratios": ratios,
+            "ratios_covered": ratios if clean else None, "disconnected_seconds": 0.0 if clean else 30.0,
+            "outage_seconds": 0.0, "covered_share": {"pre": 1.0, "regular": 1.0, "post": 1.0}}
+
+
+def write_coverage(folder, day, median, clean=True, early_close=False):
+    (folder / f"coverage_{day:%Y_%m_%d}.json").write_text(json.dumps(coverage_record(day, median, clean, early_close)))
+
+
+def build(folder, news_corr=0.2, seed=11, confound=False):
+    """Both runs with identical candles, labels, linear_prices rows, price z scores and trades, S2 with every news
+    predictor."""
     built = Built(folder)
     write_configs(folder)
     configs = load_run_pair(built.s1, built.s2)
     rng = np.random.default_rng(seed)
     candles = make_candles(rng)
     labels = {symbol: recompute_labels(candles[symbol], 30) for symbol in SYMBOLS}
-    forecasts = make_forecasts(rng, labels, news_corr)
+    *forecasts, scores = make_forecasts(rng, labels, news_corr, np.random.default_rng([seed, 1]), confound)
     shared = [(records.INSERT_CANDLE, records.candle_row(c)) for symbol in SYMBOLS for c in candles[symbol]]
+    shared += [(records.INSERT_PRICE_Z, records.price_z_row(sessions.k_at(ms), ms, symbol, z))
+               for (ms, symbol), z in sorted(scores.items())]
     for symbol in SYMBOLS:
         for row in labels[symbol]:
             shared += [records.label_statement(dataclasses.replace(row, exit_price=None, label_bps=None,
@@ -334,8 +374,12 @@ def test_the_synthetic_runs_are_valid_and_every_outcome_matches(base):
     assert ev.labels_compared == 2 * 8 * 12 * 6
     assert {(o.run, o.name): o.matched for o in ev.outcomes} == {
         **{(run, name): True for run in evaluate.RUNS for name in (
-            "first trades", "rhythm", "burn", "founder equity", "no deaths", "flat at every close", "gate")},
+            "first trades", "burn", "founder equity", "no deaths", "flat at every close")},
         ("both runs", "pairing"): True}
+    # The round trips per session are reported beside the outcomes and never judged, every one forced here.
+    trips = ev.tables["round trips"]
+    assert [row["run"] for row in trips] == list(evaluate.RUNS) and all(row["learners"] > 0 for row in trips)
+    assert all(row["own"] == "0.00" and row["all"] == row["forced"] and float(row["forced"]) > 0 for row in trips)
     assert ev.twin_pairs == 2 * 8 * 2 * 4 and ev.deaths == ()
     assert ev.fallback_share == 0.0 and ev.spend_alert_days == 0
 
@@ -352,6 +396,54 @@ def test_a_planted_correlation_of_0_2_passes_and_zero_fails(base, tmp_path):
     assert zero.confirmatory.corr == pytest.approx(0.0, abs=1e-12)
     assert abs(zero.confirmatory.t) < 1e-6 and not zero.confirmatory.passed
     assert zero.valid
+    # H2 is run only after H1 passes, so the familywise error stays at one sided 1 percent.
+    assert zero.incremental is None and zero.without_scores == 0
+    summary, detail = evaluate.report(zero)
+    assert dict(summary.summary)["incremental test"] == evaluate.output.Word("not run")
+    assert dict(summary.summary)["incremental rows"] == evaluate.output.Count(0)
+    assert {r.title: r for r in detail}["incremental test"].rows[0]["verdict"] == "not run"
+
+
+def window_scores(db):
+    conn = store.open_reader(db)
+    try:
+        return evaluate.price_scores(conn, Window(LAUNCH, START, END, True, FINAL))
+    finally:
+        conn.close()
+
+
+def test_h2_judges_the_rows_of_h1_beyond_the_10_price_z_scores(base):
+    ev = run_eval(base)
+    rows = rows_on(base.s2_db, "news", keys(base.s2_db, "news"))
+    scores = window_scores(base.s2_db)
+    assert len(rows) == 480 and scores == window_scores(base.s1_db)
+    assert ev.incremental == stats.partial_skill(*zip(*[(ts, s, p, y, scores[ts, s]) for ts, s, p, y in rows]))
+    assert ev.incremental.rows == 480 and ev.without_scores == 0 and ev.incremental.left_out == ()
+    assert ev.incremental.passed and ev.incremental.corr == pytest.approx(0.2, abs=0.05)
+    summary, detail = evaluate.report(ev)
+    assert dict(summary.summary)["incremental test"] is True
+    row = {r.title: r for r in detail}["incremental test"].rows[0]
+    assert (row["predictor"], row["n"], row["rows without price scores"], row["verdict"]) == (
+        "news beyond price scores", 480, "0", "pass")
+
+
+def test_news_that_only_repeats_a_price_score_passes_h1_and_fails_h2(tmp_path):
+    ev = run_eval(build(tmp_path / "confound", confound=True))
+    assert ev.confirmatory.passed and ev.confirmatory.corr == pytest.approx(0.2 / math.sqrt(1.09), abs=1e-12)
+    assert ev.incremental.rows == 480 and ev.incremental.corr == pytest.approx(0.0, abs=1e-9)
+    assert not ev.incremental.passed and ev.valid
+    summary, _ = evaluate.report(ev)
+    assert dict(summary.summary)["incremental test"] is False
+
+
+def test_rows_without_price_scores_are_left_out_of_h2_and_counted(copy):
+    execute(copy.s2_db, "DELETE FROM price_z WHERE symbol = 'AAPL' AND ts > ? AND ts <= ?",
+            (iso(SESSIONS[2].open_ms), iso(SESSIONS[2].close_ms)))
+    execute(copy.s2_db, "UPDATE price_z SET z3 = NULL WHERE symbol = 'MSFT' AND ts = ?", (iso(EVAL_MS[30]),))
+    ev = run_eval(copy)
+    assert ev.confirmatory.rows == 480 and ev.without_scores == 13 and ev.incremental.rows == 467
+    summary, _ = evaluate.report(ev)
+    assert dict(summary.summary)["rows without price scores"] == evaluate.output.Count(13)
 
 
 # The cutoff and the window
@@ -452,6 +544,17 @@ def test_deaths_are_reported(copy):
     assert ev.valid
     summary, _ = evaluate.report(ev)
     assert dict(summary.summary)["deaths"] == evaluate.output.Count(1)
+    # The survivors' mean leaves the dead learner out, and the mean over all learners counts it at its final equity.
+    conn = sqlite3.connect(copy.s1_db)
+    survivors = [conn.execute("SELECT equity FROM equity_snapshots WHERE bot_id = ? AND ts <= ? ORDER BY ts DESC "
+                              "LIMIT 1", (bot_id, END)).fetchone()[0] for bot_id in range(1, 9) if bot_id != 4]
+    conn.close()
+    equity = {row["run"]: row for row in ev.tables["learner equity"]}
+    assert equity["prices run"] == {"run": "prices run", "learners": 8, "survivors": 7,
+                                    "survivors mean equity": f"{statistics.fmean(survivors):.2f}",
+                                    "all learners mean equity": f"{statistics.fmean([*survivors, 1.8]):.2f}"}
+    assert equity["news run"]["survivors"] == 8
+    assert equity["news run"]["survivors mean equity"] == equity["news run"]["all learners mean equity"]
 
 
 def test_settings_come_from_meta_and_never_from_the_config_files(copy):
@@ -553,6 +656,17 @@ def plant_spend(b, usd=19.5):
     conn.close()
 
 
+def plant_coverage(b):
+    """Coverage due at session 2 as recorded at launch, with session 3 the first clean one at 2.01 times the gate."""
+    conn = store.open_reader(b.s2_db)
+    meta = json.loads(store.read_meta(conn)["evaluation_json"])
+    conn.close()
+    execute(b.s2_db, "UPDATE meta SET value = ? WHERE key = 'evaluation_json'",
+            (json.dumps({**meta, "tape_check_sessions": [2]}),))
+    write_coverage(b.checks, SESSIONS[1].day, BASELINE, clean=False)
+    write_coverage(b.checks, SESSIONS[2].day, 2.01 * BASELINE)
+
+
 PLANTED = {
     "a lookahead forecast row": (plant_lookahead, {"lookahead audit"}),
     "a score line counted before it was scored": (plant_late_line, {"lookahead audit"}),
@@ -585,7 +699,9 @@ PLANTED = {
         iso(SESSIONS[2].open_ms - 10 * MS_PER_MINUTE))), {"local only checks"}),
     "a missing local only check": (lambda b: execute(b.s1_db, "DELETE FROM feed_events WHERE ts = ?", (
         iso(SESSIONS[3].open_ms - 10 * MS_PER_MINUTE),)), {"local only checks"}),
-    "no tape check before launch": (lambda b: (b.checks / "tape_2026_10_12.json").unlink(), {"tape checks"}),
+    "no coverage record before launch": (lambda b: (b.checks / "coverage_2026_10_12.json").unlink(),
+                                         {"coverage stability"}),
+    "a coverage record outside a factor of 2 of the gate session": (plant_coverage, {"coverage stability"}),
     "a start without its commit": (lambda b: execute(b.s1_db, records.INSERT_FEED_EVENT, records.feed_event_row(
         SESSIONS[2].boundary(9), evaluate.CODE_COMMIT)), {"code commits listed"}),
 }
@@ -659,28 +775,72 @@ def test_an_interim_look_says_descriptive_and_never_pass_or_fail(base):
     early = dataclasses.replace(ev, window=dataclasses.replace(ev.window, final=False))
     summary, detail = evaluate.report(early)
     assert dict(summary.summary)["confirmatory test"] == evaluate.output.Word("descriptive")
+    assert dict(summary.summary)["incremental test"] == evaluate.output.Word("descriptive")
     assert dict(summary.summary)["cutoff reached"] is False
 
 
-def test_tape_checks_at_sessions_10_20_and_40_need_a_decided_consolidated_verdict():
+def test_coverage_at_sessions_10_20_and_40_stays_within_a_factor_of_2_of_the_gate_session():
     launch, due = LAUNCH_MS, (10, 20, 40)
     window = Window(LAUNCH, START, iso(evaluate.nth_session(launch, 25).close_ms), False, 0)
-    before = (date(2026, 10, 12), True, "consolidated")
+    gate = (GATE, True, BASELINE)
 
     def day(n):
         return evaluate.nth_session(launch, n).day
 
-    passed = [before, (day(10), True, "inconclusive"), (day(11), True, "consolidated"), (day(21), True, "consolidated")]
-    assert evaluate.check_tape(passed, window, due) == evaluate.Check("tape checks", True)
-    unclean = [before, (day(10), False, "consolidated"), (day(12), True, "not consolidated"),
-               (day(20), True, "consolidated")]
-    assert evaluate.check_tape(unclean, window, due).problems == ("the tape check at or after session 10 is "
-                                                                  "not consolidated",)
+    # The edges count as within, and session 21 stands for session 20 when 20 has no record.
+    passed = [gate, (day(10), True, BASELINE / 2), (day(21), True, 2 * BASELINE)]
+    assert evaluate.check_coverage(passed, window, due) == evaluate.Check("coverage stability", True)
+    # An unclean session is passed over, so the first clean one after session 10 is judged, at 2.5 times the gate.
+    unclean = [gate, (day(10), False, BASELINE), (day(12), True, 2.5 * BASELINE), (day(20), True, BASELINE)]
+    assert evaluate.check_coverage(unclean, window, due).problems == (
+        f"the median ratio of {day(12)}, the first clean session at or after session 10, is 2.50 times the gate "
+        f"session's",)
+    low = [gate, (day(10), True, 0.49 * BASELINE)]
+    assert not evaluate.check_coverage(low, window, due).passed
     # Before the cutoff a record not written yet is not yet due, and at the cutoff a missing record fails.
-    assert evaluate.check_tape([before], window, due) == evaluate.Check("tape checks", True)
+    assert evaluate.check_coverage([gate], window, due) == evaluate.Check("coverage stability", True)
     final = dataclasses.replace(window, final=True)
-    assert evaluate.check_tape([before], final, due).problems == (
-        "the tape check at or after session 10 is missing", "the tape check at or after session 20 is missing")
+    assert evaluate.check_coverage([gate], final, due).problems == (
+        "the coverage record at or after session 10 is missing",
+        "the coverage record at or after session 20 is missing")
+
+
+def test_the_baseline_is_the_gate_session_the_earliest_full_session_before_launch_clean_or_not():
+    launch = LAUNCH_MS
+    window = Window(LAUNCH, START, iso(evaluate.nth_session(launch, 12).close_ms), True, 0)
+    later = (evaluate.nth_session(launch, 10).day, True, 0.05)
+    # 12 October is the gate even when a silence close left it unclean, and the later 0.2 is never the baseline.
+    records = [(GATE, False, 0.04), (date(2026, 10, 14), True, 0.2), later]
+    assert evaluate.check_coverage(records, window, (10,)) == evaluate.Check("coverage stability", True)
+    assert not evaluate.check_coverage(records[1:], window, (10,)).passed  # 0.05 against a baseline of 0.2
+    # A later unclean session is never judged against the gate, only the first clean one at or after session 10.
+    assert evaluate.check_coverage([*records, (evaluate.nth_session(launch, 11).day, False, 0.5)], window,
+                                   (10,)).passed
+    # An early close never counts, so the Friday after Thanksgiving, session 29, is passed over for the Monday after.
+    end = Window(LAUNCH, START, iso(evaluate.nth_session(launch, 30).close_ms), True, 0)
+    thanksgiving = [(GATE, True, 0.04), (evaluate.nth_session(launch, 29).day, True, 0.4),
+                    (evaluate.nth_session(launch, 30).day, True, 0.05)]
+    assert evaluate.nth_session(launch, 29).early_close and evaluate.check_coverage(thanksgiving, end, (29,)).passed
+    assert evaluate.check_coverage([later], window, (10,)).problems == (
+        "no full session coverage record before launch, so no gate session",)
+    early = sessions.session_on(date(2026, 11, 27))   # an early close before a later launch is never the gate
+    assert early.early_close and not evaluate.full_session(early.day)
+    assert evaluate.check_coverage([(GATE, True, 0.0), later], window, (10,)).problems == (
+        "the gate session's median ratio is not above zero",)
+
+
+def test_coverage_records_are_read_from_the_checks_folder_and_old_tape_verdicts_are_ignored(copy):
+    (copy.checks / "coverage_2026_10_12.json").unlink()
+    (copy.checks / "tape_2026_10_12.json").write_text(json.dumps(
+        {"session": "2026-10-12", "clean": True, "ratio_verdict": "consolidated", "verdict": "consolidated"}))
+    write_coverage(copy.checks, date(2026, 10, 13), BASELINE, early_close=False, clean=False)
+    write_coverage(copy.checks, date(2026, 10, 14), BASELINE)
+    assert evaluate.coverage_records(copy.checks) == [(date(2026, 10, 13), False, BASELINE),
+                                                      (date(2026, 10, 14), True, BASELINE)]
+    assert failing(run_eval(copy)) == set()
+    (copy.checks / "coverage_2026_10_14.json").write_text(json.dumps({"session": "2026-10-14", "clean": True}))
+    with pytest.raises(EvaluateError, match="coverage_2026_10_14.json is not a coverage record"):
+        run_eval(copy)
 
 
 # Descriptive results
@@ -768,6 +928,53 @@ def test_a_position_held_over_a_close_while_healthy_is_not_flat(copy):
         f"bot 2 MSFT {s.day}" for s in SESSIONS[3:6])
 
 
+def test_own_trades_are_reported_and_never_judged(copy):
+    ev = run_eval(copy)
+    assert "gate" not in {o.name for o in ev.outcomes}
+    own = {row["run"]: row for row in ev.tables["own trades"]}
+    # Every decision predicts 0.5 bps, 8 a session on each home symbol, so the spread comes from the label scales.
+    conn = sqlite3.connect(copy.s1_db)
+    sd = {symbol: np.std([y for (y,) in conn.execute(
+        "SELECT label_bps FROM stock_labels WHERE symbol = ? AND status = 'matured' AND ts > ? AND ts <= ?",
+        (symbol, START, END))]) for symbol in SYMBOLS}
+    conn.close()
+    margin = load_run_pair(copy.s1, copy.s2)[0].trading.margin_sigma
+    assert own["prices run"] == {"run": "prices run", "margin sigma": f"{margin:g}", "decisions": 64, "opens": 64,
+                                 "forced opens": 64, "own opens": 0, "own share": "0.0000",
+                                 "gate passed share": "0.0000",
+                                 "prediction spread sd": f"{np.std([0.5 / sd[s] for s in SYMBOLS]):.4f}"}
+    # With no margin a learner opens on its own once its prediction clears the cost, and a twin never counts.
+    for bot_id in (3, TWIN_BASE + 3):
+        execute(copy.s2_db, records.INSERT_DECISION, (bot_id, iso(SESSIONS[4].boundary(200)), "flat", 100.0, 30.0,
+                                                      4.6, 4.6, 0.0, 1, 0, "open_long", "gate", "NVDA"))
+    ev = run_eval(copy)
+    own = {row["run"]: row for row in ev.tables["own trades"]}["news run"]
+    assert (own["decisions"], own["opens"], own["forced opens"], own["own opens"]) == (65, 65, 64, 1)
+    assert own["own share"] == own["gate passed share"] == f"{1 / 65:.4f}" and float(own["prediction spread sd"]) > 0
+    summary = dict(evaluate.report(ev)[0].summary)
+    assert summary["news run learner opens"] == evaluate.output.Count(65)
+    assert summary["news run own opens"] == evaluate.output.Count(1)
+    assert summary["prices run own opens"] == evaluate.output.Count(0) and ev.valid
+
+
+def test_the_largest_notional_over_equity(copy):
+    rows = {row["run"]: row for row in run_eval(copy).tables["notional over equity"]}
+    assert rows["prices run"]["open fills"] == 128 and float(rows["prices run"]["largest"]) == pytest.approx(0.05,
+                                                                                                            abs=5e-4)
+    # A 2,000 dollar open of learner 3 in session 4, against its equity at the close of session 3.
+    decided = SESSIONS[3].boundary(100)
+    execute(copy.s1_db, records.INSERT_FILL, (3, None, iso(decided), iso(decided + 1200), "open", "buy", 20.0, 100.0,
+                                              None, 100.0, None, 1.0, 0.0, 1200, "filled", "decision", "NVDA", 100.0,
+                                              1.0, 2000.0, 0.0, 0.0))
+    conn = sqlite3.connect(copy.s1_db)
+    equity = conn.execute("SELECT equity FROM equity_snapshots WHERE bot_id = 3 AND ts = ?",
+                          (iso(SESSIONS[2].close_ms),)).fetchone()[0]
+    conn.close()
+    row = {row["run"]: row for row in run_eval(copy).tables["notional over equity"]}["prices run"]
+    assert (row["open fills"], row["bot_id"], row["kind"], row["decided_at"]) == (129, 3, "learner", iso(decided))
+    assert row["largest"] == f"{2000.0 / equity:.4f}"
+
+
 def test_data_quality_and_spend(base):
     ev = run_eval(base)
     quality = {row["measure"]: row["value"] for row in ev.tables["data quality"]}
@@ -792,7 +999,10 @@ def test_by_default_it_prints_only_verdicts_and_counts(base, capsys):
                                                     lines[-1])
     assert all(LINE.fullmatch(line) for line in lines[1:-1]) and "." not in "".join(lines[1:-1])
     assert {"run valid: pass", "confirmatory test: pass", "cutoff reached: pass", "run minutes: 2340",
-            "window sessions: 5", "confirmatory rows: 480", "founder equity: pass"} <= set(lines)
+            "window sessions: 5", "confirmatory rows: 480", "founder equity: pass", "coverage stability: pass",
+            "incremental test: pass", "incremental rows: 480", "rows without price scores: 0",
+            "prices run learner opens: 64", "prices run own opens: 0"} <= set(lines)
+    assert not any(line.startswith("gate") for line in lines)
     assert evaluate.main([str(base.s1), str(base.s2), "--ledger", str(base.ledger), "--detail"]) == 0
     out = capsys.readouterr().out
     assert "\nskill\n" in out and "\npaired comparisons\n" in out and "rows hidden" not in out

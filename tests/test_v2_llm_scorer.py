@@ -43,6 +43,7 @@ CONFIG = dataclasses.replace(BASE, llm=dataclasses.replace(
 PRICES = Prices.from_config(CONFIG.llm.prices)
 MARGIN = CONFIG.llm.caps.reserve_overhead_tokens   # reserved on top of an exact count, section 8.6
 HAIKU, SONNET = CONFIG.llm.scorer_name, CONFIG.llm.sonnet.scorer_name
+SONNET_MAX = llm_request.sonnet_spec(CONFIG.llm).request_max_tokens   # answer and thinking room, section 8.1
 SOURCE = {"media": "finnhub", "8k": "edgar", "8k_a": "edgar", "fed_press": "fed", "fed_monetary": "fed",
           "fed_speech": "fed", "bls_release": "bls"}
 TICKERS = {"finnhub": "AAPL", "edgar": "MSFT", "fed": "MACRO", "bls": "MACRO"}
@@ -385,8 +386,9 @@ def test_a_valid_answer_gives_each_item_one_final_row_and_the_call_its_full_reco
     assert [(rows[seq]["status"], rows[seq]["attempts"], rows[seq]["route"]) for seq in seqs] == [
         ("scored", 1, "llm"), ("irrelevant", 1, "llm")]
     impacts = [dict(row) for row in env.conn.execute("SELECT * FROM score_impacts ORDER BY ticker")]
+    # direction * confidence / 5 * 0.5 for days * (2 + 1) / 5, so 0.24 and -0.3
     assert [(i["item_seq"], i["scorer"], i["ticker"], i["strength"], i["direction"], i["confidence"])
-            for i in impacts] == [(seqs[0], HAIKU, "AAPL", 0.8, 1, 4), (seqs[0], HAIKU, "MACRO", -1.0, -1, 5)]
+            for i in impacts] == [(seqs[0], HAIKU, "AAPL", 0.24, 1, 4), (seqs[0], HAIKU, "MACRO", -0.3, -1, 5)]
     [call] = calls(env.conn)
     assert rows[seqs[0]]["call_id"] == call["call_id"] and call_items(env.conn, call["call_id"]) == seqs
     request = env.client.requests[0]
@@ -681,7 +683,8 @@ def test_every_finnhub_item_routed_llm_reaches_haiku_and_never_sonnet_which_sees
     assert {kinds[seq] for seq in sent_to_sonnet} == set(OFFICIAL_KINDS)
     assert all(not headline.startswith("Finnhub") for request in env.client.headlines(SONNET_MODEL)
                for headline in request)
-    assert all(call["model"] == SONNET_MODEL and call["max_tokens"] == 1024 for call in sonnet_calls)
+    assert all(call["model"] == SONNET_MODEL and call["max_tokens"] == SONNET_MAX for call in sonnet_calls)
+    assert all(call["thinking"] == CONFIG.llm.sonnet.thinking for call in sonnet_calls)
 
 
 @pytest.mark.parametrize("status, http", [(BAD_REQUEST, 400), (AUTH, 401), (RATE_LIMITED, 429), (SERVER, 500),
@@ -777,9 +780,10 @@ def test_a_count_below_the_billed_input_by_up_to_the_margin_never_passes_the_cap
     def rule(model, items):
         if model == HAIKU_MODEL:      # the dearest Haiku answer writes every input token to the cache
             return answer(model, items, usage=Usage(0, 4096, 1800 + MARGIN, 0))
-        return answer(model, items, usage=Usage(1800 + MARGIN, 1024))
+        return answer(model, items, usage=Usage(1800 + MARGIN, SONNET_MAX))
 
-    haiku, sonnet = PRICES.reserve(HAIKU_MODEL, 1800 + MARGIN, 4096), PRICES.reserve(SONNET_MODEL, 1800 + MARGIN, 1024)
+    haiku = PRICES.reserve(HAIKU_MODEL, 1800 + MARGIN, 4096)
+    sonnet = PRICES.reserve(SONNET_MODEL, 1800 + MARGIN, SONNET_MAX)
     env = make_env(rule=rule, monthly_usd=haiku + sonnet)
     seq = add(env.conn, "An official item", kind="fed_monetary")
     with caplog.at_level(logging.WARNING):
@@ -812,10 +816,50 @@ def test_thinking_blocks_sonnet_cache_tokens_and_a_cost_above_its_reservation_ra
     with caplog.at_level(logging.WARNING):
         env.run()
     alerts = events(env.conn, "scorer_alert")
-    assert f"{HAIKU} answered with 1 thinking blocks" in alerts
+    assert f"{HAIKU} answered with 1 thinking blocks and 0 thinking tokens while its thinking is disabled" in alerts
     assert f"{HAIKU} call cost more than its reservation" in alerts
     assert f"{SONNET} reported cache tokens, whose prices are not in the research" in alerts
     assert all(alert in caplog.text for alert in alerts) and env.scoring.words() == (ON, ON)
+
+
+@pytest.mark.parametrize("word", ["between_tools", "adaptive"])
+def test_sonnet_thinking_is_reserved_and_booked_as_output_and_its_blocks_raise_no_alert(make_env, word):
+    config = dataclasses.replace(CONFIG, llm=dataclasses.replace(CONFIG.llm, sonnet=dataclasses.replace(
+        CONFIG.llm.sonnet, thinking=word, thinking_tokens=4096)))
+    usage = Usage(1800, 900, thinking_tokens=800)
+
+    def rule(model, items):
+        return answer(model, items, thinking_blocks=1, usage=usage) if model == SONNET_MODEL else answer(model, items)
+
+    env = make_env(rule=rule, config=config)
+    seq = add(env.conn, "An official item", kind="fed_speech")
+    env.run()
+    [request] = [r for r in env.client.requests if r["model"] == SONNET_MODEL]
+    assert request["thinking"] == {"type": word} and request["max_tokens"] == 1024 + 4096
+    [call] = calls(env.conn, SONNET)
+    assert (call["thinking"], call["max_tokens"], call["thinking_blocks"], call["output_tokens"]) == (
+        word, 1024 + 4096, 1, 900)
+    assert call["reserved_usd"] == PRICES.reserve(SONNET_MODEL, 1800 + MARGIN, 1024 + 4096)
+    assert call["cost_usd"] == PRICES.cost(SONNET_MODEL, Usage(1800, 900)) == (1800 * 2 + 900 * 10) / 1e6
+    assert finals(env.conn, SONNET)[seq]["status"] == "scored" and events(env.conn, "scorer_alert") == []
+
+
+def test_thinking_from_a_sonnet_whose_thinking_is_disabled_raises_an_alert(make_env):
+    config = dataclasses.replace(CONFIG, llm=dataclasses.replace(CONFIG.llm, sonnet=dataclasses.replace(
+        CONFIG.llm.sonnet, thinking="disabled", thinking_tokens=0)))
+
+    def rule(model, items):
+        if model == SONNET_MODEL:
+            return answer(model, items, usage=Usage(1800, 300, thinking_tokens=200))
+        return answer(model, items)
+
+    env = make_env(rule=rule, config=config)
+    add(env.conn, "An official item", kind="fed_speech")
+    env.run()
+    [request] = [r for r in env.client.requests if r["model"] == SONNET_MODEL]
+    assert request["thinking"] == {"type": "disabled"} and request["max_tokens"] == 1024
+    assert events(env.conn, "scorer_alert") == [
+        f"{SONNET} answered with 0 thinking blocks and 200 thinking tokens while its thinking is disabled"]
 
 
 def test_a_pause_survives_a_restart_and_off_until_restart_does_not(make_env):

@@ -11,15 +11,17 @@ At each session boundary an engine computes its two news inputs per symbol, zero
 of every label record the shared layer pushed, and joins each matured sample to the inputs stored at its push. It then
 sends gap, restart and session flattens and the death closes of dying bots, steps each slot's learner and twin in slot
 order, sends the session close orders from five minutes before the close, and buffers the rows of its own database,
-candles, labels, forecasts, decisions, the benchmark, due snapshots and in S2 the news minutes and every news line it
-read. Every decision of every learner and twin is written with its symbol and later its label, so a reader can list and
-filter them all.
+candles, labels, forecasts and the price z scores of each evaluation minute, decisions, the benchmark, due snapshots and
+in S2 the news minutes and every news line it read. Every decision of every learner and twin is written with its symbol
+and later its label, so a reader can list and filter them all.
 
-Orders settle on the first eligible print at or after their due time and are rejected when their symbol leaves
-healthy, the connection drops or the session ends. A death leaves its slot empty, and a bot that dies holding a
-position waits on the dying list until its death close fills. A position that survived a close, because its symbol
-was halted into it or the process was down, closes at the symbol's first healthy minute of the next session with
-session_flatten and an overnight_carry event. The engine never reads the wall clock.
+Orders settle on the first eligible print traded and received at or after their due time and are rejected when their
+symbol leaves healthy, the connection drops or the session ends. Each fill row also records, for reports only, how long
+after the due time its print traded and, in S2, whether the first line of an item bearing on its symbol, tagged with
+it, with MACRO or, for the index symbol, with any company, arrived in the 30 minutes before its decision. A death
+leaves its slot empty, and a bot that dies holding a position waits on the dying list until its death close fills. A position that survived a close, because its symbol was halted into it or the
+process was down, closes at the symbol's first healthy minute of the next session with session_flatten and an
+overnight_carry event. The engine never reads the wall clock.
 """
 
 from __future__ import annotations
@@ -34,7 +36,7 @@ import numpy as np
 from btc_survivor.baselines import LinearBaseline
 from btc_survivor.benchmark import Anchor, buy_hold_equity, matched_equity
 from btc_survivor.bot import DEAD
-from btc_survivor.clock import MS_PER_DAY, iso, minute_index
+from btc_survivor.clock import MS_PER_DAY, MS_PER_MINUTE, iso, minute_index
 from btc_survivor.types import LONG
 from btc_survivor.v2 import sessions
 from btc_survivor.v2.config import StockConfig
@@ -54,6 +56,7 @@ from btc_survivor.v2.stocks.twins import StockTwin, TwinStep
 log = logging.getLogger(__name__)
 
 PERSIST_OFFSET_MS = 30_000  # persistence points sit 30 s after a boundary, away from boundaries and fills
+NEWS_WINDOW_MS = 30 * MS_PER_MINUTE  # the report only news window of a fill, the 30 minutes before its decision
 DEATH, RESTART = "death", "restart"
 # Feed event kinds the engine writes itself.
 OVERNIGHT_CARRY, RESUME, INVARIANT_VIOLATION = "overnight_carry", "resume", "invariant_violation"
@@ -145,6 +148,19 @@ class StockEngine:
             fill = first_fill(order, recv_ms, prints)
             if fill is not None:
                 self._settled(bot, order, self.broker.execute(order, fill, recv_ms, bot.account), recv_ms)
+
+    def news_window(self, symbol: str, decided_ms: int) -> bool | None:
+        """Whether S2 received the first line of an item bearing on symbol in the 30 minutes before decided_ms, an item
+        tagged with it, with MACRO or, for the index symbol, with any company, as its news inputs count them, from the
+        lines those inputs keep and a checkpoint restores, or None in S1, which reads no news."""
+        news = self.inputs.news
+        if news is None:
+            return None
+        first: dict[int, int] = {}
+        for line in news.kept_lines():
+            if news.bears_on(symbol, line.tickers):
+                first[line.item_seq] = min(line.recv_ms, first.get(line.item_seq, line.recv_ms))
+        return any(decided_ms - NEWS_WINDOW_MS <= at < decided_ms for at in first.values())
 
     def check_orders(self, now_ms: int, market: MarketLayer) -> None:
         """Reject every pending order whose symbol left healthy, whose connection dropped or whose session ended."""
@@ -290,8 +306,9 @@ class StockEngine:
     def _settled(self, bot: StockBot, order: StockOrder, ex: StockExecution, now_ms: int) -> None:
         del self.pending[bot.bot_id]
         bot.on_execution(ex)
+        window = self.news_window(order.symbol, order.decided_ms)
         for fill in ex.fills:
-            self.store.queue(records.INSERT_FILL, records.fill_row(fill))
+            self.store.queue(records.INSERT_FILL_WITH_REPORTS, records.fill_row_with_reports(fill, window))
         if ex.closed is not None:
             self.store.queue(records.CLOSE_TRADE, records.close_trade_row(ex.closed))
             self._carried.discard(ex.closed.trade_id)
@@ -341,6 +358,7 @@ class StockEngine:
             store.queue(*records.label_statement(row))
         if m.evaluation:
             self._forecasts(m, ctx)
+            self._price_z(m, ctx)
         self._benchmark(m)
         if m.k % (self.cfg.persistence.equity_snapshot_every_seconds // 60) == 0:
             self._snapshots(m)
@@ -382,6 +400,14 @@ class StockEngine:
             for predictor, prediction, items, recv_ms in rows:
                 self.store.queue(records.INSERT_FORECAST,
                                  records.forecast_row(ms, symbol, predictor, prediction, items, recv_ms))
+
+    def _price_z(self, m: MarketMinute, ctx: StockMinute) -> None:
+        """The 10 price z scores of each usable symbol at an evaluation minute, null where its vector was invalid, which
+        the partial news test adjusts for."""
+        for i, symbol in enumerate(self.symbols):
+            if ctx.usable(i):
+                self.store.queue(records.INSERT_PRICE_Z,
+                                 records.price_z_row(m.k, m.boundary_ms, symbol, m.z[i] if m.valid[i] else None))
 
     def _benchmark(self, m: MarketMinute) -> None:
         """The benchmark row once every symbol has had a healthy price, at each minute with any symbol healthy. Buy

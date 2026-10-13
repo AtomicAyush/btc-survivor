@@ -32,6 +32,7 @@ MAX_SYMBOLS = 50                 # the Finnhub websocket limit per key
 EARLY_CLOSE_MINUTES = 210
 MIN_KEEP_CANDLES_DAYS = 120      # twice the calendar length of 40 sessions
 MAX_MONTHLY_USD = 20.0           # the Console workspace limit
+MIN_SERIES_CAPACITY = 420        # the least StockSeries holds, the 391 minutes of history plus the 30 minute horizon
 _SYMBOL = re.compile(r"[A-Z][A-Z0-9.]{0,9}")
 
 
@@ -377,6 +378,7 @@ class SonnetConfig:
     scorer_name: str
     kinds: tuple[str, ...]
     max_tokens: int
+    thinking_tokens: int
     cache_control: bool
 
 
@@ -885,10 +887,11 @@ _NEWS_SPEC: dict[str, dict[str, tuple]] = {
         "enabled": (_bool,),
         "model": (_choice, (SONNET_MODEL,)),
         "effort": (_choice, ("low",)),
-        "thinking": (_choice, ("disabled",)),
+        "thinking": (_choice, ("disabled", "between_tools", "adaptive")),
         "scorer_name": (_name,),
         "kinds": (_strs, OFFICIAL_KINDS),
         "max_tokens": (_int, 1, 64000),
+        "thinking_tokens": (_int, 0, 64000),
         "cache_control": (_bool,),
     },
     "llm.caps": {
@@ -1016,6 +1019,9 @@ def _stock_checks(v: dict[str, Any], errors: list[str]) -> None:
                           f"window")
         if feat["series_capacity_minutes"] < time_["history_session_minutes"]:
             errors.append("[features] series_capacity_minutes must be at least [time] history_session_minutes")
+    if feat["series_capacity_minutes"] < MIN_SERIES_CAPACITY:
+        errors.append(f"[features] series_capacity_minutes = {feat['series_capacity_minutes']} must be at least "
+                      f"{MIN_SERIES_CAPACITY}, the least a stock series holds")
     if v["trading"]["notional"] > v["trading"]["start_equity"]:
         errors.append("[trading] notional must not exceed start_equity")
 
@@ -1032,6 +1038,11 @@ def _news_checks(v: dict[str, Any], errors: list[str]) -> None:
             errors.append(f"[edgar] ciks names {s}, which is not in [news] universe")
     if v["llm"]["scorer_name"] == v["llm.sonnet"]["scorer_name"]:
         errors.append("[llm] scorer_name and [llm.sonnet] scorer_name must differ, each scorer has its own rows")
+    sonnet = v["llm.sonnet"]
+    if (sonnet["thinking"] == "disabled") != (sonnet["thinking_tokens"] == 0):
+        errors.append("[llm.sonnet] thinking_tokens must be 0 while thinking is disabled and at least 1 otherwise")
+    if sonnet["max_tokens"] + sonnet["thinking_tokens"] > 64000:
+        errors.append("[llm.sonnet] max_tokens and thinking_tokens together must not exceed 64000")
     try:
         re.compile(v["prefilter"]["macro_strip_pattern"])
     except re.error as exc:

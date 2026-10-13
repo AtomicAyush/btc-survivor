@@ -25,17 +25,19 @@ process itself. The second child replays the same lines into its own folder, and
 the first child's apart from runtime_status, whose rows carry the process's own memory, which is the determinism check.
 
 The plan's rule is that memory at the end is no more than 5 MB above memory at the end of the first replayed hour. On
-Linux, the system of the Pi, resident memory read from /proc decides it. On a Mac, which keeps freed pages resident and
-returns them in bursts, the memory the allocators report in use decides it, with resident memory reported beside it, and
-without an in use reading the memory result is inconclusive. Beside the rule the soak reports how far memory moved over
-the last week of replayed time, from one reading to another at the same point of the weekly cycle, which tells windows
-that fill in the first sessions and news kept over a weekend, since decay runs in session minutes, apart from a leak.
-That figure never decides the verdict, and the default synthetic run of two weeks always gives it. The invariants are
+Linux, the system of the Pi, resident memory read from /proc decides it, strictly. On a Mac, which keeps freed pages
+resident and returns them in bursts, the memory the allocators report in use decides it, with resident memory reported
+beside it, and without an in use reading the memory result is inconclusive. Memory in use also grows while history
+windows fill in the first sessions and while news is kept over a weekend, since decay runs in session minutes, so by
+the owner's decision of 12 October 2026 a Mac passes as well when memory in use grew less than 1 MB over the final
+replayed week, from one reading to another at the same point of the weekly cycle, even when it grew more than 5 MB in
+all. A replay shorter than a week and an hour holds no final week, so there only the first hour rule decides, and the
+default synthetic run of two weeks always gives the week figure. The invariants are
 the engines' own checks at every equity snapshot, the books of every bot checked from memory every replayed hour, the
-ledger identities on both finished databases, fills never before their decision, opens only inside the open window, no
-position kept past a close except by a halt, forecasts never using news received after their minute, news lines never
-received before they were scored, S1 and S2 sharing every candle, label, session, spread check and linear_prices row,
-and a recording holding every line once in stamp order. Everything is written into a new folder under data/v2/soak. By
+ledger identities on both finished databases, fills never before their decision and each on a print at or after its
+due time, opens only inside the open window, no position kept past a close except by a halt, forecasts never using news
+received after their minute, news lines never received before they were scored, S1 and S2 sharing every candle, label,
+session, spread check, price z score and linear_prices row, and a recording holding every line once in stamp order. Everything is written into a new folder under data/v2/soak. By
 default it prints only verdicts, counts, hashes and timings, and --detail adds the hourly readings and every check. The
 exit code is 0 for passed, 1 for failed, 2 when the soak cannot run and 3 for inconclusive.
 
@@ -105,6 +107,7 @@ PLUMBING_LABEL = "plumbing configuration, never a strategy setting"
 SOAK_SENTENCE = ("The soak runs the rehearsal pair, a plumbing configuration that is never a strategy setting, "
                  "and checks only memory, CPU, invariants and determinism.")
 MAX_GROWTH_MB = 5.0
+MAX_WEEK_GROWTH_MB = 1.0  # on a Mac, growth in use over the final replayed week below this passes whatever the total
 SLOPE_HOURS = 24.0  # the memory slope is fitted over the last day of replayed time
 WEEK_HOURS = 168.0  # the week over week growth compares the end with the reading this long before it
 SOAK_TAG = 19  # the seed tag of the synthetic run, apart from the version 1 tags in seeds.py
@@ -113,7 +116,7 @@ JOIN_GAP_MS = 2 * MS_PER_SECOND  # the synthetic run starts this long after the 
 JOIN_REASON = "soak join, the next recording starts"
 SOAK_HASHES = tuple(hashlib.sha256(f"soak {name}".encode()).hexdigest() for name in ("config", "prompt", "schema"))
 COMPARED = tuple(t for t in TABLES if t != "runtime_status")  # runtime_status rows carry the process's own memory
-SHARED_TABLES = ("stock_candles", "stock_labels", "sessions", "spread_checks")
+SHARED_TABLES = ("stock_candles", "stock_labels", "sessions", "spread_checks", "price_z")
 EXIT_CODES = {"passed": 0, "failed": 1, "inconclusive": 3}
 CANNOT_RUN = 2
 CHUNK = 1 << 18
@@ -572,33 +575,50 @@ def _growth(name: str, samples: list[dict], end: dict, limit_mb: float) -> dict 
             "week_over_week_mb": None if week is None else round(last - week, 3)}
 
 
-def memory_verdict(samples: list[dict], end: dict | None, limit_mb: float = MAX_GROWTH_MB) -> dict:
+def memory_verdict(samples: list[dict], end: dict | None, limit_mb: float = MAX_GROWTH_MB,
+                   week_limit_mb: float = MAX_WEEK_GROWTH_MB) -> dict:
     """The plan's rule, memory at the end at most limit_mb above it at the end of the first replayed hour, decided by
-    resident memory read from /proc on Linux and by memory in use on a Mac, inconclusive without that reading."""
+    resident memory read from /proc on Linux alone and by memory in use on a Mac, where growth in use below
+    week_limit_mb over the final replayed week also passes, and inconclusive without either reading."""
     end = dict(end or {})
     samples = [{**s, "in_use_mb": _in_use(s)} for s in samples]
     end["in_use_mb"] = _in_use(end)
     rss = _growth("rss_mb", samples, end, limit_mb)
     if rss is None:
-        return {"outcome": "failed", "judged_on": None, "limit_mb": limit_mb,
+        return {"outcome": "failed", "judged_on": None, "decided_by": None, "limit_mb": limit_mb,
+                "week_limit_mb": week_limit_mb,
                 "reason": "no memory reading at the end of a first replayed hour or at the end"}
     source = end.get("source")
     in_use = _growth("in_use_mb", samples, end, limit_mb)
     judged_on = "resident" if source == "proc" else "in_use" if in_use is not None else None
-    result = {"source": source, "judged_on": judged_on, "limit_mb": limit_mb, **rss,
+    result = {"source": source, "judged_on": judged_on, "decided_by": "first hour", "limit_mb": limit_mb,
+              "week_limit_mb": week_limit_mb, **rss,
               "footprint": _growth("footprint_mb", samples, end, limit_mb), "in_use": in_use}
     if judged_on == "resident":
         result["outcome"] = "passed" if rss["rule_held"] else "failed"
         result["reason"] = f"resident memory grew {rss['growth_mb']} MB after the first hour against {limit_mb} MB"
     elif judged_on == "in_use":
-        result["outcome"] = "passed" if in_use["rule_held"] else "failed"
-        result["reason"] = (f"memory in use grew {in_use['growth_mb']} MB after the first hour against {limit_mb} "
-                            f"MB, while resident memory read with {source} grew {rss['growth_mb']} MB")
+        result.update(_in_use_verdict(in_use, limit_mb, week_limit_mb))
+        result["reason"] += f", while resident memory read with {source} grew {rss['growth_mb']} MB"
     else:
-        result["outcome"] = "inconclusive"
+        result["outcome"], result["decided_by"] = "inconclusive", None
         result["reason"] = (f"resident memory read with {source} grew {rss['growth_mb']} MB, and only a Linux reading "
                             "or memory in use decides the rule")
     return result
+
+
+def _in_use_verdict(in_use: dict, limit_mb: float, week_limit_mb: float) -> dict:
+    """The Mac's verdict on memory in use, passing when it grew at most limit_mb after the first hour or, failing that,
+    less than week_limit_mb over the final replayed week."""
+    growth, week = in_use["growth_mb"], in_use["week_over_week_mb"]
+    first = f"memory in use grew {growth} MB after the first hour against {limit_mb} MB"
+    if in_use["rule_held"]:
+        return {"outcome": "passed", "decided_by": "first hour", "reason": first}
+    if week is None:
+        return {"outcome": "failed", "decided_by": "first hour",
+                "reason": f"{first}, and the replay holds no final week to compare"}
+    return {"outcome": "passed" if week < week_limit_mb else "failed", "decided_by": "final week",
+            "reason": f"{first} and {week} MB over the final replayed week against {week_limit_mb} MB"}
 
 
 # The frames this process pipes to the replay processes
@@ -895,6 +915,9 @@ LEDGER_CHECKS = {
         " WHERE b.state = 'dead'"),
     "fills, never before their decision": (
         "SELECT count(*), coalesce(sum(filled_at < decided_at), 0) FROM fills WHERE status = 'filled'"),
+    "fills, each on a print at or after its due time": (
+        "SELECT count(*), coalesce(sum(print_after_due_ms IS NULL OR print_after_due_ms < 0), 0) FROM fills"
+        " WHERE status = 'filled'"),
     "forecasts, no news input received after the minute": (
         "SELECT count(*), coalesce(sum(inputs_max_recv_at > ts), 0) FROM stock_forecasts"),
     "news lines, never received before they were scored": (
@@ -966,7 +989,8 @@ LINEAR_PRICES = "SELECT * FROM stock_forecasts WHERE predictor = 'linear_prices'
 
 
 def shared_rows_check(s1: Path, s2: Path) -> dict:
-    """S1 and S2 share every candle, label, session, spread check and linear_prices row, which differ only by news."""
+    """S1 and S2 share every candle, label, session, spread check, price z score row and linear_prices row, which
+    differ only by news."""
     a, b = stock_replay.table_digests(s1), stock_replay.table_digests(s2)
     rows, failures = 0, 0
     for table in SHARED_TABLES:
@@ -1097,7 +1121,7 @@ def _soak(args: argparse.Namespace, cfgs: tuple[StockConfig, StockConfig], out: 
     run = Run(cfgs, (Path(args.s1), Path(args.s2)), out, recordings, hashes_from, plan, state, sent, samples, ends,
               codes, failure,
               time.monotonic() - started, time.process_time() - cpu_started)
-    report = build_report(run, args.max_growth_mb)
+    report = build_report(run, args.max_growth_mb, args.max_week_growth_mb)
     write_outputs(out, report, samples)
     return report
 
@@ -1149,7 +1173,7 @@ def _cpu(end: dict, session_minutes: int, replayed_s: float) -> dict:
             "worker_cpu_s": round(end["worker_cpu_s"], 3), "segments": segments}
 
 
-def build_report(run: Run, limit_mb: float = MAX_GROWTH_MB) -> dict:
+def build_report(run: Run, limit_mb: float = MAX_GROWTH_MB, week_limit_mb: float = MAX_WEEK_GROWTH_MB) -> dict:
     """The outcome with memory, CPU, invariants, determinism and activity, from what the soak gathered."""
     cfgs, out, end = run.cfgs, run.out, run.ends[0]
     names = [cfg.run.name for cfg in cfgs]
@@ -1176,7 +1200,8 @@ def build_report(run: Run, limit_mb: float = MAX_GROWTH_MB) -> dict:
            for name, cfg in zip(names, cfgs)}
     checks = [{"check": check, "run": name, **result} for name, db in dbs.items()
               for check, result in db["checks"].items()]
-    checks.append({"check": "S1 and S2, the same candles, labels, sessions, spread checks and linear_prices rows",
+    checks.append({"check": "S1 and S2, the same candles, labels, sessions, spread checks, price z scores and "
+                            "linear_prices rows",
                    "run": "both", **shared_rows_check(*(out / "run" / name / "stocks.db" for name in names))})
     recording = recording_digest(out / "run" / "raw_stocks")
     recorded = cfgs[0].stock_feed.record_raw_messages
@@ -1188,7 +1213,7 @@ def build_report(run: Run, limit_mb: float = MAX_GROWTH_MB) -> dict:
     checks.append({"check": "invariant violation log lines", "run": "both", "rows": end["lines"],
                    "failures": end["log_counts"].get("invariant violation", 0)})
     failing = [c for c in checks if c["failures"]]
-    memory = memory_verdict(run.samples, end, limit_mb)
+    memory = memory_verdict(run.samples, end, limit_mb, week_limit_mb)
     memory["peak_rss_mb"] = round(end["peak_rss_mb"], 3)
     if run.samples:  # live blocks flat while arenas rise means fragmentation, not a leak
         memory["live_blocks"] = {"first_hour": run.samples[0]["live_blocks"], "end": end["live_blocks"]}
@@ -1259,10 +1284,12 @@ def summary(report: dict) -> list[output.Report]:
         ("session minutes", output.Count(r["session_minutes"])),
         ("memory rule", m["outcome"] == "passed"),
         ("memory judged on", output.Word((m["judged_on"] or "nothing decisive").replace("_", " "))),
+        ("memory decided by", output.Word(m.get("decided_by") or "nothing decisive")),
         ("memory first hour kib", _kib(judged.get("first_hour_mb"))),
         ("memory end kib", _kib(judged.get("end_mb"))),
         ("memory growth kib", _kib(judged.get("growth_mb"))),
         ("memory limit kib", _kib(m["limit_mb"])),
+        *((("memory week limit kib", _kib(m["week_limit_mb"])),) if m["judged_on"] == "in_use" else ()),
         ("resident growth kib", _kib(m.get("growth_mb"))),
         ("readings over limit", output.Count(judged.get("readings_over_limit", 0))),
         *((("memory slope kib per day", _kib(slope * 24)),) if slope is not None else ()),
@@ -1316,6 +1343,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--outage-minutes", type=float, default=Synthetic.outage_minutes,
                    help="length of the news heartbeat outage in each synthetic session")
     p.add_argument("--max-growth-mb", type=float, default=MAX_GROWTH_MB)
+    p.add_argument("--max-week-growth-mb", type=float, default=MAX_WEEK_GROWTH_MB,
+                   help="on a Mac, growth in use over the final replayed week below this also passes")
     p.add_argument("--out", type=Path, default=None, help="a new or empty folder, by default under data/v2/soak")
     output.add_detail_flag(p)
     p.add_argument("--leak-kb-per-message", type=float, default=0.0, help=argparse.SUPPRESS)

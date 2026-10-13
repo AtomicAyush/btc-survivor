@@ -1,5 +1,5 @@
 """Stock costs by hand: the SEC fee and trading activity fee rounding, fees only on sales including short opens, the
-round trips of 3.6, 4.6 and 6.6 bps, borrow across a weekend, the required edge in label standard deviations, rent,
+round trips of 3.6, 4.6 and 6.6 bps, borrow across a weekend, the required edge with no margin and with one, rent,
 the death line and the Roll diagnostic."""
 
 import dataclasses
@@ -24,16 +24,16 @@ COSTS = CFG.stock_costs
 FRIDAY = sessions.session_on(date(2026, 10, 16))
 MONDAY = sessions.session_on(date(2026, 10, 19))
 
-# Section 5.1 planning prices and section 12 planning volatilities, round trips, dollars at 500 and required edges.
+# Section 5.1 planning prices and section 12 planning volatilities, round trips, dollars at 500 and 30 minute sd.
 PLANNING = {
-    "QQQ": (600, 0.20, 3.6, 0.18, 30, 11.2),
-    "MSFT": (500, 0.22, 4.6, 0.23, 33, 12.9),
-    "AAPL": (250, 0.25, 4.6, 0.23, 38, 14.1),
-    "GOOGL": (250, 0.30, 4.6, 0.23, 45, 16.0),
-    "AMZN": (220, 0.30, 4.6, 0.23, 45, 16.0),
-    "META": (700, 0.35, 6.6, 0.33, 53, 19.9),
-    "NVDA": (180, 0.45, 4.6, 0.23, 68, 21.6),
-    "TSLA": (400, 0.60, 6.6, 0.33, 91, 29.3),
+    "QQQ": (600, 0.20, 3.6, 0.18, 30),
+    "MSFT": (500, 0.22, 4.6, 0.23, 33),
+    "AAPL": (250, 0.25, 4.6, 0.23, 38),
+    "GOOGL": (250, 0.30, 4.6, 0.23, 45),
+    "AMZN": (220, 0.30, 4.6, 0.23, 45),
+    "META": (700, 0.35, 6.6, 0.33, 53),
+    "NVDA": (180, 0.45, 4.6, 0.23, 68),
+    "TSLA": (400, 0.60, 6.6, 0.33, 91),
 }
 
 
@@ -79,7 +79,8 @@ def test_a_sale_of_about_500_pays_two_cents_and_one_cent():
 def _execute(broker, acct, legs, price=250.0, ms=None):
     ms = FRIDAY.open_ms + 60 * 60_000 if ms is None else ms
     order = broker.make_order(1, "AAPL", legs, ms - 2_000, 250.0, "decision", np.random.default_rng(0))
-    return broker.execute(order, Print("AAPL", price, 100.0, ms - 1_000, ()), max(ms, order.due_ms), acct)
+    # The print trades exactly at the due time, the earliest a strict fill may use.
+    return broker.execute(order, Print("AAPL", price, 100.0, order.due_ms, ()), max(ms, order.due_ms), acct)
 
 
 def test_fees_fall_only_on_sales_including_short_opens():
@@ -99,7 +100,7 @@ def test_fees_fall_only_on_sales_including_short_opens():
 
 @pytest.mark.parametrize("symbol", sorted(PLANNING))
 def test_round_trips_of_3_6_4_6_and_6_6_bps_with_their_dollars(symbol):
-    price, _, bps, dollars, _, _ = PLANNING[symbol]
+    price, _, bps, dollars, _ = PLANNING[symbol]
     broker = StockBroker.from_config(CFG)
     qty = broker.open_qty(LONG, price)
     trip = costs.round_trip(COSTS, symbol, LONG, qty, price, 30)
@@ -147,15 +148,16 @@ def test_borrow_accrues_across_a_weekend_in_calendar_time():
 
 
 @pytest.mark.parametrize("symbol", sorted(PLANNING))
-def test_required_edge_is_cost_plus_a_quarter_label_standard_deviation(symbol):
-    price, vol, bps, _, sd, edge = PLANNING[symbol]
+def test_with_no_margin_the_required_edge_is_the_round_trip_cost(symbol):
+    # margin_sigma is 0 in every run config, so the required edge is the cost alone at any label standard deviation.
+    price, vol, bps, _, sd = PLANNING[symbol]
     label_sd = thirty_minute_sd_bps(vol)
     assert label_sd == pytest.approx(sd, abs=0.5)
     qty = StockBroker.from_config(CFG).open_qty(LONG, price)
     cost = costs.round_trip(COSTS, symbol, LONG, qty, price, 30).total_bps
-    required = costs.required_edge_bps(cost, CFG.trading.margin_sigma, label_sd)
-    assert required == pytest.approx(cost + 0.25 * label_sd)
-    assert required == pytest.approx(edge, abs=0.1)
+    assert CFG.trading.margin_sigma == 0.0
+    assert costs.required_edge_bps(cost, CFG.trading.margin_sigma, label_sd) == cost
+    assert cost == pytest.approx(bps, abs=0.05)
 
 
 def test_required_edge_scales_with_the_label_standard_deviation():

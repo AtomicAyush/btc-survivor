@@ -1350,7 +1350,10 @@ def test_a_pinned_news_process_scores_beside_collection_and_stops_cleanly_on_sig
     path = tmp_path / "data" / "news" / "news.db"
     proc = start(tmp_path, str(config), "--log-dir", str(logs), NEWS_SCORING="1")
     loaded = load_news_config(config)
-    names = {loaded.llm.scorer_name: "failed", loaded.llm.sonnet.scorer_name: "skipped_off", "finbert_v1": "scored"}
+    # The fake client fails every call, so Sonnet's row is failed once the live call has turned it on, and
+    # skipped_off while the committed config keeps it off.
+    sonnet = "failed" if loaded.llm.sonnet.enabled else "skipped_off"
+    names = {loaded.llm.scorer_name: "failed", loaded.llm.sonnet.scorer_name: sonnet, "finbert_v1": "scored"}
     try:
         assert wait_for(lambda: read_db(path, "SELECT count(DISTINCT channel) FROM news_polls")[0][0] >= 10
                         and read_db(path, "SELECT count(*) FROM news_heartbeat")[0][0] >= 1), \
@@ -1375,12 +1378,13 @@ def test_a_pinned_news_process_scores_beside_collection_and_stops_cleanly_on_sig
     assert proc.returncode == 0, err
     assert out == "" and "heartbeat healthy=1" in err and "collects only" not in err
     # The fake SDK fails the call, which is booked at its reservation and never sent again.
+    calls = 2 if loaded.llm.sonnet.enabled else 1
     assert read_db(path, f"SELECT c.status, c.cost_basis, c.cost_usd = c.reserved_usd AND c.reserved_usd > 0 "
                          f"FROM llm_calls c JOIN llm_call_items i USING (call_id) WHERE i.item_seq = {seq}") == [
-        ("server", "reserved", 1)]
+        ("server", "reserved", 1)] * calls
     beats = read_db(path, "SELECT healthy, reason, config_hash, haiku_state, sonnet_state, finbert_state "
                           "FROM news_heartbeat")
-    assert set(beats) == {(1, None, loaded.config_hash, "on", "off", "on")}
+    assert set(beats) == {(1, None, loaded.config_hash, "on", "on" if loaded.llm.sonnet.enabled else "off", "on")}
     assert (tmp_path / "sdk_closed.txt").read_text() == "closed"
     ledger = tmp_path / "ledger" / "llm_ledger.db"
     assert stat.S_IMODE(ledger.stat().st_mode) == 0o600

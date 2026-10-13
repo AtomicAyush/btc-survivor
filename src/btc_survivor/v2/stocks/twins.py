@@ -3,7 +3,8 @@ which walks a LocalBook, with the stock upkeep on its learner's home symbol, mar
 
 A twin copies its learner's opens, closes and flips at the same moment with a fair coin from its own seeded generator
 choosing the side of any open, closes any stale position before copying the next open, and closes when its learner is
-stopped out, dies or is flat with nothing pending. It pays the same costs, borrow and rent, has its own stop at 3 label
+stopped out, dies or is flat with nothing pending. Its orders take their latency jitter from the per order generator
+every bot uses, so its generator draws only coins. It pays the same costs, borrow and rent, has its own stop at 3 label
 standard deviations fixed at its own entry and its own death check, takes the session_close and session_flatten exits
 like any bot, and never learns, predicts or decides on its own.
 """
@@ -89,7 +90,8 @@ class StockTwin(StockBot):
             ("flip" if len(legs) == 2 else names[coin])
         if legs[-1].action == "open":
             self._stop_at_send = self.cfg.trading.stop_loss_sigma * float(ctx.label_sd[h])
-        self.pending_order = broker.make_order(self.bot_id, self.symbol, legs, now, ref, "decision", self.rng)
+        self.pending_order = broker.make_order(self.bot_id, self.symbol, legs, now, ref, "decision",
+                                               self.order_rng(now))
         side_text = "long" if coin == LONG else "short"
         return {**row, "action": twin_action, "order": self.pending_order,
                 "reason": f"twin of bot {learner_id} copying {action}, the coin chose {side_text}"}

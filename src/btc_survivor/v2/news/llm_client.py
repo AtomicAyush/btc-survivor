@@ -5,7 +5,8 @@ request id, raw JSON and any error class, and never retries. The SDK client is b
 never sends a request twice either, and it finds the key only where local_secrets.prepare_anthropic_env put it. An
 error from the SDK becomes a status, never an exception, while a cancellation passes through and leaves the call's
 reservation running, so the next start books it lost. It also counts a request's tokens, returning None when counting
-fails so the caller reserves on the byte bound.
+fails so the caller reserves on the byte bound. Thinking blocks are counted and never read as the answer, and the
+thinking tokens a response reports are kept with its usage.
 """
 
 from __future__ import annotations
@@ -99,6 +100,7 @@ def error_message(exc: anthropic.APIStatusError) -> str:
 
 
 def _retry_after(headers: Mapping[str, str]) -> float | None:
+    """The retry-after header in seconds, None when it is missing, unreadable or negative."""
     try:
         seconds = float(headers.get("retry-after", ""))
     except ValueError:
@@ -122,6 +124,12 @@ def failure(exc: anthropic.AnthropicError, latency_ms: int) -> CallResult:
     return CallResult(SERVER, **common)
 
 
+def thinking_tokens(usage: Any) -> int:
+    """The output tokens a response spent on thinking, from usage.output_tokens_details, 0 when it reports none."""
+    details = getattr(usage, "output_tokens_details", None)
+    return getattr(details, "thinking_tokens", None) or 0
+
+
 def answer(response: Any, model: str, latency_ms: int) -> CallResult:
     """The result of a response. A response from another model than the one requested is model_mismatch whatever it
     says, and a stop reason other than end_turn, refusal or max_tokens is malformed."""
@@ -133,7 +141,7 @@ def answer(response: Any, model: str, latency_ms: int) -> CallResult:
         status, latency_ms, http_status=200, stop_reason=response.stop_reason,
         refusal_category=getattr(stop_details, "category", None) if response.stop_reason == "refusal" else None,
         usage=Usage(usage.input_tokens or 0, usage.output_tokens or 0, usage.cache_creation_input_tokens or 0,
-                    usage.cache_read_input_tokens or 0),
+                    usage.cache_read_input_tokens or 0, thinking_tokens(usage)),
         response_model=response.model, request_id=getattr(response, "_request_id", None),
         text="".join(block.text for block in blocks if block.type == "text"),
         raw_json=response.to_json(indent=None),
@@ -173,6 +181,7 @@ class LlmClient:
 
 
 def _elapsed_ms(started: float) -> int:
+    """Whole milliseconds since a monotonic start."""
     return round((time.monotonic() - started) * 1000)
 
 

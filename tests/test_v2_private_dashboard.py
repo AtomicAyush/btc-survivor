@@ -2,14 +2,18 @@
 free port, never 8050 or 8060. It binds to 127.0.0.1 only and refuses port 8050, a foreign Host header gets 403, every
 method that could write fails, every response carries the version 1 security headers, no JSON body holds a secret, and
 the daily spend alert shows when a seeded heartbeat carries it. The decisions explorer is served through the same
-guards."""
+guards. The page shows every time in UTC or the viewer's own zone, as version 1 does, and the explorer's from and to,
+typed in either zone, reach the server as the UTC minute they mean."""
 
 import hashlib
 import http.client
 import json
 import os
+import re
+import shutil
 import socket
 import sqlite3
+import subprocess
 import threading
 from http.server import ThreadingHTTPServer
 
@@ -545,3 +549,113 @@ def test_a_stock_store_reader_is_what_the_explorer_opens(runs):
         assert store.read_meta(conn)["kind"] == "stocks"
     finally:
         conn.close()
+
+
+# Times in UTC or the viewer's own zone
+
+
+def page_script() -> str:
+    page = dashboard.PAGE.read_text(encoding="utf-8")
+    return page[page.index("<script>") + len("<script>"):page.index("</script>")]
+
+
+def test_the_page_offers_a_time_zone_switch_as_version_1_does():
+    """UTC or the viewer's own zone for every time on the page, remembered in the browser, while the server keeps
+    UTC and the from and to filters of the explorer follow the switch."""
+    page = dashboard.PAGE.read_text(encoding="utf-8")
+    assert 'id="zone"' in page and 'data-zone="utc"' in page and 'data-zone="local"' in page
+    assert 'store.get("v2tz")' in page and 'store.set("v2tz", zone)' in page
+    assert "<b>Times.</b>" in page and "abbreviation" in page and "Times are UTC unless marked ET" not in page
+    for fixed in ('"time UTC"', '"received UTC"', '"filled UTC"', '"opened UTC"', '"closed UTC"', '+ " UTC"',
+                  ')} UTC', 'toISOString().slice(11', 'type="datetime-local"'):
+        assert fixed not in page, fixed  # no label or time pinned to UTC
+    assert "textTimes(e.detail)" in page  # a time quoted inside a feed event follows the switch too
+    assert "exToServer(k, text)" in page and "exShow(k, " in page  # a local from or to reaches the server as UTC
+    script = page_script()
+    uses = [m.start() for m in re.finditer(r"localStorage", script)]
+    wrapper = re.search(r"const store = \{.*?\n\};", script, re.S)
+    assert len(uses) == 2 and all(wrapper.start() < u < wrapper.end() for u in uses)
+    assert wrapper.group().count("try {") == 2  # the page still works where storage throws
+
+
+def test_the_detail_shows_the_report_only_fill_columns_once_the_server_sends_them():
+    """How long after the due time a fill's print traded and whether S2 saw news on the symbol just before, both report
+    only, appear in the fills of a decision whenever its fill rows carry them."""
+    page = dashboard.PAGE.read_text(encoding="utf-8")
+    assert 'd.fills.some(f => "print_after_due_ms" in f)' in page
+    assert '["print after due", 0,' in page and '["news window", 1,' in page and "yesNo(f.news_window)" in page
+
+
+def test_the_minutes_a_local_from_and_to_send_are_what_the_server_takes(server):
+    """A from and to typed in Chicago time reach the server as UTC minutes, and the to minute is included."""
+    code, page = server.json("/api/decisions?from=2026-10-21T13:00&to=2026-10-23T04:59&limit=200")
+    assert code == 200 and page["rows"]
+    assert all("2026-10-21T13:00" <= r["ts"] < "2026-10-23T05:00" for r in page["rows"])
+    code, whole = server.json("/api/decisions?limit=200")
+    assert page["summary"]["decisions"] == sum("2026-10-21T13:00" <= r["ts"] < "2026-10-23T05:00"
+                                               for r in whole["rows"])
+
+
+NODE = shutil.which("node")
+TIME_CHECK = r"""
+zone = "local";
+const year = Date.UTC(2026, 0, 1), out = {wrong: [], z: 0};
+const minute = ms => new Date(ms).toISOString().slice(0, 16);
+for (let t = year; t < year + 366 * 86400000; t += 900000) {
+  for (const at of [t, t - 60000, t + 420000]) for (const k of EX_TIMES) {
+    const text = exShow(k, minute(at));
+    if (exInstant(k, text) !== at || exToServer(k, text) !== minute(at)) out.wrong.push([k, at, text]);
+    if (text.endsWith("Z")) out.z++;
+  }
+}
+out.pasted = [exToServer("from", "2026-10-12T07:30Z"), exToServer("to", "2026-10-12Z")];
+out.typed = [exToServer("from", "2026-10-12 07:30"), exToServer("to", "2026-10-12"), exToServer("from", "2026-10-12")];
+out.repeated = [exShow("from", "2026-11-01T06:30"), exShow("from", "2026-11-01T07:30")];
+out.refused = ["2026-02-30", "2026-10-12 24:00", "2026-10-12 7:30", "12/10/2026", "2026-10-12 07:30:15",
+  "0050-01-01", ""].map(v => exToServer("from", v));
+out.detail = textTimes("restored the checkpoint from 2026-10-12T17:20:30.000Z <b>");
+out.stamp = stamp("2026-10-12T17:20:30.000Z");
+zone = "utc";
+out.detailUtc = textTimes("restored the checkpoint from 2026-10-12T17:20:30.000Z <b>");
+out.asTyped = [exToServer("from", "2026-10-12 07:30"), exToServer("to", "2026-10-12"), exToServer("to", "2026-10-12T07:30")];
+out.shownUtc = [exShow("from", "2026-10-12T00:00"), exShow("to", "2026-10-12T23:59"), exShow("to", "2026-10-12T07:30")];
+out.cells = [time("2026-10-12T17:20:30.000Z"), clock(Date.UTC(2026, 9, 12, 17, 20, 30))];
+console.log(JSON.stringify(out));
+"""
+
+
+def page_times() -> str:
+    """The page's own time code, the part that touches no element, for node to run."""
+    script = page_script()
+    esc = next(line for line in script.splitlines() if line.startswith("const esc = "))
+    stored = script[script.index("const store = {"):script.index("current = store.get")]
+    return "\n".join([esc, stored, script[script.index("// Times."):script.index("async function load()")]])
+
+
+@pytest.mark.skipif(NODE is None, reason="node runs the page's own time code")
+@pytest.mark.parametrize("tz", ["America/Chicago", "Europe/London", "Australia/Lord_Howe", "America/Santiago",
+                                "Asia/Kolkata", "Pacific/Chatham", "UTC"])
+def test_local_from_and_to_read_back_as_the_same_minute(tz):
+    """Every from and to the page writes in Local reads back as the minute it came from and reaches the server as that
+    UTC minute, all year, the hour that repeats when the clocks go back included, so leaving a field or switching zone
+    never moves a filter. A time ending in Z is UTC in either zone, and anything the server would refuse is refused."""
+    env = {**os.environ, "TZ": tz, "LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8"}
+    run = subprocess.run([NODE, "-e", page_times() + TIME_CHECK], env=env, capture_output=True, text=True,
+                         timeout=120)
+    assert run.returncode == 0, run.stderr
+    out = json.loads(run.stdout)
+    assert out["wrong"] == []
+    assert out["pasted"] == ["2026-10-12T07:30", "2026-10-12T23:59"]
+    assert out["refused"] == [None] * 7
+    assert out["asTyped"] == ["2026-10-12T07:30", "2026-10-12T23:59", "2026-10-12T07:30"]
+    assert out["shownUtc"] == ["2026-10-12", "2026-10-12", "2026-10-12 07:30"]  # a whole day reads as its date
+    assert out["detailUtc"] == "restored the checkpoint from 2026-10-12 17:20:30.000 UTC &lt;b&gt;"
+    assert out["cells"][0].startswith("10-12 17:20:30") and out["cells"][1] == "17:20:30 UTC"
+    if tz in ("UTC", "Asia/Kolkata"):
+        assert out["z"] == 0  # no hour repeats, so every time is written in the zone itself
+    if tz == "America/Chicago":
+        assert out["typed"] == ["2026-10-12T12:30", "2026-10-13T04:59", "2026-10-12T05:00"]
+        assert out["repeated"] == ["2026-11-01 01:30", "2026-11-01T07:30Z"]  # the second 01:30 is 01:30 CST
+        assert out["z"] == 24  # the repeated hour's 4 quarter hours, at 3 offsets, for from and to
+        assert out["detail"] == "restored the checkpoint from 2026-10-12 12:20:30.000 CDT &lt;b&gt;"
+        assert out["stamp"] == "2026-10-12 12:20 CDT"

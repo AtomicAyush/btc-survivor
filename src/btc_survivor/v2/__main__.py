@@ -118,7 +118,7 @@ def build_parser() -> argparse.ArgumentParser:
                                        description=news_runner.DESCRIPTION))
     news_status.add_arguments(_command(sub, "news-status", "print the week one and data quality report",
                                        handler=news_status.run, description=news_status.DESCRIPTION))
-    tapecheck.add_arguments(_command(sub, "tape-check", "print the tape verdict from a raw recording alone",
+    tapecheck.add_arguments(_command(sub, "tape-check", "print the tape coverage report from a raw recording and the official figures",
                                      handler=tapecheck.run, description=tapecheck.DESCRIPTION))
     evaluate.add_arguments(_command(sub, "evaluate", "print the criteria of PLAN_V2 section 11",
                                     handler=evaluate.run, description=evaluate.DESCRIPTION))

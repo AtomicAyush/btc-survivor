@@ -29,6 +29,11 @@ header nav a { color: var(--accent); text-decoration: none; }
 .updated { margin-left: auto; color: var(--muted); font-size: 12px; display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
 .live { width: 8px; height: 8px; border-radius: 50%; background: var(--good); }
 .live.off { background: var(--bad); }
+.zone { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; flex: none; }
+.zone button { border: 0; border-radius: 0; background: var(--chip); color: var(--muted); font-size: 12px; padding: 3px 10px; }
+.zone button + button { border-left: 1px solid var(--line); }
+.zone button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.zone button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 main, .section { max-width: 1280px; margin: 0 auto; padding: 16px 16px 0; }
 .banner { border: 1px solid var(--warn); color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent);
   border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; }
@@ -78,7 +83,9 @@ button.link { border: 0; background: none; color: var(--accent); padding: 0; }
 .filters label { display: flex; flex-direction: column; gap: 3px; color: var(--muted); font-size: 12px; min-width: 0; }
 .filters input, .filters select { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line);
   border-radius: 6px; padding: 5px 8px; min-width: 0; width: 100%; }
+.filters input.bad { border-color: var(--bad); }
 .filters .wide { grid-column: span 2; }
+.hint { color: var(--bad); font-size: 12px; margin: -4px 0 10px; }
 .filters .act { display: flex; align-items: flex-end; }
 @media (max-width: 520px) { .filters .wide { grid-column: auto; } }
 .pager { display: flex; gap: 8px; align-items: center; justify-content: flex-end; margin: 10px 0; flex-wrap: wrap; }
@@ -105,17 +112,22 @@ footer p { border-top: 1px solid var(--line); padding-top: 12px; margin: 0; }
   <span class="private" title="Served on 127.0.0.1 only, never tunnelled, shared or published">private, this machine only</span>
   <nav><a href="#main">Overview</a><a href="#explorer">Decisions</a></nav>
   <div class="updated"><span class="live" id="live"></span><span id="updated">connecting</span></div>
+  <div class="zone" id="zone" role="group" aria-label="Time zone of every time on this page">
+    <button type="button" data-zone="utc" aria-pressed="true" title="Show every time in UTC, the clock the runs keep">UTC</button>
+    <button type="button" data-zone="local" aria-pressed="false" title="Show every time in this computer's time zone">Local</button>
+  </div>
 </header>
 <div class="help"><details id="help"><summary>How to read this page</summary>
   <div class="grid">
     <p><b>Runs.</b> S1 trades on prices alone with its news inputs pinned at zero. S2 adds the two news inputs. Both share one feed, one market layer and identical bots at birth, so later differences come from news.</p>
     <p><b>Market session.</b> Bots act only in the regular session, opening from 10:00 to 15:25 ET and flat by 15:55 ET. Nights, weekends and holidays add no minutes.</p>
-    <p><b>Feed.</b> Finnhub trade prints. A symbol is healthy while it prints within 15 seconds, and stale or recovering pauses everything on it.</p>
+    <p><b>Feed.</b> Finnhub trade prints from the free feed, a partial tape that carries only part of each symbol's trades. A symbol goes stale when no eligible print comes for longer than the limit the run config sets from the gate session's gaps, and stale or recovering pauses everything on it.</p>
     <p><b>News.</b> The news process writes a heartbeat every 30 seconds. Without a fresh healthy heartbeat both runs pause rent, learning and decisions. Model spend has one cap of 20 dollars a month, and a day above a quarter of it raises an alert that stops nothing.</p>
-    <p><b>Skill.</b> The correlation of each predictor with the next 30 minute return, pooled over the eight symbols from session 2. Everything here is descriptive until the cutoff, and only the news predictor in S2 is ever tested.</p>
-    <p><b>Populations.</b> 24 learners per run, three per home symbol, each with a coin flip twin. Learner against twin separates skill from luck.</p>
+    <p><b>Skill.</b> The correlation of each predictor with the next 30 minute return, pooled over the eight symbols from session 2. Everything here is descriptive until the cutoff, and only the news predictor in S2 is ever tested. At the cutoff its pass or fail word here is the first test, and evaluate runs the second, news beyond the price features, only after a pass.</p>
+    <p><b>Populations.</b> 24 learners per run, three per home symbol, each with a coin flip twin. Learner against twin separates skill from luck. There is no margin over cost, so a learner opens on its own whenever its prediction clears the round trip cost, and the forced timer opens a trade after the configured healthy session hours without one, 3 in the runs and half an hour in the rehearsal.</p>
     <p><b>Decisions.</b> Every decision of both runs, newest first. A learner decides every 30 session minutes on its home symbol, and its twin copies opens, closes and flips with a coin for the side. Choose a row to see its prediction, the edge it needed, its fill and costs, and its label once the 30 minutes have passed.</p>
-    <p><b>Freshness.</b> The overview refreshes every 10 seconds and the newest page of decisions every 30, from views the server recomputes at most every 5 seconds. Times are UTC unless marked ET.</p>
+    <p><b>Freshness.</b> The overview refreshes every 10 seconds and the newest page of decisions every 30, from views the server recomputes at most every 5 seconds.</p>
+    <p><b>Times.</b> The runs keep UTC, and so does this page until you choose Local at the top. Local shows every time here in this computer's time zone with its abbreviation, times quoted inside feed events included, and the from and to filters of the decisions then read and show times in that zone too. Times marked ET are New York time, the market's clock, in either choice. A time ending in Z is read as UTC in either zone, so one copied from a log or from status can be pasted as it is, and an hour that repeats when the clocks go back is shown that way. The choice is remembered in this browser.</p>
   </div></details></div>
 <main id="main"><p class="empty">Loading the runs.</p></main>
 <section class="section" id="explorer-wrap"><div class="panel" id="explorer">
@@ -130,10 +142,11 @@ footer p { border-top: 1px solid var(--line); padding-top: 12px; margin: 0; }
     <label>Forced<select data-f="forced"><option value="">forced or not</option><option value="yes">forced</option><option value="no">not forced</option></select></label>
     <label>Gate<select data-f="gate"><option value="">passed or not</option><option value="yes">passed</option><option value="no">not passed</option></select></label>
     <label class="wide">Reason contains<input data-f="reason" type="search" maxlength="100" placeholder="such as forced, warmup or below required edge"></label>
-    <label>From, UTC<input data-f="from" type="datetime-local"></label>
-    <label>To, UTC<input data-f="to" type="datetime-local"></label>
+    <label title="In UTC, a date such as 2026-10-19 or a minute such as 2026-10-19 14:30. A date alone means midnight.">From, UTC<input data-f="from" autocomplete="off" spellcheck="false" placeholder="YYYY-MM-DD HH:MM" maxlength="20"></label>
+    <label title="In UTC and inclusive, a date such as 2026-10-19 or a minute such as 2026-10-19 14:30. A date alone means the whole of that day.">To, UTC<input data-f="to" autocomplete="off" spellcheck="false" placeholder="YYYY-MM-DD HH:MM" maxlength="20"></label>
     <div class="act"><button id="ex-clear" type="button">Clear filters</button></div>
   </div>
+  <p class="hint" id="ex-hint" role="status" hidden></p>
   <div id="ex-error"></div>
   <div class="cards" id="ex-summary"></div>
   <div id="ex-list"><p class="empty">Loading the decisions.</p></div>
@@ -159,7 +172,6 @@ const pct = (v, d = 0) => v == null ? "–" : (100 * v).toFixed(d) + "%";
 const signed = (v, d = 2) => v == null ? "–" : (v > 0 ? "+" : "") + num(v, d);
 const cls = v => v == null || v === 0 ? "" : v > 0 ? "pos" : "neg";
 const secs = s => s == null ? "–" : s < 90 ? `${num(s, s < 10 ? 1 : 0)} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`;
-const time = ts => ts ? ts.replace("T", " ").slice(5, 19) : "";
 const etFormat = (() => { try { return new Intl.DateTimeFormat("en-US", {timeZone: "America/New_York", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23"}); } catch (e) { return null; } })();
 const et = ts => ts && etFormat ? etFormat.format(new Date(ts)).replace(",", "") + " ET" : "";
 const after = (from, to) => from && to ? (Date.parse(to) - Date.parse(from)) / 1000 : null;
@@ -171,6 +183,79 @@ const empty = text => `<p class="empty">${text}</p>`;
 const table = (head, rows) => `<div class="scroll"><table><thead><tr>${head.map(([h, l, t]) =>
   `<th class="${l ? "l" : ""}" title="${esc(t || "")}">${h}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
 const failed = part => part && part.error ? banner(part.error) : "";
+
+// Times. The runs store UTC and the server only takes UTC. The viewer can show every time in this computer's zone
+// instead, and that choice is remembered in this browser. Times marked ET stay New York time in either choice.
+let zone = store.get("v2tz") === "local" ? "local" : "utc";
+const LOCAL_ZONE = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (e) { return ""; } })();
+const ZONE_NAMER = (() => { try { return new Intl.DateTimeFormat(undefined, {timeZoneName: "short"}); } catch (e) { return null; } })();
+const pad = (v, w = 2) => String(v).padStart(w, "0");
+const msOf = ts => ts == null || ts === "" ? null : typeof ts === "number" ? ts : Date.parse(ts);
+function abbr(ms, z = zone) {  // the zone's short name at that moment, such as UTC, CDT or CST, or an offset where none exists
+  if (z === "utc") return "UTC";
+  try {
+    const part = ZONE_NAMER.formatToParts(new Date(ms)).find(p => p.type === "timeZoneName");
+    if (part && part.value) return part.value;
+  } catch (e) {}
+  const off = -new Date(ms).getTimezoneOffset(), a = Math.abs(off);
+  return `UTC${off < 0 ? "-" : "+"}${Math.floor(a / 60)}${a % 60 ? ":" + pad(a % 60) : ""}`;
+}
+const zoneNow = () => abbr(Date.now());
+const zoneWords = () => zone === "utc" ? "UTC" : `your local time, ${zoneNow()}`;
+function parts(ms, z = zone) {
+  const d = new Date(ms), u = z === "utc";
+  return {y: u ? d.getUTCFullYear() : d.getFullYear(), mo: (u ? d.getUTCMonth() : d.getMonth()) + 1,
+    d: u ? d.getUTCDate() : d.getDate(), h: u ? d.getUTCHours() : d.getHours(), mi: u ? d.getUTCMinutes() : d.getMinutes(),
+    s: u ? d.getUTCSeconds() : d.getSeconds(), ms: u ? d.getUTCMilliseconds() : d.getMilliseconds()};
+}
+const day = p => `${p.y}-${pad(p.mo)}-${pad(p.d)}`;
+const hm = p => `${pad(p.h)}:${pad(p.mi)}`;
+const written = (ts, write) => { const ms = msOf(ts); return ms == null || Number.isNaN(ms) ? "" : write(parts(ms), ms); };
+// Month, day and time to the second for tables, whose column header names the zone. A row on the other side of a
+// daylight saving change names its own.
+const time = ts => written(ts, (p, ms) => `${pad(p.mo)}-${pad(p.d)} ${hm(p)}:${pad(p.s)}${abbr(ms) === zoneNow() ? "" : " " + abbr(ms)}`);
+const stamp = ts => written(ts, (p, ms) => `${day(p)} ${hm(p)} ${abbr(ms)}`);
+const when = ts => written(ts, (p, ms) => `${day(p)} ${hm(p)}:${pad(p.s)}.${pad(p.ms, 3)} ${abbr(ms)}`);
+const clock = ms => written(ms, (p, at) => `${hm(p)}:${pad(p.s)} ${abbr(at)}`);
+// A time the stock process wrote inside an event's text, such as a checkpoint a restart restored, follows the switch.
+const ISO_IN_TEXT = /\b[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?Z/g;
+const textTimes = s => esc(s).replace(ISO_IN_TEXT, ts => Number.isNaN(msOf(ts)) ? ts : esc(when(ts)));
+// The explorer's from and to. The server takes a UTC date or minute and includes the whole of a to minute, so each
+// field is typed and shown in the chosen zone while the filter keeps the UTC minute the server receives.
+const EX_TIMES = ["from", "to"];
+const EX_WHEN = /^([0-9]{4})-([0-9]{2})-([0-9]{2})(?:[T ]([0-9]{2}):([0-9]{2}))?(Z?)$/;
+// The start of the minute a from or to names when read in zone z, or null for anything the server would refuse. A
+// date alone means midnight as a from and the last minute of that day as a to. A value ending in Z is UTC whatever
+// the zone, so a time pasted from a log, status or the database means what it says.
+function exInstant(k, v, z = zone) {
+  const m = EX_WHEN.exec(v || "");
+  if (!m) return null;
+  const f = [1, 2, 3, 4, 5].map(i => Number(m[i] || 0));
+  f[1] -= 1;
+  const check = new Date(Date.UTC(...f));
+  if ([check.getUTCFullYear(), check.getUTCMonth(), check.getUTCDate(), check.getUTCHours(), check.getUTCMinutes()]
+    .some((x, i) => x !== f[i])) return null;
+  const utc = z === "utc" || m[6] === "Z", whole = k === "to" && m[4] == null;
+  const at = whole ? [f[0], f[1], f[2] + 1] : f;
+  const ms = (utc ? Date.UTC(...at) : new Date(...at).getTime()) - (whole ? 60000 : 0);
+  const year = new Date(ms).getUTCFullYear();
+  return Number.isNaN(ms) || ms % 60000 !== 0 || year < 1970 || year > 9998 ? null : ms;
+}
+// What the server receives for a typed value, the UTC minute it means, or null for a value it would refuse.
+const exToServer = (k, v) => { const at = exInstant(k, v); return at == null ? null : new Date(at).toISOString().slice(0, 16); };
+// A value the server receives, written for its field in the chosen zone as briefly as it stays exact. A local time in
+// the hour that repeats when the clocks go back names two moments, so one that would read back as the other is
+// written in UTC with a Z.
+function exShow(k, v) {
+  const at = v ? exInstant(k, v, "utc") : null;
+  if (at == null) return v || "";
+  const brief = z => {
+    const p = parts(at, z), edge = k === "from" ? p : parts(at + 60000, z);
+    return edge.h === 0 && edge.mi === 0 ? day(p) : `${day(p)} ${hm(p)}`;
+  };
+  const text = brief(zone);
+  return exInstant(k, text) === at ? text : brief("utc").replace(" ", "T") + "Z";
+}
 
 async function load() {
   nextAt = Date.now() + REFRESH_MS;
@@ -195,7 +280,7 @@ function tick() {
   const wait = Math.max(0, Math.ceil((nextAt - Date.now()) / 1000));
   live.className = lastOk == null ? "live off" : "live";
   label.textContent = lastOk == null ? `cannot reach the dashboard server, retrying in ${wait} s`
-    : `updated ${new Date(lastOk).toISOString().slice(11, 19)} UTC · next in ${wait} s`;
+    : `updated ${clock(lastOk)} · next in ${wait} s`;
 }
 
 function render() {
@@ -223,8 +308,8 @@ function market(m) {
   const flags = [m.early_close ? "early close at 13:00 ET" : "full session", m.holiday_today ? "holiday today" : ""].filter(Boolean).join(" · ");
   return panel("Market session", `<div class="cards">
     ${card("State", `<span class="dot" style="background:${m.state === "open" ? "var(--good)" : "var(--muted)"}"></span>${esc(m.state)}`, `session of ${esc(m.session_day)}`)}
-    ${card("Next open", esc(m.next_open.et), esc(m.next_open.utc.slice(0, 16).replace("T", " ")) + " UTC")}
-    ${card("Next close", esc(m.next_close.et), esc(m.next_close.utc.slice(0, 16).replace("T", " ")) + " UTC")}
+    ${card("Next open", esc(m.next_open.et), esc(stamp(m.next_open.utc)))}
+    ${card("Next close", esc(m.next_close.et), esc(stamp(m.next_close.utc)))}
     ${card("Flags", esc(flags), "from the session table of 2026 to 2028")}</div>`);
 }
 
@@ -236,11 +321,11 @@ function feed(f) {
     ${card("Feed", `<span class="dot" style="background:${color}"></span>${esc(r.feed_state || "no heartbeat")}`, `stock process heartbeat ${secs(r.age_s)} ago`)}
     ${card("Prints per second", num(r.prints_per_s, 1), `messages per second ${num(r.msgs_per_s, 1)}`)}
     ${card("Session state", esc(r.session_state || "–"), `news age ${secs(r.news_age_s)}`)}
-    ${card("Print delay", f.print_delay ? esc(time(f.print_delay.ts)) : "none", esc(f.print_delay ? f.print_delay.detail : "no print delay event"), "The newest print_delay event")}</div>
+    ${card("Print delay", f.print_delay ? esc(time(f.print_delay.ts)) : "none", f.print_delay ? textTimes(f.print_delay.detail) : "no print delay event", "The newest print_delay event")}</div>
     <div class="two"><div>${table([["symbol", 1], ["state", 1], ["last print", 0, "Seconds since the symbol's last eligible print"], ["row age", 0]],
       f.symbols.map(s => `<tr><td class="l">${esc(s.symbol)}</td><td class="l">${chip(s.state)}</td><td>${secs(s.last_print_age_s)}</td><td>${secs(s.age_s)}</td></tr>`))}</div>
-    <div>${f.events.length ? table([["time UTC", 1], ["event", 1], ["symbol", 1], ["detail", 1]],
-      f.events.map(e => `<tr><td class="l">${esc(time(e.ts))}</td><td class="l">${esc(e.kind)}</td><td class="l">${esc(e.symbol)}</td><td class="wrap">${esc(e.detail)}</td></tr>`)) : empty("No feed events yet.")}</div></div>`);
+    <div>${f.events.length ? table([[`time ${esc(zoneNow())}`, 1], ["event", 1], ["symbol", 1], ["detail", 1]],
+      f.events.map(e => `<tr><td class="l">${esc(time(e.ts))}</td><td class="l">${esc(e.kind)}</td><td class="l">${esc(e.symbol)}</td><td class="wrap">${textTimes(e.detail)}</td></tr>`)) : empty("No feed events yet.")}</div></div>`);
 }
 
 function news(n) {
@@ -288,17 +373,17 @@ function skill(runs, pair, win) {
         <td>${num(s.detectable, 3)}</td><td>${num(s.upper_bound, 3)}</td><td>${num(s.mse_vs_zero, 3)}</td><td class="l">${esc(s.verdict)}</td></tr>`));
   }).join("");
   const p = pair && !pair.error ? `<p class="muted">S2 population against S1 on ${pair.rows} paired rows, squared error ratio ${num(pair.mse_ratio, 3)}, t ${num(pair.t, 2)}, a ratio below 1 favours S2.</p>` : failed(pair);
-  const note = win && win.final ? `window ends at the cutoff ${esc(win.end)}, only S2 news is tested` : "descriptive until the cutoff";
+  const note = win && win.final ? `window ends at the cutoff ${esc(stamp(win.end))}, only S2 news is tested` : "descriptive until the cutoff";
   return panel("Forecast skill", (parts || empty("No run database yet.")) + p, note);
 }
 
-const scored = (s, received) => !s ? `<span class="muted">–</span>` : `${chip(s.status, "scored " + time(s.scored_at) + " UTC")} <span class="muted">${secs(after(received, s.scored_at))}</span> ${s.impacts.map(i =>
+const scored = (s, received) => !s ? `<span class="muted">–</span>` : `${chip(s.status, "scored " + when(s.scored_at))} <span class="muted">${secs(after(received, s.scored_at))}</span> ${s.impacts.map(i =>
   `<span class="chip" title="${esc([i.event_type, i.horizon, i.surprise != null ? "surprise " + i.surprise : ""].filter(Boolean).join(", "))}">${esc(i.ticker)} ${signed(i.strength, 2)}${i.confidence != null ? " c" + esc(i.confidence) : ""}</span>`).join("")}`;
 
 function recent(n) {
   if (!n || n.error || !n.recent) return "";
   if (!n.recent.length) return panel("Recent news", empty("No routed items yet."));
-  return panel("Recent news", table([["received UTC", 1], ["source", 1], ["symbols", 1], ["headline", 1], ["haiku", 1, "Status, seconds from receipt to the score, and impacts"], ["sonnet", 1, "Official items only"], ["finbert", 1], ["S2 used", 1, "The score S2 read as its primary score"]],
+  return panel("Recent news", table([[`received ${esc(zoneNow())}`, 1], ["source", 1], ["symbols", 1], ["headline", 1], ["haiku", 1, "Status, seconds from receipt to the score, and impacts"], ["sonnet", 1, "Official items only"], ["finbert", 1], ["S2 used", 1, "The score S2 read as its primary score"]],
     n.recent.map(i => `<tr><td class="l">${esc(time(i.received_at))}</td><td class="l">${esc(i.source)} <span class="muted">${esc(i.kind)}</span></td>
       <td class="l">${i.tickers.map(t => chip(t)).join("")}</td><td class="wrap">${esc(i.title)}</td><td class="l">${scored(i.haiku, i.received_at)}</td>
       <td class="l">${scored(i.sonnet, i.received_at)}</td><td class="l">${scored(i.finbert, i.received_at)}</td>
@@ -324,8 +409,8 @@ function chart(rows) {
     return pts.length ? `<polyline fill="none" stroke="${col}" stroke-width="2" points="${pts.join(" ")}"/>` : "";
   }).join("");
   return `<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Equity over time">${ticks}${lines}
-    <text x="${P}" y="${H - 4}" font-size="11" fill="var(--muted)">${esc(time(rows[0].ts))}</text>
-    <text x="${W - 8}" y="${H - 4}" font-size="11" fill="var(--muted)" text-anchor="end">${esc(time(rows[rows.length - 1].ts))}</text></svg>
+    <text x="${P}" y="${H - 4}" font-size="11" fill="var(--muted)">${esc(stamp(rows[0].ts))}</text>
+    <text x="${W - 8}" y="${H - 4}" font-size="11" fill="var(--muted)" text-anchor="end">${esc(stamp(rows[rows.length - 1].ts))}</text></svg>
     <div class="legend">${SERIES.map(([, col, name]) => `<span style="--c:${col}">${name}</span>`).join("")}</div>`;
 }
 
@@ -349,14 +434,22 @@ function populations(runs) {
   const tabs = `<div class="tabs">${ok.map(r => `<button class="tab ${r.name === run.name ? "on" : ""}" type="button" data-run="${esc(r.name)}">${esc(r.name)}${r.news ? " · news" : " · prices"}</button>`).join("")}
     <label class="toggle"><input type="checkbox" id="twins" ${showTwins ? "checked" : ""}> show coin flip twins</label></div>`;
   return panel("Populations", `${tabs}${chart(run.equity_curve)}<h3>Bots</h3>${bots(run)}`,
-    `${run.launch_ts ? "launched " + esc(time(run.launch_ts)) + " UTC" : "not launched yet"}, against equal weight and QQQ buy and hold, matched exposure and cash`);
+    `${run.launch_ts ? "launched " + esc(stamp(run.launch_ts)) : "not launched yet"}, against equal weight and QQQ buy and hold, matched exposure and cash`);
 }
 
 // The decisions explorer, drawn once and refreshed apart from the overview, so filters and the chosen row survive.
 
-const ex = {ready: false, filters: {}, cursors: [null], index: 0, rows: [], next: null, chosen: null, timer: null, loadedAt: 0};
+const ex = {ready: false, filters: {}, cursors: [null], index: 0, rows: [], next: null, chosen: null, timer: null, loadedAt: 0,
+  shown: null};
 const exEl = id => document.getElementById(id);
 const exInputs = () => [...document.querySelectorAll("#ex-filters [data-f]")];
+const exField = k => document.querySelector(`#ex-filters [data-f="${k}"]`);
+const exOrZ = () => zone === "utc" ? "" : ", or a UTC time ending in Z";
+const EX_HINT = {from: () => `from takes a date or a minute in ${zoneWords()}, such as 2026-10-19 or 2026-10-19 09:30${exOrZ()}`,
+  to: () => `to takes a date or a minute in ${zoneWords()}, such as 2026-10-19 or 2026-10-19 15:30${exOrZ()}`};
+const exTyped = k => exField(k).value.trim();
+const exValid = k => !exTyped(k) || exInstant(k, exTyped(k)) != null;
+const exSame = (a, b) => JSON.stringify(Object.entries(a).sort()) === JSON.stringify(Object.entries(b).sort());
 
 function exInit(meta) {
   if (!meta) return;
@@ -366,11 +459,18 @@ function exInit(meta) {
   options("run", meta.runs); options("symbol", meta.symbols); options("action", meta.actions);
   try { ex.filters = JSON.parse(store.get("v2filters") || "{}") || {}; } catch (e) { ex.filters = {}; }
   exInputs().forEach(el => {
-    if (ex.filters[el.dataset.f] != null) el.value = ex.filters[el.dataset.f];
-    if (el.value !== (ex.filters[el.dataset.f] ?? "")) delete ex.filters[el.dataset.f];
+    const k = el.dataset.f, time = EX_TIMES.includes(k);
+    if (typeof ex.filters[k] !== "string" || (time && exInstant(k, ex.filters[k], "utc") == null)) delete ex.filters[k];
+    el.value = time ? exShow(k, ex.filters[k]) : ex.filters[k] ?? "";
+    if (!time && el.value !== (ex.filters[k] ?? "")) delete ex.filters[k];  // a choice this page no longer offers
     el.addEventListener("change", exApply);
-    if (el.type === "search") el.addEventListener("input", () => { clearTimeout(ex.timer); ex.timer = setTimeout(exApply, 400); });
+    if (el.type === "search" || time) el.addEventListener("input", () => {  // typing waits for a pause
+      clearTimeout(ex.timer);
+      if (time && exValid(k)) exBad();
+      ex.timer = setTimeout(exApply, time ? 600 : 400);
+    });
   });
+  exZoneText();
   exEl("ex-clear").onclick = () => { exInputs().forEach(el => { el.value = ""; }); exApply(); };
   exEl("ex-newest").onclick = () => { ex.cursors = [null]; ex.index = 0; exLoad(); };
   exEl("ex-newer").onclick = () => { if (ex.index > 0) { ex.index -= 1; exLoad(); } };
@@ -392,12 +492,52 @@ function exInit(meta) {
   exLoad();
 }
 
+// The filters the inputs ask for. A from or to is read in the chosen zone and kept as the UTC minute the server
+// receives, an untouched one keeps its filter exactly, and one the server would refuse keeps the previous filter.
+function exWanted() {
+  const wanted = {};
+  exInputs().forEach(el => {
+    const k = el.dataset.f, text = el.value.trim(), before = ex.filters[k];
+    if (!EX_TIMES.includes(k)) { if (text) wanted[k] = text; return; }
+    const v = text === exShow(k, before) ? before : text ? exToServer(k, text) ?? before : null;
+    if (v) wanted[k] = v;
+  });
+  return wanted;
+}
+
 function exApply() {
-  ex.filters = {};
-  exInputs().forEach(el => { if (el.value.trim() !== "") ex.filters[el.dataset.f] = el.value.trim(); });
+  clearTimeout(ex.timer);
+  exBad();
+  const wanted = exWanted();
+  if (exSame(wanted, ex.filters)) return;
+  ex.filters = wanted;
   store.set("v2filters", JSON.stringify(ex.filters));
   ex.cursors = [null]; ex.index = 0;
   exLoad();
+}
+
+// Marks each typed time the server would refuse and says why. The list keeps its last filter until it is fixed.
+function exBad() {
+  const bad = EX_TIMES.filter(k => !exValid(k));
+  for (const k of EX_TIMES) {
+    exField(k).classList.toggle("bad", bad.includes(k));
+    exField(k).setAttribute("aria-invalid", String(bad.includes(k)));
+  }
+  const hint = exEl("ex-hint");
+  hint.textContent = bad.length ? `${bad.map(k => EX_HINT[k]()).join(", and ")}. The list keeps its previous filter until then.` : "";
+  hint.hidden = !bad.length;
+}
+
+// The from and to labels and their help name the chosen zone.
+function exZoneText() {
+  const z = zone === "utc" ? "UTC" : zoneNow(), words = zone === "utc" ? "In UTC" : `In your local time, ${zoneNow()}`;
+  const utc = zone === "utc" ? "" : " A time ending in Z is UTC.";
+  for (const k of EX_TIMES) {
+    const label = exField(k).parentElement;
+    label.firstChild.nodeValue = `${k === "from" ? "From" : "To"}, ${z}`;
+    label.title = k === "from" ? `${words}, a date such as 2026-10-19 or a minute such as 2026-10-19 09:30. A date alone means midnight.${utc}`
+      : `${words} and inclusive, a date such as 2026-10-19 or a minute such as 2026-10-19 15:30. A date alone means the whole of that day.${utc}`;
+  }
 }
 
 async function exLoad() {
@@ -434,7 +574,7 @@ function exSummary(data) {
 
 function exList() {
   if (!ex.rows.length) { exEl("ex-list").innerHTML = empty("No decision matches these filters yet."); return; }
-  exEl("ex-list").innerHTML = table([["time UTC", 1], ["ET", 1], ["run", 1], ["bot", 0], ["slot", 0], ["kind", 1], ["symbol", 1], ["before", 1, "Position before the decision"],
+  exEl("ex-list").innerHTML = table([[`time ${esc(zoneNow())}`, 1], ["ET", 1], ["run", 1], ["bot", 0], ["slot", 0], ["kind", 1], ["symbol", 1], ["before", 1, "Position before the decision"],
     ["action", 1], ["forced", 1], ["gate", 1], ["prediction", 0, "bps"], ["required", 0, "Required edge in bps"], ["label", 0, "bps, once matured"], ["reason", 1]],
     ex.rows.map(r => `<tr class="pick${ex.chosen === r.run + ":" + r.id ? " sel" : ""}" tabindex="0" data-run="${esc(r.run)}" data-id="${r.id}">
       <td class="l">${esc(time(r.ts))}</td><td class="l muted">${esc(et(r.ts))}</td><td class="l">${esc(r.run)}</td><td>${r.bot_id}</td><td>${r.slot}</td>
@@ -458,9 +598,11 @@ async function exChoose(run, id) {
   try {
     const r = await fetch(`/api/decision?run=${encodeURIComponent(run)}&id=${encodeURIComponent(id)}`, {cache: "no-store"});
     const data = await r.json();
+    ex.shown = r.ok ? data.decision : null;
     exEl("ex-detail").innerHTML = r.ok ? exDetail(data.decision) : banner(data.error || "the decision cannot be read");
     exEl("ex-detail").scrollIntoView({behavior: "smooth", block: "start"});
   } catch (e) {
+    ex.shown = null;
     exEl("ex-detail").innerHTML = banner("cannot reach the dashboard server, choose the row again in a moment");
   }
 }
@@ -469,20 +611,26 @@ function exDetail(d) {
   const b = d.bot, l = d.label;
   const settled = d.position_after == null ? chip("pending", "The order has not settled yet") : esc(d.position_after);
   const labelText = l.matured ? `<span class="${l.direction_right == null ? "" : l.direction_right ? "pos" : "neg"}">${signed(l.label_bps, 2)} bps</span>` : "not matured";
-  const fills = d.fills.length ? table([["leg", 1], ["side", 1], ["qty", 0], ["status", 1], ["reason", 1], ["filled UTC", 1], ["latency", 0, "From the decision to the due time"],
-    ["print", 0, "The print that filled the order"], ["fill price", 0, "The print moved against the bot by the allowance"], ["allowance", 0, "bps"], ["slippage", 0, "bps against the reference price"],
+  // The two report only columns of a fill appear once the server sends them.
+  const reports = d.fills.some(f => "print_after_due_ms" in f), yesNo = v => v == null ? "–" : v ? "yes" : "no";
+  const fills = d.fills.length ? table([["leg", 1], ["side", 1], ["qty", 0], ["status", 1], ["reason", 1], [`filled ${esc(zoneNow())}`, 1], ["latency", 0, "From the decision to the due time"],
+    ["print", 0, "The print that filled the order"],
+    ...(reports ? [["print after due", 0, "Report only. How long after the due time the filling print traded, by its vendor time, never before it"],
+      ["news window", 1, "Report only. Whether S2 received an item tagged with this symbol in the 30 minutes before the decision, empty in S1"]] : []),
+    ["fill price", 0, "The print moved against the bot by the allowance"], ["allowance", 0, "bps"], ["slippage", 0, "bps against the reference price"],
     ["notional", 0], ["fee", 0, "Every fee of the leg"], ["SEC fee", 0], ["TAF", 0]],
     d.fills.map(f => `<tr><td class="l">${esc(f.leg)}</td><td class="l">${esc(f.side)}</td><td>${num(f.qty, f.qty % 1 ? 6 : 0)}</td><td class="l">${chip(f.status)}</td>
-      <td class="l">${esc(f.reason)}</td><td class="l">${esc(time(f.filled_at))}</td><td>${num(f.latency_ms, 0)} ms</td><td>${num(f.print_price, 4)}</td><td>${num(f.price, 4)}</td>
+      <td class="l">${esc(f.reason)}</td><td class="l">${esc(time(f.filled_at))}</td><td>${num(f.latency_ms, 0)} ms</td><td>${num(f.print_price, 4)}</td>
+      ${reports ? `<td>${f.print_after_due_ms == null ? "–" : num(f.print_after_due_ms, 0) + " ms"}</td><td class="l">${yesNo(f.news_window)}</td>` : ""}<td>${num(f.price, 4)}</td>
       <td>${num(f.allowance_bps, 2)}</td><td>${num(f.slippage_bps, 2)}</td><td>${usd(f.notional)}</td><td>${usd(f.fee, 4)}</td><td>${usd(f.sec_fee, 2)}</td><td>${usd(f.taf_fee, 2)}</td></tr>`))
     : empty(d.action === "none" || d.action === "hold" ? "No order went out at this minute." : "The order has not settled yet, so it has no fill.");
-  const trades = d.trades.length ? table([["trade", 0], ["side", 1], ["opened UTC", 1], ["closed UTC", 1], ["qty", 0], ["entry", 0], ["exit", 0], ["fees", 0, "Open and close"],
+  const trades = d.trades.length ? table([["trade", 0], ["side", 1], [`opened ${esc(zoneNow())}`, 1], [`closed ${esc(zoneNow())}`, 1], ["qty", 0], ["entry", 0], ["exit", 0], ["fees", 0, "Open and close"],
     ["borrow", 0], ["gross", 0], ["net", 0], ["exit reason", 1]],
     d.trades.map(t => `<tr><td>${t.id}</td><td class="l">${esc(t.side)}${t.forced ? " " + chip("forced") : ""}</td><td class="l">${esc(time(t.opened_at))}</td><td class="l">${t.closed_at ? esc(time(t.closed_at)) : '<span class="muted">open</span>'}</td>
       <td>${num(t.qty, t.qty % 1 ? 6 : 0)}</td><td>${num(t.entry_price, 4)}</td><td>${num(t.exit_price, 4)}</td><td>${usd((t.fee_open || 0) + (t.fee_close || 0), 4)}</td><td>${usd(t.funding, 4)}</td>
       <td class="${cls(t.pnl_gross)}">${usd(t.pnl_gross)}</td><td class="${cls(t.pnl_net)}">${usd(t.pnl_net)}</td><td class="l">${esc(t.exit_reason || "")}</td></tr>`)) : "";
   const evaluation = l.evaluation ? `<p class="muted">This minute is also an evaluation minute for ${esc(d.symbol)}, its label row is ${chip(l.evaluation.status)} with ${l.evaluation.label_bps == null ? "no label yet" : signed(l.evaluation.label_bps, 2) + " bps"}.</p>` : "";
-  return `<div class="detail"><h3><span>Decision ${d.id} of ${esc(d.run)} · bot ${b.bot_id}, ${esc(b.kind)} in slot ${b.slot}, home ${esc(b.home_symbol)}, ${chip(b.state)} · ${esc(time(d.ts))} UTC, ${esc(et(d.ts))}</span>
+  return `<div class="detail"><h3><span>Decision ${d.id} of ${esc(d.run)} · bot ${b.bot_id}, ${esc(b.kind)} in slot ${b.slot}, home ${esc(b.home_symbol)}, ${chip(b.state)} · ${esc(stamp(d.ts))}, ${esc(et(d.ts))}</span>
     <button type="button" id="ex-back">Back to the list</button></h3>
     <p class="reason">${esc(d.reason)}</p>
     <div class="cards">
@@ -495,6 +643,45 @@ function exDetail(d) {
     </div>
     <h3>Fills and costs</h3>${fills}${trades ? "<h3>Trades</h3>" + trades : ""}${evaluation}</div>`;
 }
+
+// The UTC and Local switch in the header.
+function showZone() {
+  document.querySelectorAll("#zone [data-zone]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.zone === zone)));
+  const local = document.querySelector('#zone [data-zone="local"]');
+  local.title = `Show every time in this computer's time zone, ${LOCAL_ZONE ? LOCAL_ZONE + ", " : ""}now ${abbr(Date.now(), "local")}`;
+  exZoneText();
+}
+
+// Switching zone redraws every time on the page. A from or to typed but not yet applied is read in the zone it was
+// typed in, and a field still holding a half typed time keeps it as typed.
+function setZone(z) {
+  if (z === zone || (z !== "utc" && z !== "local")) return;
+  const typed = ex.ready ? EX_TIMES.filter(exValid) : [];
+  const wanted = ex.ready ? exWanted() : ex.filters;
+  zone = z;
+  store.set("v2tz", zone);
+  for (const k of typed) exField(k).value = exShow(k, wanted[k]);
+  showZone();
+  render();
+  tick();
+  if (!ex.ready) return;
+  exBad();
+  if (!exSame(wanted, ex.filters)) {
+    ex.filters = wanted;
+    store.set("v2filters", JSON.stringify(ex.filters));
+    ex.cursors = [null]; ex.index = 0;
+    exLoad();
+  } else {
+    exList();
+  }
+  if (ex.shown) exEl("ex-detail").innerHTML = exDetail(ex.shown);
+}
+
+document.getElementById("zone").addEventListener("click", e => {
+  const b = e.target.closest("[data-zone]");
+  if (b) setZone(b.dataset.zone);
+});
+showZone();
 
 const help = document.getElementById("help");
 help.open = store.get("v2help") === "open";

@@ -7,7 +7,8 @@ leaving its slot empty, rent only in usable minutes, the DST Monday and the inva
 session close at 15:55 with a symbol halted into the close, a restart in session flattening, every label against its
 recomputation from the candles and every decision against its label, the split guard and the short sale restriction
 in the shared layer, a changed news hash stopping news health, orders rejected at a restart, the news_seen bookkeeping
-and S1 and S2 writing identical rows while S2 reads no news."""
+and S1 and S2 writing identical rows while S2 reads no news. Also the price z scores of every usable symbol at each
+evaluation minute, and the report only fill columns, how long after due each print traded and S2's news window."""
 
 import copy
 import re
@@ -26,11 +27,12 @@ from btc_survivor.v2.config import parse_stock_config
 from btc_survivor.v2.news.health import FINBERT_SCORER
 from btc_survivor.v2.stocks import costs
 from btc_survivor.v2.stocks.candles import StockCandle
-from btc_survivor.v2.stocks.engine import PERSIST_OFFSET_MS, StockEngine
+from btc_survivor.v2.stocks.bot import BotStep
+from btc_survivor.v2.stocks.engine import NEWS_WINDOW_MS, PERSIST_OFFSET_MS, StockEngine
 from btc_survivor.v2.stocks.finnhub import Print, PrintBatch
 from btc_survivor.v2.stocks.labels import recompute_labels
 from btc_survivor.v2.stocks.market import MarketLayer
-from btc_survivor.v2.stocks.news_inputs import HeartbeatLine, Impact, ScoreLine
+from btc_survivor.v2.stocks.news_inputs import HAIKU_SCORER, HeartbeatLine, Impact, ScoreLine
 from btc_survivor.v2.stocks.store import StockStore
 from helpers import ROOT
 
@@ -473,9 +475,11 @@ def test_the_session_close_at_15_55_and_a_symbol_halted_into_the_close_carried_t
 @pytest.fixture(scope="module")
 def resend(tmp_path_factory):
     """Two bots per run from Thursday, the first learner holding a long into Friday's session close while its symbol
-    halts from 15:55 to 15:57:30 only."""
+    halts from 15:55 to 15:57:30 only. Its stale thresholds are pinned at 5 and 15 seconds, so the halt marks the
+    symbol stale whatever the measured thresholds in the committed configs are."""
     c1, c2, group, tape = start(tmp_path_factory.mktemp("resend"), at(THU, "09:00"), size="2", warmup_hours="0.5",
-                                force_trade_after_hours="0.5")
+                                force_trade_after_hours="0.5", feed_stale_after_seconds="5",
+                                symbol_stale_after_seconds="15")
     tape.run_to(at(THU, "16:05"))
     tape.skip_to(at(FRI, "09:28"))
     tape.run_to(at(FRI, "14:20:30"))
@@ -665,21 +669,124 @@ def test_the_invariants_hold_at_every_snapshot(week):
                      between(MON, "09:31", "16:00")) == [(78,)]
 
 
+FILL_COLUMNS = ("id, bot_id, trade_id, decided_at, filled_at, leg, side, qty, ref_mid, book_avg_price, price, "
+                "levels_consumed, slippage_bps, fee, latency_ms, status, reason, symbol, print_price, allowance_bps, "
+                "notional, sec_fee, taf_fee, print_after_due_ms")
+
+
 def test_s1_and_s2_write_identical_rows_while_s2_reads_no_news(week):
-    for sql in ("SELECT * FROM decisions ORDER BY id", "SELECT * FROM fills ORDER BY id",
+    for sql in ("SELECT * FROM decisions ORDER BY id", f"SELECT {FILL_COLUMNS} FROM fills ORDER BY id",
                 "SELECT * FROM trades ORDER BY id", "SELECT * FROM equity_snapshots ORDER BY bot_id, ts",
                 "SELECT * FROM stock_labels ORDER BY ts, symbol", "SELECT * FROM deaths",
-                "SELECT * FROM benchmark ORDER BY ts",
+                "SELECT * FROM benchmark ORDER BY ts", "SELECT * FROM price_z ORDER BY k, symbol",
                 "SELECT * FROM stock_forecasts WHERE predictor IN ('population', 'linear_prices') ORDER BY ts, symbol, "
                 "predictor"):
         first, second = (query(db, sql) for db in week.dbs)
         assert first and first == second, sql
+    # The news window is S2's alone, null in S1, which reads no news, and 0 in S2, which read none this week.
+    assert query(week.dbs[0], "SELECT DISTINCT news_window FROM fills") == [(None,)]
+    assert query(week.dbs[1], "SELECT DISTINCT news_window FROM fills") == [(0,)]
     s2 = dict(query(week.dbs[1], "SELECT predictor, count(*) FROM stock_forecasts GROUP BY predictor"))
     assert s2["linear_news"] == s2["linear_prices"] and s2["news"] > s2["population"]
     assert query(week.dbs[1], "SELECT max(abs(prediction)), max(items), max(inputs_max_recv_at) FROM stock_forecasts "
                               "WHERE predictor = 'news'") == [(0.0, 0, None)]
     assert set(query(week.dbs[0], "SELECT DISTINCT predictor FROM stock_forecasts")) == \
         {("population",), ("linear_prices",)}
+
+
+def test_every_fill_print_traded_at_or_after_due_and_records_how_long_after(week):
+    for db in week.dbs:
+        (filled, lowest, highest), = query(db, "SELECT count(*), min(print_after_due_ms), max(print_after_due_ms) "
+                                               "FROM fills WHERE status = 'filled'")
+        # The tape prints every second with vendor time 100 ms before the second, so with a due 1,000 to 1,300 ms after
+        # the decision every order fills on the print traded 1,900 ms after it, never the one traded at 900 ms.
+        assert filled > 100 and 600 <= lowest and highest <= 900
+        assert query(db, "SELECT DISTINCT latency_ms + print_after_due_ms FROM fills WHERE status = 'filled'") == \
+            [(1900,)]
+        assert query(db, "SELECT count(*) FROM fills WHERE status = 'filled' AND print_after_due_ms IS NULL") == [(0,)]
+        assert query(db, "SELECT count(*) FROM fills WHERE status = 'rejected' AND print_after_due_ms IS NOT NULL") \
+            == [(0,)]
+        assert query(db, "SELECT count(*) FROM fills WHERE status = 'rejected'")[0][0] > 0
+
+
+def test_price_z_holds_the_z_scores_of_every_usable_symbol_at_each_evaluation_minute(week):
+    minutes = [o.m for o in week.minutes + week.wednesday + week.after_restart_in_session]
+    seen = invalid = 0
+    for db in week.dbs:
+        stored = {(k, symbol): (ts, z) for k, symbol, ts, *z in query(db, "SELECT * FROM price_z")}
+        written = {ts for ts, in query(db, "SELECT DISTINCT ts FROM stock_candles")}
+        for m in minutes:
+            if iso(m.boundary_ms) not in written:
+                continue                        # a minute whose rows a kill lost
+            for i, symbol in enumerate(week.symbols):
+                row = stored.pop((m.k, symbol), None)
+                if not (m.evaluation and m.healthy[i] and m.news_ok):
+                    assert row is None, (iso(m.boundary_ms), symbol)
+                    continue
+                ts, z = row
+                assert ts == iso(m.boundary_ms)
+                if m.valid[i]:
+                    assert z == list(m.z[i]) and not any(v is None for v in z)
+                else:
+                    assert z == [None] * 10
+                    invalid += 1
+                seen += 1
+        assert not stored                       # no row for a minute or symbol outside the rule
+    assert seen > 2 * 100 and invalid > 0
+    # Every row sits at an evaluation minute of one of its symbol's candles, and matches the news forecasts in S2.
+    for db in week.dbs:
+        assert query(db, "SELECT count(*) FROM price_z p LEFT JOIN stock_candles c ON c.symbol = p.symbol "
+                         "AND c.ts = p.ts AND c.session_k = p.k WHERE c.ts IS NULL") == [(0,)]
+    assert query(week.dbs[1], "SELECT ts, symbol FROM price_z ORDER BY ts, symbol") == \
+        query(week.dbs[1], "SELECT ts, symbol FROM stock_forecasts WHERE predictor = 'news' ORDER BY ts, symbol")
+
+
+def test_s2_flags_a_fill_whose_symbol_had_news_in_the_30_minutes_before_its_decision(tmp_path):
+    c1, c2 = pair(tmp_path, size="1")
+    engines = [StockEngine.fresh(c, StockStore.open(c.db_path), MON.open_ms) for c in (c1, c2)]
+    s1, s2 = engines
+    t = at(MON, "10:30")
+
+    def line(seq, item, scorer, recv, tickers=("AAPL",), route="llm"):
+        impact = Impact(tickers[0], 0.4, None if scorer == FINBERT_SCORER else True)
+        return ScoreLine(seq, item, "finnhub", "media", route, scorer, "scored", recv - 300, tickers, (impact,),
+                         recv_ms=recv)
+
+    # Item 1 tagged AAPL first arrives 40 minutes before t and again 10 minutes before, item 2 tagged AAPL arrives 25
+    # minutes before t, item 3 tagged MSFT 5 minutes before and item 4 tagged NVDA exactly at t.
+    minute = MS_PER_MINUTE
+    lines = [line(1, 1, FINBERT_SCORER, t - 40 * minute), line(2, 2, FINBERT_SCORER, t - 25 * minute, route="finbert"),
+             line(3, 1, HAIKU_SCORER, t - 10 * minute),
+             line(4, 3, FINBERT_SCORER, t - 5 * minute, ("MSFT",), route="finbert"),
+             line(5, 4, FINBERT_SCORER, t, ("NVDA",), route="finbert")]
+    for item in lines:
+        for engine in engines:
+            engine.on_news(item)
+    assert s1.news_window("AAPL", t) is None
+    assert s2.news_window("AAPL", t - 40 * minute) is False      # a line received at the decision is not before it
+    assert s2.news_window("AAPL", t - 40 * minute + 1) is True
+    assert s2.news_window("AAPL", t - 25 * minute + NEWS_WINDOW_MS) is True
+    assert s2.news_window("AAPL", t - 25 * minute + NEWS_WINDOW_MS + 1) is False   # item 1 counts from its first line
+    assert s2.news_window("MSFT", t) is True and s2.news_window("MSFT", t - 5 * minute) is False
+    assert s2.news_window("NVDA", t) is False and s2.news_window("NVDA", t + 1) is True
+    # A company item reaches QQQ's inputs, so it counts for QQQ too, and nothing reached TSLA.
+    assert s2.news_window("QQQ", t) is True and s2.news_window("QQQ", t - 40 * minute) is False
+    assert s2.news_window("TSLA", t + minute) is False
+    # A MACRO item reaches every symbol's inputs, so it counts for each of them.
+    for engine in engines:
+        engine.on_news(line(6, 5, FINBERT_SCORER, t + 60 * minute, ("MACRO",), route="finbert"))
+    assert all(s2.news_window(s, t + 61 * minute) is True for s in c2.stock_feed.symbols)
+    assert s2.news_window("TSLA", t + 60 * minute) is False
+    for engine in engines:
+        bot = engine.population.learners[0]
+        bot._send(engine.broker, [Leg("open", LONG, 2.0)], t, 250.0, "decision", BotStep())
+        engine._register(bot)
+        due = bot.pending_order.due_ms
+        engine.on_prints(due + 50, (Print("AAPL", 250.1, 10.0, due - 1, ()), Print("AAPL", 250.2, 10.0, due + 30, ())))
+        engine.persist(t + 60_000)
+        engine.store.close()
+    assert query(c1.db_path, "SELECT print_price, print_after_due_ms, news_window FROM fills") == [(250.2, 30, None)]
+    assert query(c2.db_path, "SELECT print_price, print_after_due_ms, news_window FROM fills") == [(250.2, 30, 1)]
 
 
 def test_a_split_keeps_features_invalid_for_391_minutes_restricts_shorts_and_a_hash_change_stops_news(tmp_path):

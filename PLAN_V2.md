@@ -34,16 +34,16 @@ Vendor facts, prices, limits and licensing come from the vendor research of Sund
 | Version 1 files changed | not applicable | no module, only `pyproject.toml`, `tests/test_no_orders.py`, `tests/test_docs_style.py` and a new `.gitattributes` | `test_v1_untouched` and the unchanged version 1 suite prove version 1 did not move |
 | Universe | BTC USD | AAPL, MSFT, NVDA, AMZN, GOOGL, META, TSLA and QQQ | all Nasdaq listed under one licensing plan, QQQ as the market reference |
 | Price data | keyless Coinbase book and trades | Finnhub free websocket trade prints, one minute candles by receive time | the only free live source found that claims consolidated prints on a key that cannot trade |
-| Full tape | not applicable | a tape check from the raw recording against Nasdaq's consolidated daily volume gates Phase 13 and repeats at sessions 10, 20 and 40 | whether the free tier carries the full tape is unverified |
+| Full tape | not applicable | a partial tape, a small share of consolidated volume, which the owner kept on 12 October 2026, whose coverage report from the raw recording against Nasdaq's consolidated daily volume sets a baseline on the gate session of that day and repeats at sessions 10, 20 and 40 | the coverage must stay within a factor of 2 of the gate session's |
 | Market hours | 24 hours | the regular session only, on a session minute clock with a local holiday table for 2026 to 2028 | nights, weekends and holidays never look stale or count as gaps |
 | Overnight | not applicable | intraday only, opens from `10:00` to `15:25` ET, flat at `15:55` ET | no stop fires overnight, and no overnight gap, overnight borrow or dividend risk is modelled beyond the rare carry of section 4.7 |
-| Fills | book walk after latency | the first eligible print at or after decision plus 1,000 ms plus seeded jitter, moved against the bot by a half spread allowance plus 1 bp | no quotes or depth, so a fixed allowance replaces the book |
+| Fills | book walk after latency | the first eligible print traded and received at or after decision plus 1,000 ms plus seeded jitter, moved against the bot by a half spread allowance plus 1 bp | no quotes or depth, so a fixed allowance replaces the book |
 | Half spread allowance | 1 bp extra slippage | 0.5 bp QQQ, 1.0 bp AAPL, MSFT, NVDA, AMZN and GOOGL, 2.0 bp META and TSLA, each plus 1 bp | at least three and a half times the implied half spread |
 | Fees | Coinbase taker fee | no commission, SEC Section 31 at 20.60 dollars per million and FINRA TAF at 0.000195 dollars a share on every sale, each rounded up to the cent | rates read on 11 October 2026 outside the research, rechecked before launch, with the TAF charged through its pause |
 | Shorts | 2 bps to open plus 0.5 bp an hour | whole shares with a one share minimum, borrow at 1 percent a year, the Rule 201 restriction | brokers do not short fractional shares, and megacaps lend near the general collateral rate |
 | Size and rent | 500 dollars on 10,000, 1.16 dollars a day | unchanged size on one home symbol, rent 0.0043081 dollars per usable session minute, 1.68 per full session | the version 1 account and the same yearly cost of capital |
 | Horizon | 30 minutes | 30 session minutes, the only horizon, with several horizons left to the profit stage of section 11.7 | 12 independent windows per session, and power is the binding limit |
-| Gate margin and stop | 8 bps gene, 1 percent stop | a fixed margin of 0.25 and a stop of 3 label standard deviations of the symbol | 8 bps passes noise on 11 percent of TSLA decisions, and 1 percent is one TSLA standard deviation |
+| Gate margin and stop | 8 bps gene, 1 percent stop | no margin over the round trip cost, by the owner's decision of 12 October 2026, and a stop of 3 label standard deviations of the symbol | a learner trades on its own whenever its prediction beats the real cost, a share `evaluate` reports, and 1 percent is one TSLA standard deviation |
 | Features | 11 from mids and the book | 10 per symbol from prints | no quotes or depth for spread and imbalance |
 | Learners | 20 per run, evolving | 24 pooled learners per run, each predicting all 8 symbols and trading its home symbol, no replacement or mutation | eight times the samples, and no death is expected |
 | Runs | A to D | S1 on prices and S2 on prices plus two news inputs, one 12 input network in both with S1's news inputs pinned at zero | identical code and parameters, so later differences come from news |
@@ -53,7 +53,7 @@ Vendor facts, prices, limits and licensing come from the vendor research of Sund
 | Model spend | not applicable | one cap in code of 20 dollars a month on one ledger per key shared by both models, matching a 20 dollar monthly workspace limit, no daily cap, a warning when one day passes 5 dollars, each call reserved from an exact token count, and no failed call sent again | the cap in code cannot be passed, and the Console limit backs it |
 | News timing | not applicable | visible when the stock process receives a score, decaying from when scoring finished | no vendor or article time places anything in time |
 | Health | Coinbase feed health | price health per symbol for prices, epochs and labels, and news health, meaning the news pipeline is alive, gating rent, learning, decisions and new labels in both runs | never trade or learn on stale data, and S1 and S2 share their minutes |
-| Confirmatory test | run A skill at day 28 | the pooled correlation of the news score with the next 30 minute return over 8 symbols, sessions 2 to 40, one sided at 1 percent, clustered by minute, with a detectable correlation from about 0.075 to about 0.12 as the macro share rises, and a failure reported with its one sided 95 percent upper bound | the one question version 2 adds |
+| Confirmatory test | run A skill at day 28 | the pooled correlation of the news score with the next 30 minute return over 8 symbols, sessions 2 to 40, one sided at 1 percent, clustered by minute, with a detectable correlation from about 0.075 to about 0.12 as the macro share rises, then only if it passes the same test with news and label residualised within each symbol on the 10 stored price z scores, and a failure reported with its one sided 95 percent upper bound | the one question version 2 adds, and whether news adds anything beyond the price features |
 | Dashboards and assistants | a local page | both dashboards local only on `127.0.0.1` with no tunnel, every command printing aggregates unless `--detail` is passed, and stock data allowed in the assistant session by the owner's decision of 12 October 2026 | the dashboards stay private, and the owner accepts the licensing risk of section 13.3 |
 | Secrets | none | one reader of a mode 600 file outside the repository, redaction on every log handler and recorded line | the Finnhub token travels in the websocket URL |
 | Variable sizing and exits | road map step 4 | still out, with a fixed 500 dollar notional and a fixed 30 minute horizon, until the profit stage of section 11.7 | no predictor has passed a skill test |
@@ -67,7 +67,7 @@ Five area drafts fed this plan. Where they disagreed, this plan picks one answer
 3. **Locks** live under `~/.config/btc_survivor`, so the main tree and the worktree see the same ones.
 4. **One news process** with one SQLite writer runs collection and scoring.
 5. **News reaches the engines** as recorded lines pulled once a second, so replay needs only the recording, and a score counts from its receipt and decays from when scoring finished.
-6. **Thresholds** are 5 seconds for the whole feed and 15 per symbol, with a backoff from 5 seconds.
+6. **Thresholds** were 5 seconds for the whole feed and 15 per symbol, with a backoff from 5 seconds, until the partial tape of the gate session set both silence limits by the rule of section 4.5.
 7. **Prices** are the median of the last 5 eligible prints, eligibility uses age on arrival plus excluded codes, and fills use one real print.
 8. **One 30 minute horizon,** opens from `10:00` ET and a flatten at `15:55` ET. The 120 minute and one day horizons cannot confirm anything in 40 sessions.
 9. **Bots** trade one home symbol at 500 dollars, with margin and stop in label standard deviations and per symbol costs instead of a flat 3 bps.
@@ -112,7 +112,7 @@ Five area drafts fed this plan. Where they disagreed, this plan picks one answer
 | `stocks S1 S2` | the stock process for both runs | `test_stock_engine`, `test_group` |
 | `news CONFIG` | the news process | `test_news_collector`, `test_llm_scorer` |
 | `news-status` | week one and data quality report | `test_news_status` |
-| `tape-check RECORDING OFFICIAL` | the tape verdict from a raw recording alone | `test_tapecheck` |
+| `tape-check RECORDING OFFICIAL` | the tape coverage report and its record, from a raw recording and the official figures | `test_tapecheck` |
 | `evaluate S1 S2` | the criteria of section 11 | `test_evaluate` |
 | `status S1 S2` and `export CONFIG` | state, and CSV under `data/v2/exports` | `test_status`, `test_export` |
 | `replay CONFIG FILES --out DIR` | recordings into a new folder, with the version 1 help sentence that replay never chooses, tunes or ranks | `test_stock_replay` |
@@ -154,13 +154,13 @@ btc_survivor_v2/                       the worktree
       finnhub_news.py  edgar.py  edgar_docs.py  rss.py  collector.py
       llm_request.py  llm_client.py  llm_validate.py  ledger.py  batcher.py  llm_scorer.py  probes.py
       finbert.py  finbert_scorer.py  health.py  runner.py
-      prompt_v1.txt  schema_v1.json  probes_v1.json
-  scripts/  v2_record_stocks.py  v2_learner_check.py  v2_power.py  v2_secret_scan.py  v2_soak.py
-            export_finbert.py  llm_synthetic_check.py
+      prompt_v2.txt  schema_v2.json  probes_v2.json
+  scripts/  v2_record_stocks.py  v2_gap_thresholds.py  v2_learner_check.py  v2_news_check.py  v2_power.py
+            v2_secret_scan.py  v2_soak.py  export_finbert.py  llm_synthetic_check.py
   tests/    one test file per module, fixtures/news/ and fixtures/finnhub/
 ```
 
-Only `v2/news/llm_client.py` imports `anthropic` and only `v2/news/finbert.py` imports `onnxruntime`, no trading module imports either, and `torch` never enters the project environment.
+Only `v2/news/llm_client.py` imports `anthropic` and only `v2/news/finbert.py` imports `onnxruntime`, no trading module imports either, and `torch` never enters the project environment. The one exception is `scripts/export_finbert.py`, which imports `torch`, `transformers` and `onnxruntime` inside its functions for the parity check of section 8.7 and refuses to run outside its own throwaway environment.
 
 ## 4. Data feed and market hours
 
@@ -177,7 +177,7 @@ Only `v2/news/llm_client.py` imports `anthropic` and only `v2/news/finbert.py` i
 * **Error** becomes `FeedNotice(kind="error")`, redacted, and asks for a reconnect.
 * **Anything else** is counted and logged once per type per connection.
 
-These field names, the ping type and the absence of a trade id or sequence number come from Finnhub's docs outside the research and are unverified until the Phase 13 recording. Without a sequence number a lost message cannot be detected, so the tape check measures loss in aggregate. A new connection might replay recent prints, so any print whose vendor time is more than 1 second before the stamp of the latest `connected` notice is ignored for price and volume.
+These field names, the ping type and the absence of a trade id or sequence number come from Finnhub's docs outside the research and are unverified until the Phase 13 recording. Without a sequence number a lost message cannot be detected, so the coverage report measures loss in aggregate. A new connection might replay recent prints, so any print whose vendor time is more than 1 second before the stamp of the latest `connected` notice is ignored for price and volume.
 
 ### 4.3 Prints to one minute candles
 
@@ -220,12 +220,14 @@ Each symbol has four states, closed, stale, recovering and healthy, and its own 
 **Whole feed conditions,** for every symbol in session.
 
 1. The socket is connected.
-2. Some message arrived within `feed_stale_after_seconds`, 5, counted from the later of the last message and the open.
+2. Some message arrived within `feed_stale_after_seconds`, counted from the later of the last message and the open, and from each connect.
 3. Over the last 50 non replayed session prints, the median of receive stamp minus vendor time is within `max_print_delay_seconds` either way, with no objection until 10 samples exist. Samples clear at every open and connect. This replaces the version 1 skew check and catches a delayed feed.
 
 **The delay rule, written now.** After the first recorded session in Phase 13, `max_print_delay_seconds` becomes the larger of 2 and `ceil(1.5 * p95)` of that session's delays in seconds, capped at 5, and `late_print_seconds` becomes twice that, from the delay distribution only, never from prices. A median above 5 seconds stops the build for the owner. Until then the config holds 2.0 and 4.
 
-**Per symbol condition.** An eligible print arrived within `symbol_stale_after_seconds`, 15, counted from the later of the last eligible print and the open. On the full tape each name prints many times a second. At one print a second, a thin single venue's rate, gaps over 15 seconds arrive at about 3.1 in 10 million per second, about 0.007 per session, about 1.8 false stale events per symbol a year and 14 across the eight. These rates are estimates the first session measures.
+**Per symbol condition.** An eligible print arrived within `symbol_stale_after_seconds`, counted from the later of the last eligible print and the open, across reconnects, since a connect restarts only the whole feed clock. On the partial tape a name can go quiet in session for a minute or more while it trades normally, so a halt shows only after that limit.
+
+**The stale rule, written now.** On 12 October 2026 the owner set both silence limits from the full recording of the gate session, because the partial tape showed long gaps between one symbol's eligible prints and whole feed gaps of several seconds in session, far past the 5 and 15 seconds the plan first held. `scripts/v2_gap_thresholds.py` sets `symbol_stale_after_seconds` to 2.5 times the longest gap in session between one symbol's eligible prints, the longest over the symbols, rounded up to a multiple of 30 seconds, and `feed_stale_after_seconds` to 5 times the longest gap in session between any two messages, rounded up to a multiple of 5 seconds. A symbol gap runs from the open or an eligible print to the next one or the close across reconnects, as live health counts it, with the time the recording was disconnected left out, since no print could be seen then. A feed gap counts from the open and from every connect, as live health restarts the feed clock there, and never spans disconnected time. A symbol limit above 300 seconds or a feed limit above 60, the script's sanity bounds, stops the build for the owner, and the longest gap is read against Nasdaq's halt list first. The recorder closed a connection after its own feed limit of silence, so the whole feed gaps it recorded stop near that limit, and the script counts those silence closes. All four stock configs hold the values it gave before the rehearsal, and they never change after launch.
 
 **Scope and epochs.** A whole feed problem makes every symbol stale and asks for a reconnect. A symbol problem, such as a halt or a limit up limit down pause, stops only that symbol's bots and forecast rows. As in version 1, recovering becomes healthy at the first boundary closing a full minute in which every condition held, every exit from healthy bumps the symbol's epoch, every close bumps every epoch, and each change goes to `feed_events`. At the open a connected symbol with no delay objection moves to recovering with its clean stretch starting at the open, so the minute ending `09:31` is the first healthy one.
 
@@ -233,7 +235,7 @@ News health is separate and never touches price health, epochs or label maturity
 
 ### 4.6 Reconnects
 
-The reused `FeedClient` grows the backoff from `reconnect_backoff_start_seconds`, 5, to 60 seconds with seeded jitter between half and the full delay, resets it when the caller reports health, and pings every 20 seconds with a 20 second timeout. `StockFeedClient` in `v2/stocks/runner.py` adds a `send(text)` method for resubscribe frames, so `feed/base.py` stays untouched. Reconnects happen only when no message arrived for 5 seconds in session, Finnhub sent an error, the connection has been silent for 5 minutes at ten minutes before the open, or the library closed the socket. A single quiet symbol never causes a reconnect. A symbol with no print on the current connection 120 seconds into the session, while others print, gets its subscribe frame again, at most once every 5 minutes, and a symbol that printed and went quiet is treated as halted. A handshake refused with HTTP 401 backs off and logs one ERROR line an hour.
+The reused `FeedClient` grows the backoff from `reconnect_backoff_start_seconds`, 5, to 60 seconds with seeded jitter between half and the full delay, resets it when the caller reports health, and pings every 20 seconds with a 20 second timeout. `StockFeedClient` in `v2/stocks/runner.py` adds a `send(text)` method for resubscribe frames, so `feed/base.py` stays untouched. Reconnects happen only when no message arrived for `feed_stale_after_seconds` in session, Finnhub sent an error, the connection has been silent for 5 minutes at ten minutes before the open, or the library closed the socket. A single quiet symbol never causes a reconnect. A symbol with no print on the current connection 120 seconds into the session, while others print, gets its subscribe frame again, at most once every 5 minutes, and a symbol that printed and went quiet is treated as halted. A handshake refused with HTTP 401 backs off and logs one ERROR line an hour.
 
 ### 4.7 Labels, opens and closes around the session
 
@@ -258,22 +260,19 @@ The one second ticker and every event call `advance_to`. At each boundary B insi
 
 A symbol minute is usable when the symbol is healthy and news health held. Rent, training, decisions, new label records and forecast rows need a usable minute, while prices, marks, stops, the session close, epochs and the maturity of pending labels run on price health alone. Prediction and training need only the symbols involved, so a learner keeps learning while its home symbol is halted, but rent, marking, death, the stop and decisions need the home symbol healthy. At the close every symbol moves to closed and unsettled orders are rejected. Outside sessions boundaries only persist.
 
-### 4.9 Consolidated tape check
+### 4.9 Tape coverage check
 
-One session gates the build in Phase 13, the first full regular session, not an early close, whose raw recording shows no disconnected time from `04:00` to `20:00` ET.
+Finnhub's free websocket carries a partial tape, a small share of consolidated volume on the gate session, and on 12 October 2026 the owner decided to keep it, so this check reports coverage and no longer judges whether the tape is consolidated. The gate session is 12 October 2026, the first full regular session the recorder covered.
 
 **The official figures.** The next morning the owner, or the assistant session viewing the page in a browser on the owner's behalf, opens Nasdaq's public historical quote page for each symbol in an ordinary browser, confirms it labels its volume as consolidated, and copies the day's volume and official close into the gitignored `data/v2/checks/official_YYYY_MM_DD.toml`. No script fetches the page, which is for personal viewing. Without a consolidated label the owner uses a second consolidated display they may view, and the two must agree within 5 percent. Whether the page's volume is consolidated, and its terms, are unverified, because it timed out on 11 October 2026.
 
-**The computation.** `tapecheck.py` reads only the raw recording, replaying `finnhub.parse` and the print classification, so it needs no run database. Per symbol it computes full day volume from `04:00` to `20:00` ET, pre, regular and post volume, the ratio r of full day volume to the official figure, odd lot and late shares, replayed prints, the condition histogram, delay percentiles, the last eligible print before `16:00` against the official close, and disconnected time. By default it prints the verdict and how many symbols fall in each band.
+**The computation.** `tapecheck.py` reads only the raw recording, replaying `finnhub.parse` and the print classification, so it needs no run database. Per symbol it computes full day volume from `04:00` to `20:00` ET, pre, regular and post volume, the ratio r of full day volume to the official figure, odd lot and late shares, replayed prints, the condition histogram, delay percentiles, the last eligible print before `16:00` against the official close, disconnected time and outage time. The session's coverage is the median r over the symbols.
 
-**The verdict.**
+**Lost time.** Disconnected time anywhere in the window, and outage time in the regular session, a whole feed silence on an open connection of at least `feed_stale_after_seconds`, are left out of a second, covered ratio, which scales each phase's volume by the phase's length over its covered length and so assumes an even rate within a phase. On a session with no lost time it equals r exactly, so it is descriptive. A clean session is a full session, not an early close, with no disconnected time from `04:00` to `20:00` ET and no outage time in session.
 
-* **Consolidated** when the median r is between 0.85 and 1.15 and no symbol is below 0.70.
-* **Not consolidated** when the median r is below 0.50, or after two consecutive inconclusive clean sessions. The build stops and the choice goes to the owner.
-* **Inconclusive** otherwise, and the check repeats on the next clean session.
-* A median above 1.15 means the reference was a single venue figure.
+**The record.** Each check writes `coverage_YYYY_MM_DD.json` beside the official file, readable by the owner alone, with the clean flag and its reason, the median and per symbol ratios with and without lost time, the disconnected and outage seconds and each phase's covered share. By default it prints only the clean flag and its reason, counts, lost time, the delay verdict and settings and timings, and exits 0 for a clean session, 1 for any other and 2 when it writes no record.
 
-The bands are fixed by reasoning. Vendors differ by a few percent over late reports, odd lots and prints after `20:00`. A single venue carries at most about a fifth of a Nasdaq listed stock's volume, an unverified estimate, and IEX about 2.5 to 3.8 percent, but a partial feed that includes a trade reporting facility can carry much more, which is why repeated inconclusive verdicts go to the owner. A close within 0.2 percent is supporting evidence only. The runs repeat the check on the first clean full session at or after sessions 10, 20 and 40, and a failure makes the run invalid under criterion 1. If the gate fails, the fallback is the owner's choice in section 19, between Alpaca, whose credential the research marks as trading capable unless an unverified data only OAuth route works, and Databento Standard at 199 dollars a month.
+**Coverage stability.** The median r of the gate session is the baseline, whether or not that session was clean, because the recorder's own silence closes may have left disconnected time in it, and `evaluate` takes it from the earliest full session with a coverage record before launch. The runs repeat the check on the first clean full session at or after sessions 10, 20 and 40, and each must keep its median r within a factor of 2 of the baseline, either way, edges included, or the run is invalid under criterion 1. That session may fall after the cutoff, so the stock process keeps recording and the check keeps running until each record exists, and criterion 1.1 alone can change on a later run until then. The factor is fixed by reasoning, wide enough for the day to day spread of how much of the tape the free tier carries and narrow enough to catch Finnhub narrowing the tier.
 
 ### 4.10 Load estimates
 
@@ -283,7 +282,7 @@ If the feed is the full tape, the eight symbols print around 5 to 10 million tim
 
 ### 5.1 Fill model
 
-A decision at B takes the home symbol's reference price at B. The order is due at B plus `latency_ms`, 1,000, plus a uniform jitter up to `latency_jitter_ms`, 300, from the bot's own generator, and fills at the first eligible print of that symbol received at or after the due time with vendor time at or after B, moved against the bot.
+A decision at B takes the home symbol's reference price at B. The order is due at B plus `latency_ms`, 1,000, plus a uniform jitter up to `latency_jitter_ms`, 300, drawn from a generator seeded by the master seed, the bot and B alone, never from the generator that draws the bot's training batches, by the owner's decision of 12 October 2026. It fills at the first eligible print of that symbol received at or after the due time whose vendor time is also at or after the due time, moved against the bot, so a late report of a trade made before the order could reach the market never fills it, even across a jump, by the owner's decision of the same day. Each fill also records, for reports only, `print_after_due_ms`, its print's vendor time minus the due time, and `news_window`, whether S2 received the first line of an item bearing on the symbol, tagged with it, with MACRO or, for QQQ, with any company, as its news inputs count items, in the 30 minutes before the decision, null in S1, which reads no news.
 
 ```text
 buy_price  = print * (1 + (half_spread_bps[symbol] + extra_slippage_bps) / 1e4)
@@ -336,7 +335,7 @@ which gives 3.6 bps for QQQ, 4.6 for AAPL, MSFT, NVDA, AMZN and GOOGL, and 6.6 f
 
 **Short sale restriction.** When the reference price falls 10 percent or more below the previous session's last healthy reference price, new short opens in that symbol are refused for the rest of the session and the next, as SEC Rule 201 does. Without a healthy previous price it cannot trigger.
 
-**Kinder than reality.** Intraday shorting needs a margin account, and FINRA's pattern day trader rule limits a margin account under 25,000 dollars to three day trades in five business days, while each learner day trades about ten times a week. Whether proposed changes to that rule are in force in October 2026 is unverified and is checked against FINRA's current rule before launch. Section 18 and `docs/v2_data_and_licensing.md` list this. The confirmatory test reads only forecasts and labels, so it does not depend on it.
+**Kinder than reality.** Intraday shorting needs a margin account. FINRA Regulatory Notice `26-10`, read on 12 October 2026, says amended Rule 4210 replaced the pattern day trader rule, with its three day trades in five business days for a margin account under 25,000 dollars, by intraday margin standards from 4 June 2026, which brokers may phase in until 20 October 2027. Each learner day trades about ten times a week, more with its own trades, which is close to what a small real account may do under the new standards and far kinder than the old count a broker may still apply in October 2026. Section 18 and `docs/v2_data_and_licensing.md` list this. The confirmatory test reads only forecasts and labels, so it does not depend on it.
 
 **Splits.** An overnight move above `max_overnight_gap_pct`, 25, keeps that symbol's features invalid until 391 fresh session minutes exist and writes a `split_guard` event.
 
@@ -394,7 +393,7 @@ macro   = sum(w_j * strength_j) / (sum(w_j) + 1)     over primary impacts tagged
 * An impact counts at t only if the stock process received its line before t, never earlier than scoring finished.
 * Its weight decays from `scored_at` in session minutes, so a score after the close keeps full weight until the open and a backlog read after a restart carries its true age.
 * The extra 1 in each denominator acts as one neutral prior item, and impacts older than 5 half lives, 600 session minutes, are dropped.
-* Strength is `direction * confidence / 5` for a model score, counted only when marked new, and `p_pos - p_neg` for FinBERT.
+* Strength is `direction * confidence / 5 * H[horizon] * (2 + surprise) / 5` for a model score, with `H` 0.25 for minutes, 1 for hours and 0.5 for days, fixed by reasoning before launch and never fitted, counted only when marked new, and `p_pos - p_neg` for FinBERT. A move over within minutes is mostly gone before the first evaluation minute, one lasting hours sits where the decayed weight is, and one building over days spreads thin, while `(2 + surprise) / 5` keeps a routine item at 0.4 and a major shock at 1, so strength stays between minus one and one.
 * QQQ's company input uses impacts tagged QQQ or any of the seven companies.
 
 A half life of 120 session minutes keeps 84 percent of a headline's weight across one horizon and little by the next afternoon.
@@ -405,11 +404,23 @@ A half life of 120 session minutes keeps 84 percent of a headline's weight acros
 
 **Training.** A learner trains on the samples of every symbol that matured this minute, up to 8, plus draws with replacement from the `PooledWindow` to a batch of 16. The window holds the last 240 session minutes of samples from every symbol, up to 1,920. A sample's news inputs are the ones its engine stored at the record's push minute, as section 4.8 sets out. The Huber loss, gradient clipping, AdamW and the output scale of 0.1 at birth follow version 1.
 
-**Learning rate.** `scripts/v2_learner_check.py` fixes it before launch on synthetic data only, running the bots' own learning code on pooled sessions of 8 symbols with planted correlations of 0, 0.05 and 0.1, a common market factor, labels that respect the close and the batch rule above. Its generator parameters are the planning values of section 12, never fitted to recordings. The rule takes the largest of 0.0003, 0.0001, 0.00003 and 0.00001 whose prediction spread with no signal is at most 0.10 label standard deviations and whose squared error with no signal is within 2 percent of predicting zero, or 0.00001 if none qualifies.
+**Learning rate.** `scripts/v2_learner_check.py` fixes it before launch on synthetic data only, running the bots' own learning code on pooled sessions of 8 symbols with planted correlations of 0, 0.05 and 0.1, a common market factor, labels that respect the close and the batch rule above. Its generator parameters are the planning values of section 12, never fitted to recordings. The rule takes the largest of 0.0003, 0.0001, 0.00003 and 0.00001 whose prediction spread with no signal is at most 0.10 label standard deviations and whose squared error with no signal is within 2 percent of predicting zero, or 0.00001 if none qualifies. On 12 October 2026 it chose 0.0001, whose spread with no signal was 0.07 label standard deviations and whose squared error with no signal was 0.7 percent above predicting zero, while 0.0003 spread 0.13.
+
+**Planted news check.** `scripts/v2_news_check.py` measures on synthetic data only how much of a planted news signal S2's learners extract and how often S2's population beats S1's, the power curve of S2 against S1, which is published before launch as descriptive and changes no setting. Items tagged with each symbol and with MACRO arrive at the planning rates of `scripts/v2_power.py`, with prompt_v2's strengths as that script draws them, and pass through the stock process's own `NewsInputs`, so the inputs decay as section 6.3 sets out. Each one minute move drifts with a planted predictor built from the same items, at the 120 minute half life of the inputs when the price absorbs news at the pace they assume and at 15 minutes when it absorbs news fast, scaled on separate calibration draws so its correlation with the 30 minute label at the evaluation minutes is 0, 0.05 or 0.1. Twenty four S2 and twenty four S1 learners, born alike, train on one shared market layer through the bots' own training step, `PooledWindow` and `predict_rows` over 40 sessions, judged by the `evaluate` statistics over 24 seeds. Realized is the planted predictor's correlation with the label averaged over those seeds, whose spread from seed to seed is about 0.03, and extraction is the correlation of S2's population forecast minus S1's with the planted predictor in the last third of the window. The full run of 12 October 2026 gave these figures.
+
+| Absorption | Planted | Realized | News t | News passes | Extraction | S2 against S1 t | S2 beats S1 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| none | 0 | none | minus 0.28 | 0 of 24 | none | minus 0.55 | 0 of 24 |
+| matched | 0.05 | 0.041 | 1.47 | 6 of 24 | 0.71 | 0.33 | 0 of 24 |
+| matched | 0.1 | 0.090 | 3.06 | 17 of 24 | 0.86 | 1.92 | 10 of 24 |
+| fast | 0.05 | 0.044 | 0.68 | 1 of 24 | 0.31 | minus 0.24 | 0 of 24 |
+| fast | 0.1 | 0.094 | 1.62 | 7 of 24 | 0.47 | 0.59 | 0 of 24 |
+
+The learner does use news, but S2 beats S1 at the 1 percent level in under half the seeds at a true correlation near 0.1 and never at 0.05, and fast absorption halves extraction and leaves S2 against S1 with no power. S1's news weights stayed exactly zero in every run. With no signal the populations' pooled t averaged minus 0.80, because a forecast that drifts slowly with recent labels reads below zero once the window's own means are taken out, so population skill is read through the paired comparison. An earlier run with version 1's strengths, direction times confidence over 5, gave 12 of 24 at a matched 0.1, so the smaller strengths of prompt_v2 move the curve little.
 
 **Warmup** is 6 hours of training minutes, which are the 360 minutes of a full session in which samples mature.
 
-**Timeline from a cold start** with a Monday launch and clean sessions. Session 1 records history. In session 2 vectors are valid from `09:31`, the first labels mature at `10:01`, the label scales reach 30 labels by about `10:30`, and training starts. In session 3 warmup completes at about `10:30`, each learner's forced timer starts at minus a seeded delay of up to 3 hours, and the first forced trades fall between about `10:30` and `13:30` ET.
+**Timeline from a cold start** with a Monday launch and clean sessions. Session 1 records history. In session 2 vectors are valid from `09:31`, the first labels mature at `10:01`, the label scales reach 30 labels by about `10:30`, and training starts. In session 3 warmup completes at about `10:30`, each learner's forced timer starts at minus a seeded delay of up to 3 hours, and the first trades, forced or made on a learner's own once its prediction clears the cost, fall between about `10:30` and `13:30` ET.
 
 ## 7. News pipeline
 
@@ -516,7 +527,7 @@ Only headlines up to 300 characters, summaries up to 600 for Finnhub, 1,000 for 
 
 ### 7.7 Week one
 
-The collector starts as soon as Phase 14 passes, in parallel with the Phase 13 tape gate and at least five trading days before launch. Week one may change only cadences, budgets and retention. Routing, aliases, junk patterns, text lengths, the half life and every threshold that touches a score are fixed now and never compared with prices or labels. The news process writes its config hash, prompt and schema hashes and both model ids to `meta` on every start, and a stock run records them at launch. If they ever differ, news health fails and a feed event says why.
+The collector starts as soon as Phase 14 passes, in parallel with the Phase 13 recording and at least five trading days before launch. Week one may change only cadences, budgets and retention. Routing, aliases, junk patterns, text lengths, the half life and every threshold that touches a score are fixed now and never compared with prices or labels. The news process writes its config hash, prompt and schema hashes and both model ids to `meta` on every start, and a stock run records them at launch. If they ever differ, news health fails and a feed event says why.
 
 `btc_survivor_v2 news-status --days 7` reports these as counts and verdicts.
 
@@ -540,7 +551,7 @@ Wednesday 11 November 2026, Veterans Day, falls inside the window. Stocks trade,
 
 News health means the news pipeline is alive. The news process writes a `news_heartbeat` row every 30 seconds, healthy when FinBERT is on, no item routed to a scorer has waited more than `score_wait_seconds` for its primary score, and the clock check is clean. Neither model's state counts, because a paused, capped or off Haiku hands every waiting item to FinBERT at once, and Sonnet feeds no primary score. `score_wait_seconds` is 600, or twice FinBERT's time on the 300 item synthetic burst measured in Phase 15 if longer, so an FOMC, CPI or earnings burst does not break it.
 
-A session minute ending at B is news healthy on the stock side when the newest heartbeat line received was never more than 120 seconds old during the minute, every heartbeat line in it said healthy, and each carried the hashes recorded at launch.
+A session minute ending at B is news healthy on the stock side when the newest heartbeat line received was never more than 120 seconds old during the minute, and the newest line before the minute, in force at its start, and every line received in it said healthy and carried the hashes recorded at launch. A minute with no line after an unhealthy line therefore stays unhealthy, and recovery costs at most one extra minute.
 
 **What it gates.** Without news health, both runs charge no rent, train nothing, make no decision, push no label record and write no forecast row. Prices, marks, stops, the session close, epochs and the maturity of pending labels go on. A news outage therefore bumps no epoch, discards no label, flattens nothing and leaves price features such as the one session return valid the next day.
 
@@ -574,28 +585,28 @@ response = await client.messages.create(
     max_tokens=4096,
     thinking={"type": "disabled"},
     output_config={"effort": "low",
-                   "format": {"type": "json_schema", "schema": SCHEMA_V1}},
-    system=[{"type": "text", "text": SYSTEM_PROMPT_V1, "cache_control": {"type": "ephemeral"}}],
+                   "format": {"type": "json_schema", "schema": SCHEMA_V2}},
+    system=[{"type": "text", "text": SYSTEM_PROMPT_V2, "cache_control": {"type": "ephemeral"}}],
     messages=[{"role": "user", "content": user_text}],
 )
 ```
 
 * **No sampling parameters,** because Haiku 5.5 returns 400 for any temperature, top p or top k other than its defaults.
 * **No tools, web search, metadata, stop sequences or fallback list,** and the default inference geography. Haiku 5.5 has no server side fallback, and that it rejects a fallback list is outside the research and unverified.
-* **Thinking off,** accepted at effort low, because thinking tokens bill as output. Content blocks are read by type, and any thinking block is counted and logged.
+* **Thinking off for Haiku,** accepted at effort low, because thinking tokens bill as output. Content blocks are read by type, and any thinking block is counted and logged.
 * **One call in flight** per model, and no Batch API, whose latency of up to a day would make every score useless as a feature.
 
-**The Sonnet call** is the same request with `model="claude-sonnet-5-5"`, `max_tokens=1024`, enough for one item with 10 impacts, and no `cache_control` on the system block. Sonnet makes about 5 to 20 calls a day spread over hours, so its five minute cache would rarely be warm, and its cache prices are not in the research, so every Sonnet input token bills at the verified 2 dollars per million and every output token at 10. That Sonnet 5.5 accepts thinking disabled at effort low, rejects sampling parameters the same way and supports the same structured outputs is outside the research and unverified until its first live call in Phase 15. If that call rejects any of these settings, apart from the integer enums that section 8.4 handles, `[llm.sonnet] enabled` is set false before the news process scores anything, and the comparison waits for the owner's choice before launch, since settings never change after launch.
+**The Sonnet call** is the same request with `model="claude-sonnet-5-5"`, `max_tokens=1024` for the answer, enough for one item with 10 impacts, and no `cache_control` on the system block. Sonnet makes about 5 to 20 calls a day spread over hours, so its five minute cache would rarely be warm, and its cache prices are not in the research, so every Sonnet input token bills at the verified 2 dollars per million and every output token at 10. Anthropic's docs, read 12 October 2026, say Sonnet 5.5 answers `thinking={"type": "disabled"}` with a 400 at every effort and offer `{"type": "between_tools"}`, accepted at effort high or below, as its lowest setting, with no thinking before the answer. By the owner's decision of that day `[llm.sonnet] thinking` therefore takes `disabled`, still the committed default, `between_tools` or `adaptive`, the last at effort low, and any setting but `disabled` adds `thinking_tokens` to `max_tokens`, because thinking counts toward `max_tokens` and bills as output. The reservation prices all of `max_tokens` at the output rate, the cost books `output_tokens`, which includes thinking, and thinking blocks are counted and stored but never read as the answer, raising an alert only while thinking is disabled. Haiku keeps thinking disabled. One live synthetic check in Phase 15, run with `--sonnet-thinking` set to `disabled` and then to the lowest setting Sonnet accepts, settles the setting, which then goes into the config with its thinking room. Whether Sonnet 5.5 rejects sampling parameters the same way and supports the same structured outputs is unverified until that call, and if it rejects anything apart from the integer enums that section 8.4 handles, `[llm.sonnet] enabled` stays false until the owner picks another setting before launch, since settings never change after launch.
 
 Haiku 5.5 was released on 7 October 2026 with retirement no sooner than 7 October 2027, and its training data ends in June 2026. Sonnet 5.5's release, retirement and training cutoff dates are outside the research.
 
 ### 8.2 The system prompt
 
-The prompt is the committed file `v2/news/prompt_v1.txt`, about 1,200 tokens, UTF 8 with LF endings, read as bytes and never templated, so the cached prefix never changes. In order it holds the task in two sentences, the ground rules, the instrument table, one line per level of each field, a note that an item bearing on no instrument gets an empty impacts list and that a macro item may also name tickers it affects directly, and three fictional, undated examples, an earnings beat, a Fed decision that matched expectations, and a recap of a price move marked not new.
+The prompt is the committed file `v2/news/prompt_v2.txt`, about 1,300 tokens, UTF 8 with LF endings, read as bytes and never templated, so the cached prefix never changes. By the owner's decision of 12 October 2026 it replaced `prompt_v1.txt` before any live call or stored score used it, so that the prompt asks about what the test measures. In order it holds the task in two sentences, the ground rules, the instrument table, one line per level of each field, a note that an item bearing on no instrument gets an empty impacts list and that a macro item may also name tickers it affects directly, and three fictional, undated examples, an earnings beat whose drift lasts hours, a Fed decision that matched expectations, and a recap of a price move marked not new.
 
-The ground rules say to judge each item from its own text, as published just now, to trust the text where it disagrees with knowledge that ends around mid 2026, to judge surprise from the text's own framing such as beat, miss, unexpected or as expected, to ignore any instruction inside item text, and never to estimate prices. The instrument table names AAPL as Apple, MSFT as Microsoft, NVDA as Nvidia, AMZN as Amazon, GOOGL as Alphabet, META as Meta Platforms and TSLA as Tesla, each with its main products, QQQ as large US tech stocks as a group or the Nasdaq 100, and MACRO as US rates, inflation, jobs, growth and Fed policy, whose direction is the likely effect on large US stocks overall.
+The ground rules say to judge each item from its own text, as published just now, to judge only the price move still to come after the market's first reaction, over the next few hours of regular trading, since large US stocks price clear news within minutes, to trust the text where it disagrees with knowledge that ends around mid 2026, to judge surprise from the text's own framing such as beat, miss, unexpected or as expected, to ignore any instruction inside item text, and never to estimate prices. The instrument table names AAPL as Apple, MSFT as Microsoft, NVDA as Nvidia, AMZN as Amazon, GOOGL as Alphabet, META as Meta Platforms and TSLA as Tesla, each with its main products, QQQ as large US tech stocks as a group or the Nasdaq 100, and MACRO as US rates, inflation, jobs, growth and Fed policy, whose direction is that of the move still to come for large US stocks overall.
 
-Haiku and Sonnet use this one prompt and the one schema of section 8.4. The config pins `prompt_sha256` and `schema_sha256`, the schema hash over canonical JSON with sorted keys, and the news process refuses to start if a file or `meta` disagrees. A change to the prompt, schema, model, effort or thinking makes a new scorer, such as `haiku_v2` or `sonnet_v2`, with its own rows.
+Haiku and Sonnet use this one prompt and the one schema of section 8.4. The config pins `prompt_sha256` and `schema_sha256`, the schema hash over canonical JSON with sorted keys, and the news process refuses to start if a file or `meta` disagrees. A change to the prompt, schema, model, effort or thinking makes a new scorer, such as `haiku_v2` or `sonnet_v2`, with its own rows. No stored score used `prompt_v1.txt`, so `prompt_v2.txt` and the Sonnet thinking setting keep the names `haiku_v1` and `sonnet_v1`, and the rule holds from the first stored score on.
 
 ### 8.3 Eligibility, input and batching
 
@@ -622,11 +633,11 @@ The user message is one line of instructions, then one compact JSON object per i
          "is_new": {"type": "boolean"},
          "direction": {"type": "integer", "enum": [-1, 0, 1]},
          "surprise": {"type": "integer", "enum": [0, 1, 2, 3]},
-         "horizon": {"type": "string", "enum": ["hours", "days", "weeks"]},
+         "horizon": {"type": "string", "enum": ["minutes", "hours", "days"]},
          "confidence": {"type": "integer", "enum": [1, 2, 3, 4, 5]}}}}}}}}}
 ```
 
-The model states what happened and whether it is new before a direction and a confidence. The API supports enums but not numeric bounds, so every field is a required enum. Whether integer enums are accepted is unverified, and if the first live call of either model rejects them the schema switches to string enums for both before launch. `is_new` is true when the item itself first reports an event, figure or decision, and false for recaps, previews, opinion and price moves. There is no Bitcoin ticker, which could return only in a new scorer version.
+The model states what happened and whether it is new before a direction and a confidence. The API supports enums but not numeric bounds, so every field is a required enum. Whether integer enums are accepted is unverified, and if the first live call of either model rejects them the schema switches to string enums for both before launch. `is_new` is true when the item itself first reports an event, figure or decision, and false for recaps, previews, opinion and price moves. `direction` is the likely direction of the move still to come after the first reaction, and `horizon` how long that move lasts, `minutes` when what is left of it is over within minutes, `hours` when it likely continues over the next few hours of trading and `days` when it builds slowly over days or longer. There is no Bitcoin ticker, which could return only in a new scorer version.
 
 `v2/news/llm_validate.py` checks the response against strict Pydantic models that forbid extra fields, then that each id belongs to the batch once, tickers are unique within an item and an item has at most 10 impacts. Valid items are kept when others fail.
 
@@ -660,14 +671,15 @@ Every process that may call either model with this key, meaning the news process
 rates in dollars per million tokens, from [llm.prices], read 11 Oct 2026
   claude-haiku-5-5     in_rate 0.10   out_rate 0.50    write 1.25, the cached system block
   claude-sonnet-5-5    in_rate 2.00   out_rate 10.00   write 1.00, no cache control
-counted = count_tokens(system, schema and messages)
+counted = count_tokens(system, schema and messages) + reserve_overhead_tokens
           or, when that fails, request_bytes + schema_bytes + reserve_overhead_tokens
-reserve = (counted * in_rate * write + max_tokens * out_rate) / 1e6
+reserve = (counted * in_rate * write + max_tokens * out_rate) / 1e6   max_tokens with Sonnet's thinking room
 cost    = (input_tokens * in_rate + cache_creation_input_tokens * in_rate * 1.25
            + cache_read_input_tokens * in_rate * 0.10 + output_tokens * out_rate) / 1e6
+          output_tokens includes any thinking tokens
 ```
 
-The reservation prices every input token at the highest rate the call can meet and all of `max_tokens` at the output rate, so it bounds what the call can cost, about 0.003 dollars for a full Haiku batch, about 0.014 for a short Sonnet call and about 0.028 for a long form Sonnet call. A Sonnet answer that reports any cache token raises an alert, because Sonnet's cache prices are not in the research. Spend for the UTC month is `cost_usd` for calls that returned usage plus `reserved_usd` for every other call, whether running, timed out, disconnected, answered with a 5xx after sending, or lost, each with `cost_basis = reserved`.
+The API calls its count an estimate, so an exact count is reserved with `reserve_overhead_tokens` on top, while the call row records the count itself. The reservation prices every input token at the highest rate the call can meet and all of `max_tokens` at the output rate, Sonnet's thinking room included, so it bounds what the call can cost, about 0.003 dollars for a full Haiku batch, about 0.014 for a short Sonnet call and about 0.028 for a long form one with thinking disabled, about 0.024 and 0.038 with 1,024 tokens of thinking room, or 0.055 and 0.069 with 4,096. A Sonnet answer that reports any cache token raises an alert, because Sonnet's cache prices are not in the research. Spend for the UTC month is `cost_usd` for calls that returned usage plus `reserved_usd` for every other call, whether running, timed out, disconnected, answered with a 5xx after sending, or lost, each with `cost_basis = reserved`.
 
 * **The cap.** A call goes only when the month's spend plus its reservation stays at or under `monthly_usd = 20.00`, the same as the Console workspace limit, so the code stops first. There is no daily cap and no daily limit on items or calls.
 * **At the cap** both models are off until `00:00` UTC on the first of the next month, and FinBERT covers every item until then.
@@ -698,7 +710,7 @@ Only live items are sent, received after launch, all after Haiku's June 2026 tra
 
 Sampling cannot be fixed on Haiku 5.5, and Sonnet 5.5 is treated the same way, so each item is scored once per scorer and frozen as data, the uniqueness constraint on item and scorer blocks a second score, and replay, `evaluate` and `export` read stored rows. Batching and splitting are deterministic.
 
-Daily at `06:00` UTC, `v2/news/probes.py` sends the 20 fictional items of `probes_v1.json`, written before launch, to Haiku as one reserved call of kind probe. Sonnet runs no probe, because its stream is descriptive and never feeds the confirmatory test. Results go only to `llm_probes`, and `news-status` reports per field agreement with the launch day run and the previous day, flagging direction agreement below 80 percent and changing nothing automatically. A fresh rerun of the scores would differ by about what the probes measure.
+Daily at `06:00` UTC, `v2/news/probes.py` sends the 20 fictional items of `probes_v2.json`, written before launch with a key of the tickers, event types, novelty, directions, surprise and horizons a careful reader would give each, to Haiku as one reserved call of kind probe. Sonnet runs no probe, because its stream is descriptive and never feeds the confirmatory test. Results go only to `llm_probes`, and `news-status` reports per field agreement with the launch day run and the previous day, flagging direction agreement below 80 percent and changing nothing automatically. A fresh rerun of the scores would differ by about what the probes measure.
 
 ### 8.9 Credentials and redaction
 
@@ -712,7 +724,7 @@ The contact address goes only into the request header for sec.gov, data.sec.gov 
 
 **Haiku.** At about 150 input and 50 to 100 output tokens per Finnhub item, a full warm batch of 20 costs about 0.0008 to 0.0013 dollars, in line with the research's 0.19 dollars a month at 200 items a day, which works out to about 0.0006 a batch. At 100 to 300 Finnhub items a day most batches flush after 60 seconds with one to a few items, each call paying for the roughly 1,200 token prompt as a cache read of about 0.00001 dollars or, after five quiet minutes, a cache write of about 0.00015. An item then costs about 0.00005 to 0.0002 dollars, and Finnhub items come to about 0.15 to 2 dollars a month. The official items, each alone at about 0.0001 dollars for a short one and 0.001 for a long form one, add under 0.15, and the probes about 0.04.
 
-**Sonnet.** At about 1,900 input tokens for a short official item and about 9,000 for a long form one, plus 100 to 150 output tokens, a short item costs about 0.005 dollars and a long form one about 0.02. At 5 to 20 official items a day on about 22 weekdays a month, with a few long form filings in earnings weeks, Sonnet comes to about half a dollar to 3 dollars a month. The research prices Sonnet at 20 times Haiku for the same work, which is why it sees only the official items.
+**Sonnet.** At about 1,900 input tokens for a short official item and about 9,000 for a long form one, plus 100 to 150 output tokens, a short item costs about 0.005 dollars and a long form one about 0.02. At 5 to 20 official items a day on about 22 weekdays a month, with a few long form filings in earnings weeks, Sonnet comes to about half a dollar to 3 dollars a month. The research prices Sonnet at 20 times Haiku for the same work, which is why it sees only the official items. Under `between_tools` Sonnet writes no thinking before its answer, and under adaptive thinking at effort low it skips thinking on most simple items, so thinking adds little, and every thinking token is booked as output.
 
 **Together** the expected cost is about 1 to 5 dollars a month, so the 20 dollar cap is about 4 to 20 times the expected spend and the 5 dollar daily alert about 30 to 150 times the expected daily spend. Haiku 5.5's tokenizer counts about 30 percent more tokens than Haiku 4.5's, and Sonnet 5.5's tokenizer is outside the research, so real counts come from `count_tokens`. These are estimates until week one, and the Max plan's included credits are expected to cover them, confirmed in Phase 15.
 
@@ -765,7 +777,7 @@ CREATE TABLE item_scores (                                   -- insert only, one
   p_pos REAL, p_neg REAL, p_neu REAL,
   UNIQUE (item_seq, scorer));
 CREATE TABLE score_impacts (item_seq INTEGER NOT NULL, scorer TEXT NOT NULL, ticker TEXT NOT NULL,
-  strength REAL NOT NULL,                                    -- model direction * confidence / 5, FinBERT p_pos - p_neg
+  strength REAL NOT NULL,          -- model direction * confidence / 5 * H[horizon] * (2 + surprise) / 5, FinBERT p_pos - p_neg
   direction INTEGER, surprise INTEGER, event_type TEXT, confidence INTEGER, horizon TEXT, is_new INTEGER,
   PRIMARY KEY (item_seq, scorer, ticker));
 CREATE TABLE llm_calls (
@@ -776,7 +788,7 @@ CREATE TABLE llm_calls (
                              -- bad_request, auth, server, timeout, connection, model_mismatch, lost
   n_items INTEGER NOT NULL, model TEXT NOT NULL, response_model TEXT, request_id TEXT, sdk_version TEXT NOT NULL,
   prompt_sha256 TEXT NOT NULL, schema_sha256 TEXT NOT NULL, request_sha256 TEXT NOT NULL,
-  effort TEXT NOT NULL, thinking TEXT NOT NULL, max_tokens INTEGER NOT NULL,
+  effort TEXT NOT NULL, thinking TEXT NOT NULL, max_tokens INTEGER NOT NULL,             -- answer plus thinking room
   stop_reason TEXT, refusal_category TEXT, http_status INTEGER, error_class TEXT,
   thinking_blocks INTEGER NOT NULL DEFAULT 0, counted_tokens INTEGER, count_basis TEXT,   -- count_tokens or bytes
   input_tokens INTEGER, cache_creation_input_tokens INTEGER, cache_read_input_tokens INTEGER, output_tokens INTEGER,
@@ -814,7 +826,7 @@ At restart a process marks its own started rows lost, booked at their reservatio
 
 ### 9.2 A stock run database
 
-Each run has its own database, so S1 and S2 replay and resume independently. Both receive identical candles, labels and `linear_prices` rows from the shared market layer, and both checkpoints carry identical copies of the layer's state, which resume compares. `equity_snapshots`, `deaths` and `checkpoints` keep their version 1 shape, and `lineage` is not created. `bots` gains `home_symbol`, `decisions` and `trades` gain `symbol`, `fills` gains `symbol`, `print_price`, `allowance_bps`, `notional`, `sec_fee` and `taf_fee`, and `trades.exit_reason` gains `session_close` and `session_flatten`. `feed_events` gains `symbol`, null for whole feed events, and the kinds `session_open`, `session_close`, `print_delay`, `resubscribe`, `overnight_carry`, `calendar_warning`, `split_guard`, `news_unhealthy`, `news_healthy`, `lock` and `local_only`.
+Each run has its own database, so S1 and S2 replay and resume independently. Both receive identical candles, labels and `linear_prices` rows from the shared market layer, and both checkpoints carry identical copies of the layer's state, which resume compares. `equity_snapshots`, `deaths` and `checkpoints` keep their version 1 shape, and `lineage` is not created. `bots` gains `home_symbol`, `decisions` and `trades` gain `symbol`, `fills` gains `symbol`, `print_price`, `allowance_bps`, `notional`, `sec_fee` and `taf_fee` and then the report only `print_after_due_ms` and `news_window` of section 5.1, and `trades.exit_reason` gains `session_close` and `session_flatten`. `feed_events` gains `symbol`, null for whole feed events, and the kinds `session_open`, `session_close`, `print_delay`, `resubscribe`, `overnight_carry`, `calendar_warning`, `split_guard`, `news_unhealthy`, `news_healthy`, `lock` and `local_only`.
 
 ```sql
 -- meta keys: kind = stocks, schema_version, run_name, master_seed, launch_ts, config_toml, experiment_hash,
@@ -834,6 +846,9 @@ CREATE TABLE stock_forecasts (ts TEXT NOT NULL, symbol TEXT NOT NULL, predictor 
   prediction REAL NOT NULL,                                  -- bps for population and linear, a score for news predictors
   items INTEGER, inputs_max_recv_at TEXT,                    -- impacts behind a score, newest receive time behind the row
   PRIMARY KEY (ts, symbol, predictor));
+CREATE TABLE price_z (k INTEGER NOT NULL, symbol TEXT NOT NULL, ts TEXT NOT NULL,   -- each usable symbol at each evaluation minute
+  z1 REAL, z2 REAL, z3 REAL, z4 REAL, z5 REAL, z6 REAL, z7 REAL, z8 REAL, z9 REAL, z10 REAL,  -- null where the vector was invalid
+  PRIMARY KEY (k, symbol));
 CREATE TABLE news_seen (                                     -- S2 only, every score line S2 read
   score_seq INTEGER PRIMARY KEY, item_seq INTEGER NOT NULL, recv_at TEXT NOT NULL, scored_at TEXT NOT NULL,
   source TEXT NOT NULL, route TEXT NOT NULL, scorer TEXT NOT NULL, status TEXT NOT NULL,
@@ -855,7 +870,7 @@ CREATE TABLE symbol_status (symbol TEXT PRIMARY KEY, ts TEXT NOT NULL, state TEX
   ref_price REAL, last_print_age_s REAL);
 ```
 
-`stock_candles` are kept for the life of the run, about 125,000 rows per run over 40 sessions, because `evaluate` recomputes every label from them. Raw recordings in `data/v2/raw_stocks` are pruned after `keep_raw_days`, 30, which still covers each repeat tape check. Everything else is kept forever. Per full session and run, decisions grow by about 400 rows, forecasts by about 1,060 in S2 and 190 in S1, labels by 96, candles by 3,120 and `news_minutes` by 390 in S2.
+`stock_candles` are kept for the life of the run, about 125,000 rows per run over 40 sessions, because `evaluate` recomputes every label from them. Raw recordings in `data/v2/raw_stocks` are pruned after `keep_raw_days`, 30, which still covers each repeat coverage check. Everything else is kept forever. `price_z` holds the 10 standardized price features of every usable symbol at each evaluation minute, the minutes and symbols that get forecast rows, as the learners and `linear_prices` saw them, all null where the vector was invalid, so the partial news test can adjust both the news score and the label for prices within each symbol. Per full session and run, decisions grow by about 400 rows, forecasts by about 1,060 in S2 and 190 in S1, labels by 96, `price_z` by 96, candles by 3,120 and `news_minutes` by 390 in S2.
 
 ## 10. Runs and predictors
 
@@ -874,7 +889,7 @@ Every learner predicts all eight symbols every usable minute and learns from all
 
 ### 10.3 S1 and S2 born identical
 
-The learner in each slot of either run is drawn with the same generator calls, `MLP.random` at 10 inputs, and then two zero columns are appended for the news inputs, so generator state, latency jitter, forced timer delays, replay batches and twin coins all match. While news inputs are zero the news part of the hidden layer is skipped and the news weights get zero gradient, so the two runs make identical predictions until S2's first training step whose batch holds a nonzero news input, expected in session 2. Every later difference is caused by news, and `test_zero_init` checks this exactly.
+The learner in each slot of either run is drawn with the same generator calls, `MLP.random` at 10 inputs, and then two zero columns are appended for the news inputs, so generator state, forced timer delays, replay batches and twin coins all match. Each order draws its latency jitter from a generator seeded by the master seed, the bot and the decision time, so an order sent in one run only, after a stop, an open or a rejection that news caused, never moves the generator that draws the training batches, and an order both runs send gets the same latency. While news inputs are zero the news part of the hidden layer is skipped and the news weights get zero gradient, so the two runs make identical predictions until S2's first training step whose batch holds a nonzero news input, expected in session 2. Every later difference is caused by news, and `test_zero_init` checks this exactly.
 
 ### 10.4 Evaluation minutes, forecasts and labels
 
@@ -900,15 +915,15 @@ Score predictors have no fitted scale, so they are judged by correlation only, a
 
 ### 10.5 What changes from version 1
 
-Unchanged are start equity, notional, shorts allowed, 16 hidden units, the output scale of 0.1 at birth, Huber loss, gradient clipping, AdamW with weight decay 0.0001, warmup of 6 hours, persistence intervals, the twin rules and the death rule's meaning. Changed, by reasoning before launch, are the horizon in session minutes, rent per usable session minute, `force_trade_after_hours = 3.0` healthy session hours from the first Active minute, which keeps about two forced trades per learner per session as version 1's 12 hours did in a 24 hour market, a fixed `margin_sigma = 0.25` with `required_edge_bps = cost_bps + margin_sigma * label_scale_bps[symbol]`, the stop at 3 label standard deviations, one fixed learning rate from section 6.4, and a death threshold of one session of rent with no replacement.
+Unchanged are start equity, notional, shorts allowed, 16 hidden units, the output scale of 0.1 at birth, Huber loss, gradient clipping, AdamW with weight decay 0.0001, warmup of 6 hours, persistence intervals, the twin rules and the death rule's meaning. Changed, by reasoning before launch, are the horizon in session minutes, rent per usable session minute, `force_trade_after_hours = 3.0` healthy session hours from the first Active minute, which keeps about two forced trades per learner per session as version 1's 12 hours did in a 24 hour market, `margin_sigma = 0`, so `required_edge_bps = cost_bps` and a learner trades on its own whenever its prediction beats the real cost, the stop at 3 label standard deviations, one fixed learning rate from section 6.4, and a death threshold of one session of rent with no replacement.
 
-**Why the margin is in standard deviations.** Pure noise with spread s0 label standard deviations passes the gate with probability `2 * Phi(-(cost_bps / sigma + margin) / s0)`. With s0 at 0.10, about where the version 1 learner sits, and the planning volatilities of section 12, an 8 bps margin would pass about 11 percent of TSLA decisions, 6 percent of NVDA and 2 percent of all, while 0.25 standard deviations passes under 0.2 percent for every symbol and about 0.05 percent on average. A calibrated forecaster with correlation 0.10 makes predictions as large as a no skill learner with spread 0.10, so the gate cannot tell skill from noise and does not try. Almost every trade will be forced, the twins and the skill test measure direction, and a live pass share well above 1 percent with no passing skill test is reported, never tuned.
+**No margin.** On 12 October 2026 the owner set the margin to 0, so a learner opens on its own whenever its prediction beats the round trip cost, beside the forced timer, which an own open restarts. Pure noise with spread s0 label standard deviations passes the gate with probability `2 * Phi(-(cost_bps / sigma) / s0)`, about 16 to 50 percent of decisions at s0 of 0.10 with the planning volatilities of section 12 and under 0.1 percent at 0.02. A calibrated forecaster with correlation 0.10 makes predictions as large as a no skill learner with spread 0.10, so the gate cannot tell skill from noise and does not try. The twins and the skill test measure direction, and `evaluate` reports the own trade share and the round trips per session forced and made on a learner's own beside the prediction spread, and never judges them.
 
 ## 11. Evaluation and success criteria fixed before launch
 
 ### 11.1 The evaluate command
 
-`btc_survivor_v2 evaluate configs/v2/s1_prices.toml configs/v2/s2_news.toml` opens both run databases and `news.db` read only, takes its settings from each run's `meta` at launch, and computes every number from rows up to the cutoff, so a later run never changes a result. Before the cutoff every number is descriptive. By default it prints each criterion's verdict and row counts, and the owner reads the numbers with `--detail`.
+`btc_survivor_v2 evaluate configs/v2/s1_prices.toml configs/v2/s2_news.toml` opens both run databases and `news.db` read only, takes its settings from each run's `meta` at launch, and computes every number from rows up to the cutoff, so a later run never changes a result, apart from criterion 1.1, whose record at or after a due session may come only after the cutoff. Before the cutoff every number is descriptive. By default it prints each criterion's verdict and row counts, and the owner reads the numbers with `--detail`.
 
 **The cutoff.** A run minute is a session minute in which news health held and at least one symbol was healthy, a rule stored as `run_minute_rule` in `meta`. The cutoff is the minute S2 reaches `final_healthy_session_minutes`, 15,600 run minutes counted from launch, the length of 40 full sessions with early closes at their real length.
 
@@ -939,17 +954,23 @@ The key unknown is c, the correlation between symbols' predictions at one minute
 
 | c | 0.2 | 0.5 | 0.8 | 1.0 |
 | --- | --- | --- | --- | --- |
-| Detectable correlation | 0.076 | 0.096 | 0.113 | 0.123 |
+| Detectable correlation | 0.075 | 0.095 | 0.112 | 0.122 |
+| H1 power at a true 0.075 | 0.87 | 0.67 | 0.49 | 0.39 |
+| H1 power at a true 0.11 | 0.99 | 0.93 | 0.81 | 0.69 |
+| H1 then H2 at a true 0.075 | 0.84 | 0.64 | 0.46 | 0.36 |
+| H1 then H2 at a true 0.11 | 0.98 | 0.91 | 0.80 | 0.67 |
 
-So the news predictor's detectable correlation runs from about 0.075 if company news dominates to about 0.12 if macro news dominates, and learned predictors sit near c of 0.5. At 20 sessions the figures are about 0.10 at c of 0.2 and 0.13 at 0.5, and at 60 sessions about 0.061 and 0.079. With sparse, decayed, heavy tailed scores at c of 0.8, power is about 35 to 40 percent at a true 0.075 and about 61 percent at 0.11. Null rejection stayed at or below 1.1 percent, falling to 0.35 percent with heavy tails, so the test is valid but conservative.
+So the news predictor's detectable correlation runs from about 0.075 if company news dominates to about 0.12 if macro news dominates, and learned predictors sit near c of 0.5. At 20 sessions the figures are about 0.11 at c of 0.2 and 0.13 at 0.5, and at 60 sessions about 0.062 and 0.078. Null rejection stayed between 0.8 and 1.5 percent over 2,000 runs per cell, within sampling noise of 1 percent, so the test is valid. The first design estimate of 35 to 40 percent power at a true 0.075 came from a sparser design, about one impact a session.
 
-Before launch `scripts/v2_power.py` simulates zero inflated scores with the 120 minute decay, a macro component shared across symbols at c of 0.2, 0.5, 0.8 and 1.0, and fat tailed, volatility clustered labels, with generator parameters taken from the planning values of section 12 and never fitted to recordings. Its printed range replaces these figures here, in section 1 and in section 18 before the owner settles the window length. `evaluate` also prints the detectable correlation from the realized error. Trading every decision in the forecast's direction breaks even at about `cost_bps / (0.8 * sigma)`, 0.08 to 0.17 across these symbols, so a just detectable predictor would still not cover costs on most of them. Version 2 measures skill. It does not promise profit.
+`scripts/v2_power.py` simulates zero inflated scores with the 120 minute decay, a macro component shared across symbols at c of 0.2, 0.5, 0.8 and 1.0, prompt_v2's strengths as `score_store.strength` gives them, with a uniform confidence and the horizons and surprise levels of the probe answer key, and fat tailed, volatility clustered labels, with generator parameters taken from the planning values of section 12 and never fitted to recordings. The figures above are its full run of 12 October 2026, 2,000 runs per cell at 40 sessions.
+
+**H2's power and confounds.** H2 controls for 10 price z scores drawn from their own seeded generator, a momentum score and nine persistent noise scores, so H1's figures never change with them. With no news value beyond those scores H2 alone rejected 1.0 to 1.3 percent of the null runs at 40 sessions, and the sequence costs 2 to 4 points of H1's power, as the table shows. Under a momentum confound, a price score with skill b on the label and correlation rho with news but no news value beyond it, H1 alone passed in 6 to 15 percent of runs at b of 0.05 and rho of 0.5 and in 35 to 81 percent at b of 0.10 and rho of 0.7, while H1 then H2 passed in 0.4 to 1.5 percent, within sampling noise of 1 percent. A review of 12 October 2026 with scores built from the label's own past returns, as three of the ten real scores are, found H2 alone at 1.4 to 1.6 percent under the null and the sequence at 0.8 to 0.9 percent under the null and 0.2 to 0.8 percent under seven confounds, so H2 alone is somewhat liberal there and the familywise level rests on the sequence. `evaluate` also prints the detectable correlation from the realized error. Trading every decision in the forecast's direction breaks even at about `cost_bps / (0.8 * sigma)`, 0.08 to 0.17 across these symbols, so a just detectable predictor would still not cover costs on most of them. Version 2 measures skill. It does not promise profit.
 
 ### 11.5 The confirmatory test
 
-* **The test.** Predictor `news` in S2 over the window, with the pooled skill statistic, passing when t exceeds 2.33. It is the only test, and everything else is printed without a pass label.
-* **What it states.** It concerns the forecast's correlation with the next 30 minute return after receipt, for these megacaps at these delays, not news in general.
-* **Why this predictor.** It is the new information version 2 adds, with no fitted parameters and no warmup. S2's population mixes price skill with news whose weights start at zero and move slowly, so S2 against S1 is descriptive.
+* **The tests.** A fixed sequence at one familywise level, one sided 1 percent, by the owner's decision of 12 October 2026. H1 is predictor `news` in S2 over the window with the pooled skill statistic, passing when t exceeds 2.33. Only if H1 passes is H2 run. Within each symbol news and label are residualised by least squares on an intercept and the 10 price z scores S2 stored in `price_z`, and the pooled correlation of the residuals is judged with the same clustered error, passing when t exceeds 2.33. Its small sample correction takes the error from the news residual against the label itself, which keeps H2 at H1's level with exogenous price scores, while scores built from the label's own past returns make H2 alone somewhat liberal, so the familywise level rests on the sequence, as section 11.4 shows. These are the only tests, and everything else is printed without a pass label.
+* **What they state.** H1 concerns the decayed score's correlation with each 30 minute return over the following ten or so session hours, with half the weight in the first 2 hours and never the first reaction, for these megacaps at these delays, not news in general. The prompt asks about exactly this move, the one still to come after the first reaction, and strength weights each impact by how long that move lasts. H2 states that news carries information beyond the price features the learners see.
+* **Why this predictor.** It is the new information version 2 adds, with no fitted parameters and no warmup. S2's population mixes price skill with news whose weights start at zero and move slowly, so S2 against S1 is descriptive. The planted news check of section 6.4 puts the power of S2 against S1 below one half for a true correlation near 0.1 and at zero for 0.05 or for news the price absorbs within about 15 minutes, so a null comparison cannot separate no news value from a learner too slow to show it.
 * **Looks.** Sessions 10 and 20 are descriptive looks. There is no early stop for success, and the run stops early only when invalid under criterion 1.
 * **A failure** means the test did not detect the correlation. That sets no bound by itself, so a failure is reported with the one sided 95 percent upper confidence bound, the largest correlation the data leave plausible. It says nothing about news after the close or about smaller companies.
 * **Expected result, written before launch.** Not passed. Megacaps absorb headlines within minutes, the pipeline adds Finnhub's delay and up to a minute or two of batching, and most earnings come after the close.
@@ -958,7 +979,7 @@ Before launch `scripts/v2_power.py` simulates zero inflated scores with the 120 
 ### 11.6 Success criteria
 
 1. **The run is valid.** All of these must hold, otherwise the run is reported invalid with the reason.
-   1. The tape check passed in Phase 13 and on the first clean full session at or after sessions 10, 20 and 40.
+   1. The tape coverage stayed stable, the median r of the first clean full session at or after sessions 10, 20 and 40 within a factor of 2 of the gate session's, as section 4.9 sets out.
    2. There are zero lookahead audit violations.
    3. Every label recomputed from the candles matches.
    4. S1 and S2 have identical run minutes, labels and `linear_prices` rows.
@@ -969,8 +990,8 @@ Before launch `scripts/v2_power.py` simulates zero inflated scores with the 120 
    9. Every code commit active during the window is listed.
 
    A fallback share above 25 percent of the items routed to Haiku in session is a caveat, not a failure, and so is a day that raised the spend alert.
-2. **Confirmatory news skill,** as in section 11.5.
-3. **Descriptive results.** Every predictor's skill, S2 against S1, `linear_news` against `linear_prices`, `haiku` against `finbert_matched` and `sonnet` against `haiku_official` over all rows and over event rows, `news_company` and `news_macro`, calibration, the twin test per run, any deaths, and data quality, meaning the healthy fraction, run minutes lost to news health by cause, channel outage minutes, receipt to scoring latency, items per source and the fallback share.
+2. **Confirmatory news skill,** H1 and then H2, as in section 11.5.
+3. **Descriptive results.** Every predictor's skill, S2 against S1, `linear_news` against `linear_prices`, `haiku` against `finbert_matched` and `sonnet` against `haiku_official` over all rows and over event rows, `news_company` and `news_macro`, calibration, the twin test per run, any deaths, the own trade share, the round trips per session forced and made on a learner's own, the largest notional over equity, the learners' mean equity with dead learners at their final equity beside the survivors' mean, and data quality, meaning the healthy fraction, run minutes lost to news health by cause, channel outage minutes, receipt to scoring latency, items per source and the fallback share.
 4. **The outcomes fixed by arithmetic** in section 12 matched.
 5. **Version 1 undisturbed.** Runs A to D kept running and `test_v1_untouched` passes.
 6. **Cost.** About 1 to 5 dollars a month for both models together and never above the 20 dollar cap, reported per model, expected to come from the Max plan's included credits as confirmed in Phase 15.
@@ -996,27 +1017,27 @@ The low stock costs are what make this plausible. A round trip here costs 3.6 to
 
 These follow from costs, session rules and timers, are judged as matched or not matched, check the accounting rather than skill, and apply to both runs. They use planning volatilities, estimates of 20 percent a year for QQQ, 22 for MSFT, 25 for AAPL, 30 for GOOGL and AMZN, 35 for META, 45 for NVDA and 60 for TSLA, with three quarters of daily variance inside the session.
 
-| Symbol | Round trip bps | Round trip dollars at 500 | 30 minute sd bps | Required edge bps at margin 0.25 |
+| Symbol | Round trip bps | Round trip dollars at 500 | 30 minute sd bps | Required edge at margin 0 in label sd |
 | --- | --- | --- | --- | --- |
-| QQQ | 3.6 | 0.18 | 30 | 11.2 |
-| MSFT | 4.6 | 0.23 | 33 | 12.9 |
-| AAPL | 4.6 | 0.23 | 38 | 14.1 |
-| GOOGL | 4.6 | 0.23 | 45 | 16.0 |
-| AMZN | 4.6 | 0.23 | 45 | 16.0 |
-| META | 6.6 | 0.33 | 53 | 19.9 |
-| NVDA | 4.6 | 0.23 | 68 | 21.6 |
-| TSLA | 6.6 | 0.33 | 91 | 29.3 |
+| QQQ | 3.6 | 0.18 | 30 | 0.12 |
+| MSFT | 4.6 | 0.23 | 33 | 0.14 |
+| AAPL | 4.6 | 0.23 | 38 | 0.12 |
+| GOOGL | 4.6 | 0.23 | 45 | 0.10 |
+| AMZN | 4.6 | 0.23 | 45 | 0.10 |
+| META | 6.6 | 0.33 | 53 | 0.12 |
+| NVDA | 4.6 | 0.23 | 68 | 0.07 |
+| TSLA | 6.6 | 0.33 | 91 | 0.07 |
 
 Whole share shorts scale these dollar costs with their actual notional of about 400 to 700 dollars at planning prices.
 
-* **First trades** follow the timeline of section 6.4, with the first forced trades between about `10:30` and `13:30` ET in session 3.
-* **Rhythm.** Then each learner makes about two forced round trips per full session, from a timer of 180 healthy minutes plus the wait for an allowed phase minute.
-* **Burn.** A quiet learner pays 1.68 dollars of rent and about two round trips per full session, about 2.04 dollars for QQQ, 2.14 for the five middle names and 2.34 for META and TSLA, 2.18 on average, or by the cutoff 67.21 dollars of rent plus about 19 of round trips, about 86 dollars.
+* **First trades** follow the timeline of section 6.4, with the first trades, forced or made on a learner's own, between about `10:30` and `13:30` ET in session 3.
+* **Rhythm, reported.** The forced timer alone gives about two round trips per full session, from a timer of 180 healthy minutes plus the wait for an allowed phase minute. With no margin a learner also trades on its own whenever its prediction clears the cost, which restarts the timer, so a no skill learner with a spread of 0.10 label standard deviations makes about 3 to 4.5 round trips a session in a synthetic check, most of them its own. The round trips per session, forced and own, are therefore reported and never judged.
+* **Burn.** A quiet learner pays 1.68 dollars of rent and the cost of its round trips per full session, about 2.04 dollars for QQQ, 2.14 for the five middle names and 2.34 for META and TSLA at two round trips, or by the cutoff 67.21 dollars of rent plus about 19 of round trips, about 86 dollars. `evaluate` judges burn against the rent and the round trips each learner actually made, within 25 percent, so own trades change the dollars but not the check.
 * **Founder equity.** The learners' mean equity equals 10,000 minus 0.0043081 dollars per usable minute of their home symbol minus the round trip costs they paid, within about 45 dollars at the cutoff, a two standard deviation bound if every learner's trades move together, taking a 30 minute move of about 50 bps on 500 dollars and about 75 trades each.
 * **No deaths.** The threshold is about 2 dollars and the burn about 2.2 a session, so death would take about 4,500 sessions. There are no births, and every slot stays filled.
 * **Flat at every close,** except where a close was rejected because its symbol went stale, which `evaluate` lists.
 * **Pairing.** S1 and S2 predictions are identical until S2's first training step with a nonzero news input, expected in session 2.
-* **The gate.** At least 95 percent of learner opens are forced while the realized prediction spread stays at or under 0.10 label standard deviations, which `evaluate` prints.
+* **Own trades.** The share of learner opens a learner made on its own, beside the forced share and the prediction spread, is reported, never judged, since the owner set the margin to 0 on 12 October 2026.
 
 ## 13. Dashboards, licensing and data handling
 
@@ -1049,7 +1070,7 @@ Any AI coding or chat session that builds, runs or checks this system sends its 
 
 ### 13.4 The private stock dashboard
 
-`btc_survivor_v2 dashboard configs/v2/s1_prices.toml configs/v2/s2_news.toml` serves `127.0.0.1:8060`. The host cannot be configured, port 8050 is refused, any Host header other than `127.0.0.1` or `localhost` on its port gets 403, which blocks DNS rebinding, every database opens read only, and one five second cache and the version 1 security headers apply. Its panels are these.
+`btc_survivor_v2 dashboard configs/v2/s1_prices.toml configs/v2/s2_news.toml` serves `127.0.0.1:8060`. The host cannot be configured, port 8050 is refused, any Host header other than `127.0.0.1` or `localhost` on its port gets 403, which blocks DNS rebinding, every database opens read only, and one five second cache and the version 1 security headers apply. As on version 1, a UTC and local time switch, remembered in the browser, sets the zone of every time on the page, and the decision explorer's from and to filters read times in the chosen zone and always send the server UTC minutes. Its panels are these.
 
 1. **Market session.** State, next open and close in ET and UTC, holiday and early close flags.
 2. **Finnhub feed.** State, prints and messages per second, last print age per symbol, print delay, feed events.
@@ -1084,7 +1105,7 @@ All of them share one machine, because the stock process reads the news process'
 * **Heartbeat.** Once a minute it writes `runtime_status` and `symbol_status` to both databases and logs feed state, prints per second, news age, living bots, memory and ticker lag.
 * **Shutdown.** SIGINT or SIGTERM lets pending fills settle while the home symbol is healthy, checkpoints both engines and the shared layer, and exits with code 0.
 
-`v2/stocks/group.py` dispatches `news` and `news_heartbeat` lines itself, before the version 1 `decode`, which would hand any other kind to `adapter.parse`. It decodes each price line once, runs the shared market layer and hands the same frozen results to both engines in order. Each engine has its own database, checkpoint, persistence points 30 seconds after a boundary, and resume, and resume refuses if the two checkpoints' copies of the shared layer differ. A restart in session is a gap that discards pending labels, and after more than 10 session minutes the next healthy minute flattens. A restart outside the session flattens nothing, and code updates deploy only then. The version 1 `Recorder` writes every line to `data/v2/raw_stocks`, apart from the version 1 `data/raw`, since there is no free history and recordings feed replay and the tape check.
+`v2/stocks/group.py` dispatches `news` and `news_heartbeat` lines itself, before the version 1 `decode`, which would hand any other kind to `adapter.parse`. It decodes each price line once, runs the shared market layer and hands the same frozen results to both engines in order. Each engine has its own database, checkpoint, persistence points 30 seconds after a boundary, and resume, and resume refuses if the two checkpoints' copies of the shared layer differ. A restart in session is a gap that discards pending labels, and after more than 10 session minutes the next healthy minute flattens. A restart outside the session flattens nothing, and code updates deploy only then. The version 1 `Recorder` writes every line to `data/v2/raw_stocks`, apart from the version 1 `data/raw`, since there is no free history and recordings feed replay and the coverage check.
 
 ### 14.3 The news process
 
@@ -1107,7 +1128,7 @@ The 48 learners and 48 twins cost an estimated 3 ms a minute on the Mac. Parsing
 
 Each loader rejects unknown sections and keys, wrong types and out of range values, naming the key, the bad value and the allowed range. Relative paths resolve from the config file's folder, and the experiment hash covers every section except `log_level`.
 
-**Cross checks.** Symbols are unique, upper case and at most 50, the per key websocket limit, and include the index symbol. The first open minute plus the horizon plus the flatten margin fits in an early close of 210 minutes. `symbol_stale_after_seconds` is at least `feed_stale_after_seconds`, `max_print_delay_seconds` is between 2 and 5, and `late_print_seconds` is twice it. S1 may not set `use_news`. Every `half_spread_bps` symbol is in the universe, and the confirmatory predictor is known. The two run configs are identical apart from `[run]` `name` and `data_dir`, `[news_input]` `use_news` and `[evaluation]`. `keep_candles_days` is 0, kept for the life of the run, or at least 120 days, twice the calendar length of 40 sessions. In the news config `monthly_usd` is above zero and at most 20, the Console workspace limit, `daily_alert_share` is above zero and below one, `[llm.sonnet] kinds` holds only official kinds, and no model id other than the two named is accepted.
+**Cross checks.** Symbols are unique, upper case and at most 50, the per key websocket limit, and include the index symbol. The first open minute plus the horizon plus the flatten margin fits in an early close of 210 minutes. `symbol_stale_after_seconds` is at least `feed_stale_after_seconds`, `max_print_delay_seconds` is between 2 and 5, and `late_print_seconds` is twice it. `series_capacity_minutes` is at least 420, the least a `StockSeries` holds, and at least `history_session_minutes`. S1 may not set `use_news`. Every `half_spread_bps` symbol is in the universe, and the confirmatory predictor is known. The two run configs are identical apart from `[run]` `name` and `data_dir`, `[news_input]` `use_news` and `[evaluation]`. `keep_candles_days` is 0, kept for the life of the run, or at least 120 days, twice the calendar length of 40 sessions. In the news config `monthly_usd` is above zero and at most 20, the Console workspace limit, `daily_alert_share` is above zero and below one, `[llm.sonnet] kinds` holds only official kinds, `[llm.sonnet] thinking_tokens` is 0 exactly while its thinking is disabled and adds at most 64,000 tokens with `max_tokens`, and no model id other than the two named is accepted.
 
 `configs/v2/s1_prices.toml`.
 
@@ -1124,8 +1145,8 @@ secrets_file = "~/.config/btc_survivor/secrets.env"
 provider = "finnhub"
 symbols = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "QQQ"]
 index_symbol = "QQQ"
-feed_stale_after_seconds = 5
-symbol_stale_after_seconds = 15
+feed_stale_after_seconds = 5              # placeholder until the gate session's rule value, section 4.5
+symbol_stale_after_seconds = 15           # placeholder until the gate session's rule value, section 4.5
 max_print_delay_seconds = 2.0             # set after the first recorded session by the rule in section 4.5
 late_print_seconds = 4                    # twice max_print_delay_seconds
 price_excluded_conditions = []            # filled before launch from the meanings in Finnhub's published table
@@ -1182,7 +1203,7 @@ huber_delta = 1.0
 grad_clip = 5.0
 adam_beta1 = 0.9
 adam_beta2 = 0.999
-learning_rate = 0.0001                    # placeholder, set by scripts/v2_learner_check.py before launch
+learning_rate = 0.0001                    # set by scripts/v2_learner_check.py on 12 October 2026, section 6.4
 weight_decay = 0.0001
 skill_window_samples = 360
 
@@ -1191,7 +1212,7 @@ start_equity = 10000.0
 notional = 500.0
 qty_decimals = 6                          # longs
 short_whole_shares = true                 # nearest whole share, at least one
-margin_sigma = 0.25
+margin_sigma = 0.0                        # no margin, a learner opens on its own once its prediction clears the cost
 stop_loss_sigma = 3.0
 allow_short = true
 force_trade_after_hours = 3.0             # healthy session hours, from the first Active minute
@@ -1244,7 +1265,7 @@ newey_west_lags = 12
 one_sided_z = 2.33
 upper_bound_z = 1.645
 interim_sessions = [10, 20]
-tape_check_sessions = [10, 20, 40]        # first clean full session at or after each
+tape_check_sessions = [10, 20, 40]        # first clean full session at or after each, coverage within a factor of 2 of the gate session
 ```
 
 `configs/v2/news.toml`.
@@ -1347,13 +1368,15 @@ near_dup_min_tokens = 4
 macro_strip_pattern = '\b(NASDAQ|NYSE|NYSEARCA)\s*:\s*[A-Z.]+'
 alias_excludes_macro = true
 
-[calendar]                                # ET times copied from federalreserve.gov and bls.gov before launch, polling only
-                                          # every date through 31 Mar 2027, never changed after launch
-fomc_statement = ["2026-10-28T14:00", "2026-12-09T14:00"]   # unverified until copied, the 2027 dates added before launch
-cpi = []                                  # filled before launch
-empsit = []
-ppi = []
-jolts = []
+[calendar]                                # New York times from 12 Oct 2026 through 31 Mar 2027, polling only
+                                          # copied before launch and never changed after it, read 12 Oct 2026
+fomc_statement = ["2026-10-28T14:00", "2026-12-09T14:00", "2027-01-27T14:00", "2027-03-17T14:00"]   # 2027 tentative
+cpi = ["2026-10-14T08:30", "2026-11-10T08:30", "2026-12-10T08:30", "2027-01-13T08:30", "2027-02-11T08:30",
+       "2027-03-10T08:30"]
+empsit = ["2026-11-06T08:30", "2026-12-04T08:30", "2027-01-08T08:30", "2027-02-05T08:30", "2027-03-05T08:30"]
+ppi = ["2026-10-15T08:30", "2026-11-13T08:30", "2026-12-15T08:30", "2027-01-14T08:30", "2027-02-12T08:30",
+       "2027-03-12T08:30"]
+jolts = ["2026-11-03T10:00", "2026-12-01T10:00"]   # no later JOLTS date was listed on 12 Oct 2026, added before launch if listed
 
 [llm]                                     # Haiku, on every routed item
 enabled = true
@@ -1361,10 +1384,10 @@ model = "claude-haiku-5-5"                # the only accepted value
 effort = "low"                            # the only accepted value
 thinking = "disabled"                     # the only accepted value
 scorer_name = "haiku_v1"
-prompt_file = "prompt_v1.txt"
-prompt_sha256 = ""                        # pinned at build
-schema_file = "schema_v1.json"
-schema_sha256 = ""                        # pinned at build
+prompt_file = "prompt_v2.txt"
+prompt_sha256 = "e69bb9a9c6ba328094b71cb5ffd8f54718942b4b175d4bad85a4bd6daf058417"   # pinned at build
+schema_file = "schema_v2.json"
+schema_sha256 = "c2fcd2cee2da72d5d177c79fef86d2070fa997c2066d18dd9c2630cacd99e81f"   # pinned at build
 request_timeout_seconds = 60
 max_tokens = 4096
 flush_max_items = 20
@@ -1382,18 +1405,19 @@ max_requeues = 1                          # a missing item only, never a failed 
 rate_limit_pause_minutes = 15
 refusal_pause_share = 0.2
 refusal_window_calls = 50
-probe_file = "probes_v1.json"
+probe_file = "probes_v2.json"
 probe_time_utc = "06:00"
 probe_alert_direction_agreement = 0.8     # probes run on Haiku only
 
 [llm.sonnet]                              # the comparison scorer, official items only
-enabled = true
+enabled = false                           # off until one live call settles the thinking setting, section 8.1
 model = "claude-sonnet-5-5"               # the only accepted value, and Opus is never accepted
 effort = "low"                            # the only accepted value
-thinking = "disabled"                     # the only accepted value
+thinking = "disabled"                     # disabled, between_tools or adaptive, chosen by the live call of section 8.1
 scorer_name = "sonnet_v1"
 kinds = ["8k", "fed_press", "fed_monetary", "fed_speech", "bls_release"]
 max_tokens = 1024                         # one item with up to 10 impacts
+thinking_tokens = 0                       # room added for thinking, 0 exactly while disabled, 1024 for between_tools, 4096 adaptive
 cache_control = false                     # Sonnet cache prices are not in the research
 
 [llm.caps]                                # one ledger and one cap for both models
@@ -1401,7 +1425,7 @@ ledger_file = "~/.config/btc_survivor/llm_ledger.db"
 ledger_lock_file = "~/.config/btc_survivor/llm_ledger.lock"
 monthly_usd = 20.00                       # equal to the Console workspace limit, and no daily cap
 daily_alert_share = 0.25                  # a warning above 5 dollars in one UTC day, never a stop
-reserve_overhead_tokens = 1000            # byte bound only, checked against real overhead in Phase 15
+reserve_overhead_tokens = 1000            # the byte bound overhead, and the margin reserved over an exact count
 
 [llm.prices]                              # Anthropic pricing page, read 11 Oct 2026
 haiku_input_per_mtok = 0.10
@@ -1428,14 +1452,14 @@ threads = 1
 
 Each phase ends with the full suite green on Python 3.11 and 3.13, one single line commit carrying only the owner's name, a push of `feat/v2-stocks` to the private repository, and a short summary. Before existing code changes, the modules and tests that depend on it are listed. No test needs the network, randomized tests use seeded generators, no test puts a secret value inside an assert expression, and the suite never runs with `showlocals`. Version 2 test files carry the prefix `test_v2_` so they never collide with a version 1 file, so the `test_store` of Phase 16 lives in `tests/test_v2_store.py`, while `test_v1_untouched`, `test_v1_isolation` and the amended version 1 tests keep their names.
 
-**Critical path.** On 12 October 2026 the owner asked for the earliest launch with every phase built and tested first, which moved the launch from 2 November to 19 October. Only live market time sets the date, through the tape verdict, five trading days of collection and two rehearsal sessions, so the building runs in parallel around them. Phase 14 is built, and the collector started, in parallel with the Phase 13 live gate, because collection does not depend on the tape verdict. Phases 15, 16, 17 and 18 are built in parallel with the verdict and with each other, because the engine reads candles rather than the vendor and the readers follow the tables of section 9, and only their live use waits for a consolidated verdict.
+**Critical path.** On 12 October 2026 the owner asked for the earliest launch with every phase built and tested first, which moved the launch from 2 November to 19 October. Only live market time sets the date, through the gate session and its coverage report, five trading days of collection and two rehearsal sessions, so the building runs in parallel around them. Phase 14 is built, and the collector started, in parallel with the Phase 13 recording, because collection does not depend on the tape. Phases 15, 16, 17 and 18 are built in parallel with the coverage report and with each other, because the engine reads candles rather than the vendor and the readers follow the tables of section 9, and only their live use waits for the stale thresholds of section 4.5.
 
 | Gate | Phase | Latest date |
 | --- | --- | --- |
 | Plan approved, version 1 Phases 9 and 10 finished | 11 | done, Monday 12 October 2026 |
 | Guard rails green | 12 | done, Sunday 11 October |
 | Gate session recorded, the first clean full session | 13 | Monday 12 October |
-| Tape verdict consolidated, after at most one repeat session | 13 | Tuesday 13 October, or Wednesday 14 after a repeat |
+| Gate session coverage reported and stale thresholds set from its recording | 13 | Tuesday 13 October |
 | Collector live, five trading days before launch | 14 | Monday 12 October before `04:00` ET |
 | First live Haiku and Sonnet calls | 15 | Tuesday 13 October |
 | Learner check fixes the learning rate | 16 | Wednesday 14 October |
@@ -1464,13 +1488,14 @@ If any gate slips, the launch moves to the first session open after a passed reh
     * `test_sessions` checks every closure and early close for 2026 to 2028, early closes at `18:00` UTC on 27 November and 24 December 2026 and 26 November 2027 and `17:00` UTC on 3 July 2028, opens on 12 October 2026 and 31 December 2027, opens at `13:30` UTC on 30 October 2026, `14:30` UTC on 2 November 2026 and 12 March 2027 and `13:30` UTC on 15 March 2027, k = 1 at `09:31` on 2 January 2026, k at `09:31` on a Tuesday after a holiday Monday equal to k at `16:00` Friday plus one, sessions of 390 and 210 minutes with 12 and 6 evaluation minutes, dates past the table raising, the self test refusing a broken time zone database, and the warning 60 days before the end.
     * `test_docs_style` covers this plan with the prose rules only.
 
-13. **Stock data and the tape gate.** The adapter, prints, candles, `StockSeries`, health, `StockFeedClient` with `BackoffSettings`, the lock, synthetic recordings with faults, `scripts/v2_record_stocks.py` and `tapecheck.py`. Then, with the owner's approval for the first use of the key, the recorder runs live and the tape check runs on the first clean full session, stopping the build for the owner unless consolidated. The delay rule sets `max_print_delay_seconds` and `late_print_seconds`, and the condition histogram, read against the published meanings, fixes `price_excluded_conditions`.
+13. **Stock data and the gate session.** The adapter, prints, candles, `StockSeries`, health, `StockFeedClient` with `BackoffSettings`, the lock, synthetic recordings with faults, `scripts/v2_record_stocks.py`, `scripts/v2_gap_thresholds.py` and `tapecheck.py`. Then, with the owner's approval for the first use of the key, the recorder runs live, the coverage check runs on the gate session, whose median r becomes the baseline, and the stale rule of section 4.5 sets `symbol_stale_after_seconds` and `feed_stale_after_seconds` from its full recording. The delay rule sets `max_print_delay_seconds` and `late_print_seconds`, and the condition histogram, read against the published meanings, fixes `price_excluded_conditions`.
     * `test_finnhub_adapter` covers multi symbol trades, ordering, drops with counts, ping, error, unknown types, the eight subscribe frames and the token kept out of `repr`.
     * `test_stock_candles` puts a print received at B minus 1 ms in candle B and one at B in the next, classifies by vendor time, counts a late print for volume only, refuses a print more than 2 seconds early, ignores replayed prints, takes the median of up to 5, resets at the open, carries an empty minute and applies the tick rule.
     * `test_stock_series` checks the capacity of 420, the buy and sell rings and session starts.
-    * `test_stock_health` checks closed with no events outside the session, `mark_healthy` after 60 seconds connected outside it, a healthy `09:31`, the silence clock starting at the open, one symbol stale alone after 15 seconds, total silence for 5 seconds staling every symbol with a reconnect, a delayed feed held out, the delay rule at its floor and cap, epochs bumping at the close, the pre open reconnect, resubscribe limits, a 5 minute halt never reconnecting, and `BackoffSettings` giving the reused `FeedClient` a backoff from 5 to 60 seconds with seeded jitter, reset by `mark_healthy`, with no version 1 `FeedConfig` built.
+    * `test_stock_health` checks closed with no events outside the session, `mark_healthy` after 60 seconds connected outside it, a healthy `09:31`, the silence clock starting at the open, one symbol stale alone after its limit, total silence past the feed limit staling every symbol with a reconnect, a delayed feed held out, the delay rule at its floor and cap, epochs bumping at the close, the pre open reconnect, resubscribe limits, a 5 minute halt never reconnecting, and `BackoffSettings` giving the reused `FeedClient` a backoff from 5 to 60 seconds with seeded jitter, reset by `mark_healthy`, with no version 1 `FeedConfig` built, and the news health of a minute judging the heartbeat line in force at its start, so a silent minute after an unhealthy line stays unhealthy.
     * `test_lock` makes a second process that takes the lock exit with a clear error.
-    * `test_tapecheck` runs on a synthetic raw recording with no database, maps ratios to verdicts at the band edges, turns two inconclusive sessions into not consolidated, refuses disconnected time, and prints only the verdict without `--detail`.
+    * `test_tapecheck` runs on a synthetic raw recording with no database, computes each symbol's ratio and the median on a partial tape, leaves disconnected and outage time out of the covered ratio, which equals r exactly on a clean session, flags an early close, disconnected time or an outage as not clean, writes and reads the coverage record, checks the factor of 2 at its edges, and prints no ratio without `--detail`.
+    * `test_gap_thresholds` checks the stale rule's rounding at its steps, exact gaps on a hand built session whose symbol gaps run across a drop less the time lost and whose feed gaps stay inside one connection, eligibility as live health has it, a synthetic day measured independently, a halt past the 300 second bound and the silence closes.
 
 14. **News collection,** in parallel with the Phase 13 live gate. `db`, `http`, `budget`, `schedule`, `text`, `dedupe`, `prefilter`, the sources, the collector, `health` and `news-status`. Then, with the owner's approval, the collector runs live from here on.
     * `test_news_db` checks that `init-db` on the news config creates `news.db` in WAL mode with the tables of section 9.1 and `meta.kind` set to news, and that the news process refuses a database of another kind.
@@ -1485,7 +1510,7 @@ If any gate slips, the launch moves to the first session open after a passed reh
     * `test_news_status` checks the status mix, backlog per channel per hour, outage minutes, and the order and backlog verdicts failing on a planted out of order row and a planted backlog item outside any restart, with samples only under `--detail`.
 
 15. **Scoring.** `export_finbert.py` once with the owner's approval, then the FinBERT scorer, model request, client, validation, key ledger, batcher, the Haiku and Sonnet scorers, probes and `scripts/llm_synthetic_check.py`. FinBERT's time on the 300 item synthetic burst sets `score_wait_seconds`. Then, with the owner's approval, the first live Haiku and Sonnet calls.
-    * `test_llm_request` checks identical bytes for identical items, the pinned hashes, no sampling parameters, tools, metadata or fallbacks, thinking disabled, effort low, the exact model id of each scorer, the same system prompt, schema and user message for Haiku and Sonnet on an official item, `max_tokens` of 1,024 for Sonnet, no BTC in the enum, cache control on Haiku's one system block and none for Sonnet, no dates, a sentinel contact address absent, and the size guard on the count and on bytes.
+    * `test_llm_request` checks identical bytes for identical items, the pinned hashes, no sampling parameters, tools, metadata or fallbacks, thinking disabled on Haiku and the configured setting on Sonnet with its thinking room, effort low, the exact model id of each scorer, the same system prompt, schema and user message for Haiku and Sonnet on an official item, `max_tokens` of 1,024 plus its thinking room for Sonnet, no BTC in the enum, cache control on Haiku's one system block and none for Sonnet, no dates, a sentinel contact address absent, and the size guard on the count and on bytes.
     * `test_llm_validate` catches enum violations, extra fields, missing, duplicate and unknown ids, duplicate tickers and more than 10 impacts, keeping the valid items.
     * `test_llm_scorer` uses a fake client to isolate one refused item among 20 in at most 11 calls, split on `max_tokens`, cap calls per batch, requeue a missing item once, and give every other row of the failure table its action, including a 5xx, a timeout or a call lost at restart booked at its reservation with its items marked failed and no second call. It also checks that every Finnhub item routed `llm` reaches Haiku and never Sonnet, Sonnet sees only the official kinds, a Sonnet error never changes Haiku's state, and a refusal by the monthly cap turns both models off until the next UTC month with FinBERT covering every item.
     * `test_ledger` checks the cost formula by hand, the byte bound never below a fake exact count, 10,000 seeded usage sequences mixing Haiku and Sonnet calls at their own rates that never pass the monthly cap and never cost more than their reservations, two processes on one key ledger that never pass it together, a reservation blocking a call at the edge, UTC month rollover, no daily cap of any kind, and the daily alert raised once when a day passes a quarter of the monthly cap, logged, written as `spend_alert` and set on the heartbeat, while calls continue.
@@ -1493,37 +1518,39 @@ If any gate slips, the launch moves to the first session open after a passed reh
     * `test_score_store` refuses a second final row for one item and scorer.
     * `test_finbert` checks windowing, weighting, label order, strength and a hash mismatch on a fake session, and a `needs_model` test checks bitwise identical scores on two runs.
 
-16. **Stock engine and replay.** The shared market layer, features, news inputs, labels, `PooledWindow`, `predict_rows`, costs, broker, bot, twins, population, engine, group, runner, `StockStore`, records, checkpoint and replay. Then `scripts/v2_learner_check.py` fixes the learning rate by the rule in section 6.4.
+16. **Stock engine and replay.** The shared market layer, features, news inputs, labels, `PooledWindow`, `predict_rows`, costs, broker, bot, twins, population, engine, group, runner, `StockStore`, records, checkpoint and replay. Then `scripts/v2_learner_check.py` fixes the learning rate by the rule in section 6.4, and `scripts/v2_news_check.py` runs the planted news check of section 6.4 at full settings and publishes its curve.
     * `test_stock_features` requires identical vectors from a full synthetic series and the same series cut at each t, across nights, weekends, early closes and gaps, and hand checks every feature, including feature 9 invalid without healthy reference prices.
     * `test_news_inputs` checks decay in session minutes, a score counting only from its receive stamp and never before `scored_at`, full weight to the open, the shrinkage, QQQ's aggregation, a fallback visible only at the later of its two receipts, the `finbert_matched`, `sonnet` and `haiku_official` streams holding only their paired items and each visible only at the later of its two receipts, Sonnet never entering the primary stream, exactly one primary score per item across every route and status, inputs stored per symbol at each push minute with zeros in S1, and a score received after a record's push minute never entering that record's training sample or its `linear_news` update, though it moves the current inputs.
     * `test_stock_labels` checks that labels never cross a close or an epoch change, with the right evaluation minutes on early closes.
     * `test_pooled_window` and `test_predict_rows` check the symbol column, newest n plus draws and per symbol scaling, each row against `MLP.predict`, and bitwise equal S1 and S2 outputs with zero news inputs.
     * `test_stock_costs` checks SEC fee rounding of 0.02 at 500 and 0.03 at 1,000, the trading activity fee minimum and cap, fees only on sales including short opens, round trips of 3.6, 4.6 and 6.6 bps, borrow across a weekend, and the required edge.
-    * `test_stock_broker` fills at the first eligible print at or after due, including exactly at due, refuses a print with vendor time before the decision, rejects on stale symbol, disconnect and session end, fills a flip at one print, rounds longs to 6 decimals and shorts to whole shares with a one share minimum and recorded notional, and applies the short sale restriction, never triggered without a healthy previous price, and the split guard.
+    * `test_stock_broker` fills at the first eligible print traded and received at or after due, including exactly at due, refuses a print with vendor time before due, including a late report of a trade inside the latency across a jump, draws each order's jitter from its own generator, rejects on stale symbol, disconnect and session end, fills a flip at one print, rounds longs to 6 decimals and shorts to whole shares with a one share minimum and recorded notional, and applies the short sale restriction, never triggered without a healthy previous price, and the split guard.
     * `test_stock_twins` checks that `StockTwin` does its upkeep on its learner's home symbol only, marking at the reference price, keeps the version 1 coin flip rules, takes the `session_close` and `session_flatten` exits, and never builds or reads a `LocalBook`.
     * `test_stock_bot` checks 8 predictions from one pass, trading only the home symbol, the open window, the close at `15:55`, the forced timer from the first Active minute, and the stop at 3 label standard deviations.
-    * `test_zero_init` checks equal S1 and S2 weights and generator states after birth, bitwise identical predictions while every batch has zero news inputs, S1's news weights staying zero, and divergence after S2's first training step with a nonzero news input.
+    * `test_zero_init` checks equal S1 and S2 weights and generator states after birth, bitwise identical predictions while every batch has zero news inputs, S1's news weights staying zero, and divergence after S2's first training step with a nonzero news input, while orders sent by S2 alone leave every training generator, batch and weight in step.
     * `test_stock_account` runs 5,000 seeded sequences of opens, closes, flips, stops, session closes, rent, borrow, cent rounded fees and deaths, checking the three version 1 invariant lines after every step.
-    * `test_stock_engine` checks a synthetic day with 390 candle rows per symbol, no flatten after a night, weekend or holiday, a process killed at `15:54` with a position closing it next morning with `session_flatten` and `overnight_carry`, a 15 minute feed outage flattening, a 20 minute halt flattening only that symbol, a 15 minute news outage pausing rent, learning and decisions in both runs while bumping no epoch, flattening nothing and leaving the next day's feature 3 valid, a death leaving its slot empty, rent only in usable minutes, the DST Monday, and the invariants at every snapshot.
+    * `test_stock_engine` checks a synthetic day with 390 candle rows per symbol, no flatten after a night, weekend or holiday, a process killed at `15:54` with a position closing it next morning with `session_flatten` and `overnight_carry`, a 15 minute feed outage flattening, a 20 minute halt flattening only that symbol, a 15 minute news outage pausing rent, learning and decisions in both runs while bumping no epoch, flattening nothing and leaving the next day's feature 3 valid, a death leaving its slot empty, rent only in usable minutes, the DST Monday, the invariants at every snapshot, the price z scores of every usable symbol at each evaluation minute, and the report only fill columns.
     * `test_stock_replay` replays one recording of prints and news lines twice with identical table digests, and never sends a frame or opens `news.db`.
     * `test_group` checks one decode feeding both engines, news kinds dispatched before the version 1 `decode`, recorded order equal to stamp order, a puller opened before the writer exists seeing later rows, a reopen after 60 seconds without a heartbeat, each engine resuming from its own news sequence, and a `local_only` event written to both databases before each open and at a start inside a session.
     * `test_store` checks that `init-db` creates a run database with `meta.kind` set to stocks and a news database with `meta.kind` set to news, the `StockStore` schema, its check and `rollback_after` on the version 2 tables, and that the stock process, the puller, `evaluate`, `status`, `export` and the dashboard each refuse a database of the wrong kind or a version 1 database.
     * `test_stock_checkpoint` checks a bit for bit round trip and resume refusing a changed experiment hash, session index or shared layer copy.
+    * `test_news_check` checks the synthetic arrivals against the planning rates, prompt_v2's strengths, the inputs from `NewsInputs` by hand, the planted correlation over seeds, S1 rows and windows holding zero news while S2's keep the inputs of each push minute, S1 and S2 identical with no news and S1's news weights staying zero, every figure against the `evaluate` statistics by hand, one curve for any number of workers, and rows only under `--detail`.
 
 17. **Evaluation, status, export and the private dashboard,** with `scripts/v2_power.py`.
-    * `test_stats` checks the pooled correlation against the mean within symbol correlation, a hand computed Driscoll Kraay error, eight copies of one symbol giving its t, a fast null simulation rejecting near 1 percent, the upper bound, and hand examples for `pooled_dm` and session blocks.
-    * `test_evaluate` passes a planted correlation of 0.2 and fails zero, computes the cutoff from launch with partial halts and news outages, puts the window at sessions 2 to 40, recomputes labels from candles older than 30 days, reports deaths, reads settings from `meta`, and fails on a planted lookahead row, a label mismatch, a second prompt hash, a second model id for one scorer, a month whose ledger spend passed 20 dollars, differing S1 and S2 labels, or a failed or missing `local_only` check. It also checks that `sonnet` against `haiku_official` and `haiku` against `finbert_matched` each use exactly their paired rows and paired event rows, and that both comparisons are printed without a pass label.
+    * `test_stats` checks the pooled correlation against the mean within symbol correlation, a hand computed Driscoll Kraay error, eight copies of one symbol giving its t, a fast null simulation rejecting near 1 percent, the upper bound, hand examples for `pooled_dm` and session blocks, and H2 as the pooled partial correlation with its error checked by hand, reducing to the plain t for one symbol, with symbols left out by rule.
+    * `test_evaluate` passes a planted correlation of 0.2 and fails zero, computes the cutoff from launch with partial halts and news outages, puts the window at sessions 2 to 40, recomputes labels from candles older than 30 days, reports deaths, reads settings from `meta`, and fails on a planted lookahead row, a label mismatch, a second prompt hash, a second model id for one scorer, a month whose ledger spend passed 20 dollars, differing S1 and S2 labels, or a failed or missing `local_only` check. It checks H2 run only after H1 passes, on the rows of H1 and the `price_z` rows both runs stored, failing a momentum confound that H1 passes, coverage stability with the gate session as the baseline clean or not and a planted record at 2.01 times it, and the own trades, round trips, notional over equity and learner equity tables, all without a pass label. It also checks that `sonnet` against `haiku_official` and `haiku` against `finbert_matched` each use exactly their paired rows and paired event rows, and that both comparisons are printed without a pass label.
     * `test_arithmetic` checks burn, founder equity and the death horizon by hand.
     * `test_private_dashboard` checks binding to 127.0.0.1 only, refusing port 8050, 403 for a foreign Host header, failing writes, the security headers, JSON free of secrets, and the daily spend alert shown when a seeded heartbeat carries it.
     * `test_status` and `test_export` check output against a seeded database.
-    * `test_power_script` reproduces detectable correlations near 0.076 at c of 0.2 and 0.123 at c of 1.0 with fixed fast settings.
+    * `test_power_script` reproduces detectable correlations near 0.075 at c of 0.2 and 0.122 at c of 1.0 with fixed fast settings, H2 at its level, the sequence's power never above H1's, confounds that pass H1 often and the sequence within the level, and prompt_v2's strengths drawn as `score_store.strength` gives them.
 
 18. **Docs and deploy.** `docs/v2_overview.md`, `v2_data_and_licensing.md` with the short sale, margin and pattern day trader limits, `v2_news.md`, `v2_evaluation.md`, `v2_operations.md` and `docs/RESULTS_V2_TEMPLATE.md`, each section ending with links and covered by both docs rules, plus the launchd plists and systemd units, installed only with approval.
 
 19. **Soak, rehearsal and launch.**
-    * `scripts/v2_soak.py` replays the recorded sessions plus a synthetic multi day run with many reconnects, halts and news bursts, reporting memory against the 5 MB bound after the first hour, CPU per print, invariants and determinism.
-    * A live rehearsal of two sessions uses `rehearsal_s1.toml` and `rehearsal_s2.toml`, separate data folders and the production `news.db` read only, with a plumbing warmup of 30 training minutes and a forced timer of 30 healthy minutes, labelled never a strategy setting, so trading runs live on the second session. The drills kill the stock process mid session, stop and restart the production news process, which briefly interrupts collection, SIGSTOP the stock process past the stale limit, and run the cap drill below with its tiny monthly cap.
-    * The cap drill runs on one rehearsal day. `scripts/llm_synthetic_check.py --cap-drill` writes the drill config to the gitignored `data/v2/rehearsal/cap_drill_news.toml`, a copy of `configs/v2/news.toml` with `[finnhub] enabled = false`, `[edgar] enabled = false`, `[fed] enabled = false`, `[bls] enabled = false`, `[llm.sonnet] enabled = false`, `data_dir` set to `data/v2/rehearsal/cap_drill`, a tiny `monthly_usd = 0.01`, and `ledger_file` and `ledger_lock_file` pointing to a throwaway ledger in that folder, so it is never a committed run config and its tiny cap never meets the month's real spend on the key ledger. With every channel off the drill polls nothing, so no real item reaches Haiku and only the items the drill inserts are scored. Sonnet stays off because a single Sonnet reservation of about 0.014 dollars or more would pass the tiny cap at once. It starts a separate news process on that config and then inserts fictional long form official items from its own synthetic set into the drill database, each as a fresh item with status `new` and route `llm`, and the next only after the previous one has its final Haiku row, so no item is a seed and each goes alone to a reserved call or to the cap check. It inserts at most 20. A long form Haiku call books about 0.001 dollars and reserves about 0.003, and the throwaway ledger starts empty, so the cap refuses a call within about ten items. The drill passes when a call is refused by the cap, the waiting items get `skipped_cap`, Haiku stays off until the next UTC month, FinBERT scores every item, and the drill's booked spend stays at or under 1 cent. When it ends the script books the drill's total into the key ledger as one row, so the key ledger still holds every cent the key spent. The drill database and its ledger stay under `data/v2/rehearsal` and are never read by a run.
+    * `scripts/v2_soak.py` replays the recorded sessions plus a synthetic multi day run with many reconnects, halts and news bursts, reporting memory against the 5 MB bound after the first hour, CPU per print, invariants, fills only on prints traded at or after their due time, the same `price_z` rows in both runs and determinism. On Linux resident memory decides the bound strictly. On a Mac, by the owner's decision of 12 October 2026, memory in use decides it, and the soak also passes when memory in use grew less than 1 MB over the final replayed week, compared at the same point of the weekly cycle, even when it grew more than 5 MB in all.
+    * `test_acceptance` runs the whole path offline before the rehearsal. The news process scores fictional Finnhub items with a fake Anthropic client and a fake FinBERT model into a temporary `news.db`, and the stock process runs the rehearsal pair against a fake Finnhub on `127.0.0.1` over three synthetic sessions, on a clock the test moves in lock step, and is killed with SIGKILL between the two runs' checkpoint commits in the second session and resumed. Then `tape-check` on the gate session, `evaluate`, `status` and `export` run on the result, and the test checks no lookahead, S1 and S2 identical until S2 first receives a nonzero news score, labels recomputed from the candles, nonzero news inputs in S2, run minutes in every session, own trades under the zero margin, every fill on a recorded print traded at or after its due time, the same `price_z` rows in both runs and the incremental test reading them.
+    * A live rehearsal of two sessions uses `rehearsal_s1.toml` and `rehearsal_s2.toml`, separate data folders and the production `news.db` read only, with a plumbing warmup of 30 training minutes and a forced timer of 30 healthy minutes, labelled never a strategy setting, so trading runs live on the second session. The drills kill the stock process mid session, stop and restart the production news process, which briefly interrupts collection, SIGSTOP the stock process for at least twice `feed_stale_after_seconds`, and run the cap drill below with its tiny monthly cap. The rehearsal passes only when FinBERT was on in every news heartbeat of each rehearsal session, S2 wrote `news` forecast rows with a nonzero value, `evaluate`, `status`, `export` and the dashboard run on the rehearsal databases after each session with exit code 0 or 1 and no traceback or error entry, and two replays of the rehearsal's recording, copied to a frozen folder, give the same database digest. Otherwise the slip rule moves the launch.
+    * The cap drill runs on one rehearsal day. `scripts/llm_synthetic_check.py --cap-drill` writes the drill config to the gitignored `data/v2/rehearsal/cap_drill_news.toml`, a copy of `configs/v2/news.toml` with `[finnhub] enabled = false`, `[edgar] enabled = false`, `[fed] enabled = false`, `[bls] enabled = false`, `[llm.sonnet] enabled = false`, `data_dir` set to `data/v2/rehearsal/cap_drill`, a tiny `monthly_usd = 0.01`, `probe_time_utc` moved to `23:59` so the drill's own daily probe spends none of the tiny cap, and `ledger_file` and `ledger_lock_file` pointing to a throwaway ledger in that folder, so it is never a committed run config and its tiny cap never meets the month's real spend on the key ledger. With every channel off the drill polls nothing, so no real item reaches Haiku and only the items the drill inserts are scored. Sonnet stays off because a single Sonnet reservation of about 0.014 dollars or more would pass the tiny cap at once. It starts a separate news process on that config and then inserts fictional long form official items from its own synthetic set into the drill database, each as a fresh item with status `new` and route `llm`, and the next only after the previous one has its final Haiku row, so no item is a seed and each goes alone to a reserved call or to the cap check. It inserts at most 20. A long form Haiku call books about 0.001 dollars and reserves about 0.003, and the throwaway ledger starts empty, so the cap refuses a call within about ten items. The drill passes when a call is refused by the cap, the waiting items get `skipped_cap`, Haiku stays off until the next UTC month, FinBERT scores every item, and the drill's booked spend stays at or under 1 cent. When it ends the script books the drill's total into the key ledger as one row, so the key ledger still holds every cent the key spent. The drill database and its ledger stay under `data/v2/rehearsal` and are never read by a run.
     * S1 and S2 then launch with fresh databases at a session open, the news process already running, on the date the critical path gives.
 
 ## 17. First live session checks
@@ -1534,12 +1561,12 @@ Checks marked **owner** print prices, volumes, headlines, fills or per symbol fi
 
 **Feed and calendar, Phase 13.**
 
-* The connection opens with no error, every symbol prints within 15 seconds of `09:30`, and the open is at `13:30` UTC under EDT and `14:30` UTC from 2 November.
+* The connection opens with no error, every symbol prints within `symbol_stale_after_seconds` of `09:30`, and the open is at `13:30` UTC under EDT and `14:30` UTC from 2 November.
 * The delay verdict passes and the delay rule's setting is computed. **Owner** reads the per symbol p50, p95 and maximum delay and enters the setting, and a median above 5 seconds stops the build.
 * Pings are counted, the connection survives an overnight idle with no reply sent, and disconnects over 24 hours are counted by reason.
 * Messages and prints per second with peaks from `09:30` to `09:35` and `15:50` to `16:00`, bytes per second, compressed recording size, CPU, memory, and ticker lag at the open under 1 second.
 * 390 candle rows per symbol, no stale events at the open or close, epochs bumping at the close, and a healthy share at or above 99 percent on a clean day.
-* The tape verdict. **Owner** reads the per symbol ratios, first and last print times, condition histogram, odd lot, zero size, late and replayed shares, the last print against the official close, and each stale event against Nasdaq's public halt list.
+* The tape coverage. **Owner** reads the per symbol ratios and their median, first and last print times, condition histogram, odd lot, zero size, late and replayed shares, the last print against the official close, the stale thresholds with the gaps behind them, and each stale event against Nasdaq's public halt list.
 * **Owner** compares the Roll half spread with the allowance, report only, and a few public quotes with the last print.
 
 **News, Phase 14.**
@@ -1556,12 +1583,12 @@ Checks marked **owner** print prices, volumes, headlines, fills or per symbol fi
 **Scoring, Phase 15.**
 
 * Before the first real call the owner confirms the dedicated workspace with the 20 dollar monthly limit, auto reload off, and included credits linked with 7 days on the plan, and the news config holds the same 20 dollars as `monthly_usd`.
-* `scripts/llm_synthetic_check.py --dry-run` records the body hash and counted tokens. One live synthetic call returns HTTP 200, `response.model` equal to `claude-haiku-5-5`, no thinking blocks, stop reason `end_turn`, and JSON passing the schema with integer enums. One live synthetic Sonnet call on a fictional official item does the same with `claude-sonnet-5-5`, which settles whether Sonnet accepts thinking disabled at effort low, the request without sampling parameters and the integer enums, and its usage shows no cache tokens. If Sonnet rejects any setting other than the integer enums, it stays disabled as section 8.1 sets out.
+* `scripts/llm_synthetic_check.py --dry-run` records the body hash and counted tokens. One live synthetic call returns HTTP 200, `response.model` equal to `claude-haiku-5-5`, no thinking blocks, stop reason `end_turn`, and JSON passing the schema with integer enums. One live synthetic Sonnet call on a fictional official item does the same with `claude-sonnet-5-5`, thinking blocks allowed unless its thinking is disabled, run with `--sonnet-thinking disabled` and then with the lowest setting Sonnet accepts, which settles the configured setting, the request without sampling parameters and the integer enums, and its usage shows no cache tokens. If Sonnet rejects every setting, or anything other than the integer enums, it stays disabled as section 8.1 sets out.
 * `count_tokens` is free, accepts the full request, confirms the prefix exceeds the cache minimum of 512 tokens, which is unverified for Haiku 5.5, and confirms the byte bound with `reserve_overhead_tokens` is never below the real count. Real bytes per token are recorded.
 * A second call within five minutes shows cache reads near the prompt size and no cache writes.
 * The 40 item synthetic check passes the schema on every Haiku answer and matches the answer key, written before any call, on at least 90 percent of clear cases, its official items also pass the schema on every Sonnet answer, and two back to back Haiku probe runs record the launch baseline.
 * From the first 50 real items, tokens per item, cost per call and reservation against cost are recorded for each model, with cost never above reservation. The next day the key ledger total for both models matches the Console usage page, and the charge comes from the included credits.
-* Refusals, malformed results, thinking blocks and 429s are zero, receipt to scoring lag is recorded per model, every Finnhub item routed `llm` has a final Haiku row, every official item has a final Sonnet row, and no Sonnet row exists for a Finnhub item.
+* Refusals, malformed results, thinking blocks from Haiku and 429s are zero, receipt to scoring lag is recorded per model, every Finnhub item routed `llm` has a final Haiku row, every official item has a final Sonnet row, and no Sonnet row exists for a Finnhub item.
 * FinBERT's hash matches, its time per headline, long item and 300 item burst and the news process memory are recorded, and two runs over the 50 fictional sentences are bitwise identical.
 
 **The runs, from launch.**
@@ -1575,10 +1602,10 @@ Checks marked **owner** print prices, volumes, headlines, fills or per symbol fi
 
 ## 18. Risks and honest limits
 
-* **The free feed may not be the full tape.** Finnhub's docs title the stream US Full SIP but name no tier, and the research could not confirm the free plan carries it. Every result depends on the tape check, and Finnhub could narrow the tier later.
+* **The free feed is a partial tape.** The gate session showed a small share of consolidated volume, which the owner kept on 12 October 2026. Reference prices and fills rest on a small share of each symbol's trades, a halt shows only after `symbol_stale_after_seconds`, and Finnhub could narrow the tier later, which criterion 1.1 catches when the coverage moves by more than a factor of 2.
 * **Lost messages are invisible** without sequence numbers, so loss is estimated only in aggregate.
 * **No quotes, no depth.** Fills rest on a fixed allowance, paper orders never move the market, and the allowance may be kind at the open or close for some names.
-* **Shorts are kinder than a small account.** Intraday shorting needs a margin account, and the pattern day trader rule limits an account under 25,000 dollars to three day trades in five business days against about ten a week per learner. Whole share shorts also move notional away from 500 dollars. The confirmatory test does not depend on either.
+* **Shorts are kinder than a small account.** Intraday shorting needs a margin account. FINRA replaced the pattern day trader rule with intraday margin standards from 4 June 2026, which brokers may phase in until 20 October 2027, and a broker still applying the old count of three day trades in five business days for an account under 25,000 dollars would allow far fewer than the ten or more a week each learner makes. Whole share shorts also move notional away from 500 dollars. The confirmatory test does not depend on either.
 * **Regular session only,** so the overnight reaction to earnings, where headline value is most likely, is invisible.
 * **Delays.** Received time measures this system, not the market, and vendor delays, channel outages and filings after `17:30` ET all make news arrive late.
 * **News health selects minutes.** Scoring backlogs around FOMC, CPI or earnings could remove minutes near the biggest news, which the burst sizing and the report of lost minutes by cause make visible.
@@ -1587,7 +1614,8 @@ Checks marked **owner** print prices, volumes, headlines, fills or per symbol fi
 * **Mixed scales.** The primary stream uses FinBERT strengths, on a different scale from Haiku's, for fallback items, whose share is reported.
 * **Non determinism and drift.** Every result rests on one set of scores from each model, Haiku only days old, and a rerun would differ by about what the probes measure for Haiku, while Sonnet runs no probe.
 * **Lookahead in a model's head.** Live scoring is clean by construction, but megacap names can distract either model.
-* **Power.** The detectable news correlation runs from about 0.075 to about 0.12 as the shared macro input dominates, and power at a true 0.075 may be only 35 to 40 percent.
+* **Power.** The detectable news correlation runs from about 0.075 to about 0.12 as the shared macro input dominates, and power at a true 0.075 runs from 0.87 if company news dominates to 0.39 if macro news does, 2 to 4 points less for H1 then H2.
+* **S2 against S1 has little power.** In the planted news check of section 6.4 S2 beat S1 in 10 of 24 seeds at a true correlation near 0.1, in none at 0.05, and in none at 0.1 when the price absorbs news within about 15 minutes, so a null S2 against S1 says nothing about news correlations of 0.05 or less.
 * **Comparisons with little power.** Sonnet against Haiku rests on about 5 to 20 official items a day, so only a large difference could show, and both model comparisons stay descriptive.
 * **No daily cap.** A runaway day could spend most of the 20 dollar month before anyone looks, after which FinBERT covers every item until the month resets. The daily alert at 5 dollars makes such a day visible on the log and the private dashboard, and scoring each item once with deduplication limits what a loop can send.
 * **No deaths, no evolution.** Version 2 exercises neither, and runs A to D already do.
@@ -1604,8 +1632,8 @@ Each question carries a recommendation only, and silence never approves anything
 1. Is this plan approved, including the worktree, the stricter order scan, the sigma scaled margin, intraday only trading, and the fixed criteria and outcomes in sections 11 and 12? Recommended, approve. This gates Phase 11, and no version 2 code is written before an explicit yes.
 2. Should the window stay at 40 sessions from Monday 19 October 2026, ending in mid December, or run 60 sessions to late January, once `scripts/v2_power.py` prints the power range? Recommended, 40 sessions, with the upper confidence bound reported, settled before launch because `[evaluation]` is fixed then.
 3. Will the owner send Finnhub a written request describing the scoring of its headlines through the Anthropic API for this personal, non commercial use? Recommended, yes, before launch, since an approval would remove the doubt the owner's decision of section 13.1 accepts. Sending headlines does not wait for an answer and nothing is gated on it. An objection turns `send_to_llm` off at once, which ends the window if it has begun.
-4. Will the owner copy the eight daily volumes and closes from nasdaq.com by hand after the gate session and each repeat, and which other consolidated display could replace it? Recommended, nasdaq.com, with a second display named only if needed.
-5. If the tape check fails, which fallback is preferred? Recommended, Databento Standard at 199 dollars a month, whose key is data only and whose licence covers automated use, with Alpaca only if its data scope OAuth route is proven. This gates any spend on a fallback, and after a failed tape check the build stays stopped until the owner answers.
+4. Will the owner copy the eight daily volumes and closes from nasdaq.com by hand after the gate session and after each session the coverage check repeats on, and which other consolidated display could replace it? Recommended, nasdaq.com, with a second display named only if needed.
+5. If the tape check fails, which fallback is preferred? Answered on 12 October 2026, the owner keeps the partial free feed, so no fallback is bought and the coverage report never stops the build.
 6. Before Phase 15, is the key in a dedicated workspace with the 20 dollar monthly limit and auto reload off, with the Max plan's included credits linked and at least 7 days on the plan? Recommended, the owner confirms each point. This gates the first live Haiku and Sonnet calls in Phase 15.
 7. Are the FinBERT export, which downloads about 440 MB from Hugging Face into a throwaway environment, and the daily probe of about 0.04 dollars a month approved? Recommended, approve both. This gates the export and the first probe in Phase 15.
 8. Should the launch go without company name masking? Recommended, unmasked, with a masked variant possible later as its own predictor.

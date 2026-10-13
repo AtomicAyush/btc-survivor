@@ -311,6 +311,11 @@ class NewsInputs:
         state exactly by adding them again."""
         return list(self._kept.values())
 
+    def bears_on(self, symbol: str, tickers: Sequence[str]) -> bool:
+        """Whether an item tagged with tickers reaches symbol's inputs, through its own ticker, MACRO, which reaches
+        every symbol, or a company ticker, which also reaches the index symbol."""
+        return MACRO in tickers or any(symbol in self._targets.get(ticker, ()) for ticker in tickers)
+
     def step(self, boundary_ms: int) -> dict[str, dict[str, NewsInput]]:
         """Every stream's inputs per symbol at boundary_ms, from scores visible before it, after dropping every score
         and item older than the drop age."""

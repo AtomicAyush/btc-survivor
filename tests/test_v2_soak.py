@@ -4,7 +4,8 @@ never a strategy setting. The soak freezes the newest recording without touching
 passing through, generates a synthetic run with reconnects, halts, late, early and replayed prints, news bursts and
 outages, and a short soak over recordings and a synthetic run through the real stock process code reports memory, CPU
 per print, invariants and determinism, with a week over week memory figure that tells windows and weekend news from a
-leak, and default output of verdicts, counts, hashes and timings only. A leak, a planted bad row in any check, a
+leak and on a Mac passes a soak whose memory in use grew less than 1 MB over the final replayed week, and default
+output of verdicts, counts, hashes and timings only. A leak, a planted bad row in any check, a
 differing second pass and a busy or unsafe folder each make it fail or refuse. Every recording, database and news line
 is synthetic and lives in a test folder."""
 
@@ -102,6 +103,7 @@ def test_the_soak_runs_the_rehearsal_pair_into_data_v2_soak_by_default():
     assert (args.s1, args.s2) == (soak.DEFAULT_S1, soak.DEFAULT_S2) == REHEARSALS
     assert soak.SOAK_ROOT == ROOT / "data" / "v2" / "soak" and args.out is None and args.raw is None
     assert soak.MAX_GROWTH_MB == 5.0 and args.synthetic_days == 14.0 and soak.WEEK_HOURS == 168.0
+    assert soak.MAX_WEEK_GROWTH_MB == 1.0 == args.max_week_growth_mb
     help_text = " ".join(soak.build_parser().format_help().split())
     assert soak.NEVER_FOR_SELECTION in help_text and "never a strategy setting" in help_text
 
@@ -266,6 +268,7 @@ def reading(hours, rss, source="proc", malloc=None, pymalloc=None, footprint=Non
 def test_on_linux_resident_memory_may_grow_by_exactly_the_limit_and_decides_alone():
     held = soak.memory_verdict([reading(1, 100.0)], reading(30, 105.0))
     assert held["outcome"] == "passed" and held["judged_on"] == "resident" and held["growth_mb"] == 5.0
+    assert held["decided_by"] == "first hour"
     grew = soak.memory_verdict([reading(1, 100.0)], reading(30, 105.01))
     assert grew["outcome"] == "failed" and "resident memory grew 5.01 MB" in grew["reason"]
     retained = soak.memory_verdict([reading(1, 100.0, malloc=30.0, pymalloc=20.0)],
@@ -279,14 +282,17 @@ def test_on_a_mac_memory_in_use_decides_and_resident_memory_is_only_reported():
     mac = "proc_pid_rusage"
     held = soak.memory_verdict([reading(1, 100.0, mac, 30.0, 20.0)], reading(30, 112.0, mac, 31.0, 20.5))
     assert held["outcome"] == "passed" and held["judged_on"] == "in_use" and not held["rule_held"]
+    assert held["decided_by"] == "first hour"
     assert held["in_use"]["growth_mb"] == 1.5
     assert "resident memory read with proc_pid_rusage grew 12.0" in held["reason"]
     edge = soak.memory_verdict([reading(1, 100.0, mac, 30.0, 20.0)], reading(30, 100.0, mac, 35.0, 20.0))
     assert edge["outcome"] == "passed" and edge["in_use"]["growth_mb"] == 5.0
     leaked = soak.memory_verdict([reading(1, 100.0, mac, 30.0, 20.0)], reading(30, 100.0, mac, 35.0, 20.01))
     assert leaked["outcome"] == "failed" and "memory in use grew 5.01 MB" in leaked["reason"]
+    assert leaked["decided_by"] == "first hour" and "holds no final week" in leaked["reason"]  # 29 hours hold no week
     unknown = soak.memory_verdict([reading(1, 100.0, mac)], reading(30, 112.0, mac))
     assert unknown["outcome"] == "inconclusive" and unknown["in_use"] is None and unknown["judged_on"] is None
+    assert unknown["decided_by"] is None
 
 
 def test_the_verdict_reports_the_worst_reading_and_the_recent_slope():
@@ -301,17 +307,33 @@ def test_the_verdict_reports_the_worst_reading_and_the_recent_slope():
 
 def test_the_week_over_week_growth_tells_windows_and_weekend_news_from_a_leak():
     # Windows filling over the first two sessions and news kept over each weekend, the shape a two week soak of the
-    # stock process shows, fail the first hour rule while a week of replayed time moves memory by nothing.
+    # stock process shows, fail the first hour rule while a week of replayed time moves memory by nothing, so on a Mac
+    # the final week decides, passing below 1 MB and failing at or above it.
     def in_use(h, leak=0.0):
         return 30.0 + 6.0 * min(h, 48) / 48 + (2.5 if 72 <= h % 168 < 120 else 0.0) + leak * h
 
     mac = "proc_pid_rusage"
-    for leak, week in ((0.0, 0.0), (0.01, 1.68)):
+    for leak, week, outcome in ((0.0, 0.0, "passed"), (0.005, 0.84, "passed"), (0.01, 1.68, "failed")):
         samples = [reading(h, 90.0, mac, in_use(h, leak), 5.0) for h in range(1, 360)]
         result = soak.memory_verdict(samples, reading(360, 90.0, mac, in_use(360, leak), 5.0))
-        assert result["outcome"] == "failed" and result["in_use"]["growth_mb"] > soak.MAX_GROWTH_MB
+        assert result["outcome"] == outcome and result["in_use"]["growth_mb"] > soak.MAX_GROWTH_MB
+        assert result["decided_by"] == "final week" and not result["in_use"]["rule_held"]
         assert result["in_use"]["week_over_week_mb"] == pytest.approx(week)
+        assert f"{result['in_use']['week_over_week_mb']} MB over the final replayed week against 1.0 MB" in \
+            result["reason"]
         assert result["week_over_week_mb"] == 0.0  # resident memory held flat
+    # Exactly 1 MB over the final week is not under the limit, and a tighter limit can be given.
+    samples = [reading(h, 90.0, mac, 30.0 + (8.0 if h > 1 else 0.0) + (1.0 if h >= 300 else 0.0), 5.0)
+               for h in range(1, 360)]
+    edge = soak.memory_verdict(samples, reading(360, 90.0, mac, 39.0, 5.0))
+    assert edge["in_use"]["week_over_week_mb"] == 1.0 and edge["outcome"] == "failed"
+    assert soak.memory_verdict(samples, reading(360, 90.0, mac, 38.99, 5.0))["outcome"] == "passed"
+    assert soak.memory_verdict(samples, reading(360, 90.0, mac, 38.99, 5.0), week_limit_mb=0.5)["outcome"] == "failed"
+    # On Linux resident memory keeps the strict first hour rule, whatever the final week shows.
+    linux = [reading(h, in_use(h), "proc", in_use(h), 5.0) for h in range(1, 360)]
+    strict = soak.memory_verdict(linux, reading(360, in_use(360), "proc", in_use(360), 5.0))
+    assert strict["judged_on"] == "resident" and strict["decided_by"] == "first hour"
+    assert strict["outcome"] == "failed" and strict["week_over_week_mb"] == 0.0
     # The figure needs a reading a whole week before the end.
     samples = [reading(h, 90.0, mac, in_use(h), 5.0) for h in range(1, 169)]
     assert soak.memory_verdict(samples, reading(168.5, 90.0, mac, 36.0, 5.0))["in_use"]["week_over_week_mb"] is None
@@ -394,7 +416,7 @@ def test_a_short_soak_reports_memory_cpu_invariants_and_determinism(clean):
     for run in ("rehearsal_s1", "rehearsal_s2"):
         for name in ("equity snapshots, cash equals start plus realized minus fees, borrow and rent",
                      "closed trades, net equals gross minus both fees and borrow", "fills, never before their decision",
-                     soak.WINDOW_CHECK, soak.CARRY_CHECK):
+                     "fills, each on a print at or after its due time", soak.WINDOW_CHECK, soak.CARRY_CHECK):
             assert by_name[(run, name)]["rows"] > 0, (run, name)
     for name in ("forecasts, no news input received after the minute",
                  "news lines, never received before they were scored"):
@@ -421,6 +443,7 @@ def test_the_default_output_holds_only_verdicts_counts_hashes_and_timings(clean)
     summary = [line for line in lines if ": " in line and not line.startswith("report written")]
     assert summary and all(SUMMARY_LINE.fullmatch(line) for line in summary), summary
     assert any(line.startswith("memory growth kib: ") for line in lines)
+    assert f"memory decided by: {clean.report['memory']['decided_by']}" in lines
     assert any(line.startswith("memory slope kib per day: ") for line in lines)
     assert any(line.startswith("database digest: ") for line in lines)
     assert sum("rows hidden, pass --detail" in line for line in lines) == 2
@@ -461,6 +484,8 @@ PLANTED = {
     "fills, never before their decision":
         "UPDATE fills SET filled_at = '2026-01-01T00:00:00.000Z' WHERE id = (SELECT min(id) FROM fills WHERE status = "
         "'filled')",
+    "fills, each on a print at or after its due time":
+        "UPDATE fills SET print_after_due_ms = -1 WHERE id = (SELECT max(id) FROM fills WHERE status = 'filled')",
     "forecasts, no news input received after the minute":
         "UPDATE stock_forecasts SET inputs_max_recv_at = '2027-01-01T00:00:00.000Z' WHERE rowid = (SELECT min(rowid) "
         "FROM stock_forecasts WHERE inputs_max_recv_at IS NOT NULL)",

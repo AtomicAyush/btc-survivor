@@ -29,9 +29,12 @@ The settings below are fixed for the life of the window and come from each run's
 | News config hash |  |  |
 | Prompt and schema hashes |  |  |
 | Haiku model | `claude-haiku-5-5` | `claude-haiku-5-5` |
-| Sonnet model, or disabled with the owner's reason |  |  |
+| Sonnet model and thinking setting, or disabled with the owner's reason |  |  |
+| Prompt and schema files | `prompt_v2.txt` and `schema_v2.json` | `prompt_v2.txt` and `schema_v2.json` |
 | News start sequence |  |  |
 | Learning rate | 0.0001 | 0.0001 |
+| Margin, `margin_sigma` | 0 | 0 |
+| `feed_stale_after_seconds` and `symbol_stale_after_seconds`, set from the gate session |  |  |
 | Population | 24 learners and 24 coin flip twins | 24 learners and 24 coin flip twins |
 | FinBERT revision and model hash |  |  |
 | Code commit at launch |  |  |
@@ -52,18 +55,18 @@ Record every stretch longer than a few minutes in which a session minute was los
 
 Price health and news health are described in [section 4.5](../PLAN_V2.md#45-price-health-without-an-order-book) and [section 7.8 of the plan](../PLAN_V2.md#78-news-health).
 
-## Tape checks
+## Tape coverage
 
-One row for the check before launch and one for the first clean full session at or after sessions 10, 20 and 40. The ratios behind each verdict stay in `data/v2/checks`.
+The free feed is a partial tape, so each row records how much of it the feed carried. One row for the gate session, whose median ratio of recorded to official volume is the baseline, and one for the first clean full session at or after sessions 10, 20 and 40. The per symbol ratios stay in `data/v2/checks`.
 
-| Check | Session date | Clean | Verdict |
-| --- | --- | --- | --- |
-| Before launch |  |  |  |
-| At or after session 10 |  |  |  |
-| At or after session 20 |  |  |  |
-| At or after session 40 |  |  |  |
+| Check | Session date | Clean | Median ratio against the gate session | Within a factor of 2 |
+| --- | --- | --- | --- | --- |
+| Gate session, the baseline |  |  | 1 | baseline |
+| At or after session 10 |  |  |  |  |
+| At or after session 20 |  |  |  |  |
+| At or after session 40 |  |  |  |  |
 
-The tape check is specified in [section 4.9 of the plan](../PLAN_V2.md#49-consolidated-tape-check).
+The gate session is the baseline whether or not its recording was clean. The report is specified in [section 4.9 of the plan](../PLAN_V2.md#49-tape-coverage-check).
 
 ## Criterion 1, the run is valid
 
@@ -71,7 +74,7 @@ Every check must pass, otherwise the run is reported invalid with the reason. Co
 
 | Check | Verdict | Problems |
 | --- | --- | --- |
-| 1.1 `tape checks` |  |  |
+| 1.1 `coverage stability` |  |  |
 | 1.2 `lookahead audit` |  |  |
 | 1.3 `labels recomputed` |  |  |
 | 1.4 `runs identical` |  |  |
@@ -85,15 +88,16 @@ Caveats, never failures, are a fallback share above 25 percent of the items rout
 
 ## Criterion 2, the confirmatory test
 
-The predictor `news` in S2 over the window, passing when t exceeds 2.33. Before the cutoff the row is descriptive.
+A fixed sequence at one familywise level of 1 percent. H1 is the predictor `news` in S2 over the window, passing when t exceeds 2.33. Only if H1 passes at the cutoff is H2 run, the partial test with `news` and the label each residualised on the 10 stored price z scores within each symbol, passing when its t exceeds 2.33. Before the cutoff every row is descriptive.
 
-| Look | Rows | Minutes | Symbols, and any left out | Correlation | Standard error | t | Passed | Detectable correlation | Upper bound, one sided 95 percent |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Session 10, descriptive |  |  |  |  |  |  | descriptive |  |  |
-| Session 20, descriptive |  |  |  |  |  |  | descriptive |  |  |
-| Cutoff |  |  |  |  |  |  |  |  |  |
+| Test | Look | Rows | Minutes | Symbols, and any left out | Correlation | Standard error | t | Passed | Detectable correlation | Upper bound, one sided 95 percent |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| H1 | Session 10, descriptive |  |  |  |  |  |  | descriptive |  |  |
+| H1 | Session 20, descriptive |  |  |  |  |  |  | descriptive |  |  |
+| H1 | Cutoff |  |  |  |  |  |  |  |  |  |
+| H2 | Cutoff, only after H1 passed |  |  |  |  |  |  |  |  |  |
 
-A failure is reported with its upper bound, the largest correlation the data leave plausible. The test is fixed in [section 11.5 of the plan](../PLAN_V2.md#115-the-confirmatory-test).
+A failure is reported with its upper bound, the largest correlation the data leave plausible. A pass of H1 alone says the scored news moved with the returns that followed, and a pass of H2 as well says it carried information beyond the price features. The tests are fixed in [section 11.5 of the plan](../PLAN_V2.md#115-the-confirmatory-test).
 
 ## Criterion 3, descriptive results
 
@@ -155,6 +159,17 @@ Learner and twin trades from one decision, paired by slot, symbol and decision t
 
 Stocks drift up a little over the window, so the share of long opens stands beside the result, as [section 11.3 of the plan](../PLAN_V2.md#113-squared-error-twins-events-and-calibration) explains.
 
+### Own trades
+
+With no margin a learner opens on its own whenever its prediction clears the round trip cost, so this is reported and never judged.
+
+| Run | Learner decisions | Learner opens | Forced opens | Own opens | Own share | Share of decisions that cleared the required edge | Prediction spread, label sd |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| S1 |  |  |  |  |  |  |  |
+| S2 |  |  |  |  |  |  |  |
+
+The gate is described in [section 12 of the plan](../PLAN_V2.md#12-outcomes-fixed-by-arithmetic).
+
 ### Calibration
 
 The slope of label on prediction within each symbol, for the bps predictors.
@@ -184,6 +199,8 @@ Calibration is described in [section 11.3 of the plan](../PLAN_V2.md#113-squared
 | Receipt to scoring lag, median and 90th percentile, per scorer |  |
 | Items per source |  |
 | Fallback share of the items routed to Haiku in session |  |
+| Fill print after the due time, median and largest, from `print_after_due_ms` in `fills` |  |
+| S2 fills inside a news event window, the first line of an item bearing on the symbol, tagged with it, with MACRO or, for QQQ, with any company, in the 30 minutes before the decision, from `news_window` in `fills` |  |
 | Deaths, with bot, time and cause |  |
 
 `evaluate` does not read the release calendar, so the overlap with scheduled releases is counted by hand. Data quality is listed in [section 11.6 of the plan](../PLAN_V2.md#116-success-criteria).
@@ -193,12 +210,11 @@ Calibration is described in [section 11.3 of the plan](../PLAN_V2.md#113-squared
 | Outcome | Expected | S1 | S2 | Matched |
 | --- | --- | --- | --- | --- |
 | First trades | session 3, session minutes 60 to 270 |  |  |  |
-| Rhythm | 1.5 to 2.5 round trips per full session from session 4 |  |  |  |
-| Burn | 2.18 dollars a session on average, within 25 percent |  |  |  |
+| Round trips per full session from session 4, forced and own, from the round trips table | about 2 from the timer alone, own trades beside them, reported only |  |  | reported |
+| Burn | the rent and the round trips each learner actually made, within 25 percent, 2.18 dollars a session at two round trips |  |  |  |
 | Founder equity | within about 43 dollars of plan at 75 trades |  |  |  |
 | No deaths | 0 |  |  |  |
 | Flat at every close | none carried while healthy |  |  |  |
-| The gate | at least 95 percent of opens forced, spread at most 0.10 |  |  |  |
 | Pairing, both runs together | first difference in session 2 or later |  |  |  |
 
 The arithmetic is in [section 12 of the plan](../PLAN_V2.md#12-outcomes-fixed-by-arithmetic).

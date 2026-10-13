@@ -9,6 +9,7 @@ drill, passes against the real scorers running as its news process, and books it
 it fails."""
 
 import asyncio
+import dataclasses
 import importlib.util
 import json
 import re
@@ -48,14 +49,16 @@ DATE = re.compile(r"\b(19|20)\d\d-\d\d-\d\d\b|\b(January|February|March|April|Ma
 SUMMARY_VALUE = re.compile(r"pass|fail|\d+|[0-9a-f]{64}|[a-z][a-z_ ]*")
 
 
-def write_config(folder, sonnet=True):
+def write_config(folder, sonnet=True, thinking=None):
     """The committed news config with the files pinned and every path inside folder, written with the script's own
-    TOML writer."""
+    TOML writer. thinking, when given, is Sonnet's thinking setting and thinking room."""
     raw = tomllib.loads(COMMITTED.read_text(encoding="utf-8"))
     raw["news"].update(data_dir=str(folder / "data" / "news"), secrets_file=str(folder / "secrets.env"),
                        rest_lock_file=str(folder / "finnhub_rest.lock"))
     raw["llm"].update(prompt_sha256=llm_request.PROMPT_SHA256, schema_sha256=llm_request.SCHEMA_SHA256)
     raw["llm"]["sonnet"]["enabled"] = sonnet
+    if thinking is not None:
+        raw["llm"]["sonnet"].update(thinking=thinking[0], thinking_tokens=thinking[1])
     raw["llm"]["caps"].update(ledger_file=str(folder / "key" / "llm_ledger.db"),
                               ledger_lock_file=str(folder / "key" / "llm_ledger.lock"))
     path = folder / "configs" / "news.toml"
@@ -166,7 +169,9 @@ def test_the_synthetic_set_is_40_fictional_undated_items_with_a_key_inside_the_s
         assert len({ticker for ticker, _ in item.key}) == len(item.key)
         assert not DATE.search(item.headline + " " + item.text), item.synthetic_id
         assert not re.search(r"btc|bitcoin|xbt", item.headline + item.text, re.IGNORECASE)
-    assert sum(item.clear for item in items) == 31
+    assert sum(item.clear for item in items) == 29
+    assert not {item.synthetic_id for item in items if not item.clear} & {"s01", "s02", "s03", "s35", "s40"}
+    assert {"s09", "s17"} <= {item.synthetic_id for item in items if not item.clear}
     assert any("Ignore all previous instructions" in item.text and item.key == () for item in items)
 
 
@@ -247,9 +252,10 @@ def test_the_live_check_passes_on_good_answers_and_books_every_call_in_the_key_l
     found = summary(out)
     assert code == 0 and found["verdict"] == "pass", out
     assert client.models() == [HAIKU_MODEL] * 12 + [SONNET_MODEL] * 10 + [HAIKU_MODEL] * 2
-    assert found["calls"] == "24" and found["clear cases"] == found["clear cases matched"] == "31"
+    assert found["calls"] == "24" and found["clear cases"] == found["clear cases matched"] == "29"
     assert found["haiku cache read tokens"] == "1400" and found["probe direction agreement"] == "ok"
     assert found["haiku first status"] == found["sonnet first status"] == "ok"
+    assert (found["sonnet thinking"], found["sonnet first call thinking tokens"]) == (news.llm.sonnet.thinking, "0")
     rows = key_ledger_rows(tmp_path)
     assert len(rows) == 24 and {row["status"] for row in rows} == {"done"}
     assert {row["process"] for row in rows} == {f"{news.config_hash} {check.CHECK_PROCESS}"}
@@ -270,6 +276,32 @@ def test_a_failed_first_sonnet_call_stops_sonnet_and_fails_the_check(tmp_path, c
     assert found["haiku first call"] == found["haiku matches the key"] == "pass"
     assert "a fictional message about the thinking setting" in out
     assert sum(row["model"] == SONNET_MODEL for row in key_ledger_rows(tmp_path)) == 1
+
+
+class ThinkingSonnet(KeyClient):
+    """Answers from the key, Sonnet with one thinking block and 120 thinking tokens inside its output."""
+
+    async def send(self, request):
+        result = await super().send(request)
+        if request["model"] != SONNET_MODEL:
+            return result
+        usage = dataclasses.replace(result.usage, output_tokens=result.usage.output_tokens + 120, thinking_tokens=120)
+        return dataclasses.replace(result, thinking_blocks=1, usage=usage)
+
+
+@pytest.mark.parametrize("thinking, verdict", [(("between_tools", 1024), "pass"), (("adaptive", 4096), "pass"),
+                                               (("disabled", 0), "fail")])
+def test_sonnet_thinking_passes_the_first_call_unless_its_thinking_is_disabled(tmp_path, capsys, thinking, verdict):
+    config = write_config(tmp_path, thinking=thinking)
+    client = ThinkingSonnet(load_news_config(config).llm)
+    code, out, _ = run_main(capsys, [str(config)], client)
+    found = summary(out)
+    assert found["sonnet first call"] == found["verdict"] == verdict and code == (0 if verdict == "pass" else 1)
+    assert (found["sonnet thinking"], found["sonnet first call thinking tokens"]) == (thinking[0], "120")
+    sent = [r for r in client.requests if r["model"] == SONNET_MODEL]
+    assert {r["max_tokens"] for r in sent} == {1024 + thinking[1]}
+    assert {json.dumps(r["thinking"]) for r in sent} == {json.dumps({"type": thinking[0]})}
+    assert all(row["cost_usd"] <= row["reserved_usd"] for row in key_ledger_rows(tmp_path))
 
 
 class FailsFrom(KeyClient):
@@ -306,13 +338,36 @@ def test_no_cache_read_on_the_second_haiku_call_fails_the_check(tmp_path, capsys
     assert code == 1 and summary(out)["haiku cache read on the second call"] == "fail"
 
 
-@pytest.mark.parametrize("wrong, verdict", [(("s01", "s02", "s03"), "pass"), (("s01", "s02", "s03", "s04"), "fail")])
+@pytest.mark.parametrize("wrong, verdict", [(("s01", "s02"), "pass"), (("s01", "s02", "s03"), "fail")])
 def test_the_key_must_match_on_at_least_90_percent_of_the_clear_cases(tmp_path, capsys, wrong, verdict):
     config = write_config(tmp_path)
     code, out, _ = run_main(capsys, [str(config)], KeyClient(load_news_config(config).llm, flips=wrong))
     found = summary(out)
-    assert found["clear cases matched"] == str(31 - len(wrong)) and found["haiku matches the key"] == verdict
+    assert found["clear cases matched"] == str(29 - len(wrong)) and found["haiku matches the key"] == verdict
     assert code == (0 if verdict == "pass" else 1)
+
+
+@pytest.mark.parametrize("thinking, room", [("between_tools", 1024), ("adaptive", 4096), ("disabled", 0)])
+def test_sonnet_thinking_on_the_command_line_turns_sonnet_on_for_one_run_and_leaves_the_file(tmp_path, capsys,
+                                                                                               thinking, room):
+    config = write_config(tmp_path, sonnet=False)
+    before = config.read_bytes()
+    client = ThinkingSonnet(load_news_config(config).llm)
+    code, out, _ = run_main(capsys, [str(config), "--sonnet-thinking", thinking], client)
+    found = summary(out)
+    sent = [r for r in client.requests if r["model"] == SONNET_MODEL]
+    # A thinking answer fails the first call while thinking is disabled, and a failed first call sends nothing more.
+    assert len(sent) == (1 if room == 0 else 10) and {r["max_tokens"] for r in sent} == {1024 + room}
+    assert {json.dumps(r["thinking"]) for r in sent} == {json.dumps({"type": thinking})}
+    assert found["sonnet thinking"] == thinking and found["sonnet first call"] == ("fail" if room == 0 else "pass")
+    assert config.read_bytes() == before and code == (1 if room == 0 else 0)
+    assert all(row["cost_usd"] <= row["reserved_usd"] for row in key_ledger_rows(tmp_path))
+
+
+def test_the_cap_drill_refuses_a_sonnet_thinking_setting(tmp_path, capsys):
+    config = write_config(tmp_path, sonnet=False)
+    code, _, err = run_main(capsys, [str(config), "--cap-drill", "--sonnet-thinking", "between_tools"])
+    assert code == 2 and "takes no --sonnet-thinking" in err
 
 
 def test_with_sonnet_disabled_the_check_sends_no_sonnet_call(tmp_path, capsys):

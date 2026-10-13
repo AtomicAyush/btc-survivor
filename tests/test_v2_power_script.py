@@ -1,5 +1,6 @@
-"""scripts/v2_power.py, the synthetic power of section 11.4: its generator by hand and in aggregate, and the
-detectable correlations of the plan's table reproduced with fixed fast settings."""
+"""scripts/v2_power.py, the synthetic power of sections 11.4 and 11.5: its generator by hand and in aggregate, the
+detectable correlations of the plan's table reproduced with fixed fast settings, and the incremental test H2 holding
+its level, keeping most of H1's power and refusing news that only repeats a price score."""
 
 import ast
 import math
@@ -8,6 +9,7 @@ import sys
 import numpy as np
 import pytest
 
+from btc_survivor.v2.news import score_store
 from helpers import ROOT
 
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -43,6 +45,43 @@ def one(block, offset, strength, blocks=30):
     return v2_power.inputs_at(cell, np.array(offset, float), np.array(strength, float), (1, 1, blocks), GEN)[0, 0]
 
 
+def test_h2_holds_its_level_and_the_sequence_keeps_most_of_h1_s_power(fast):
+    bound = v2_power.null_bound(FAST.runs)
+    for scenario in fast.values():
+        assert scenario.h2_null_rejection <= bound
+        assert all(seq <= h1 for seq, h1 in zip(scenario.h2_power, scenario.power))
+    assert fast[0.2].h2_power[1] >= 0.9 and fast[0.2].h2_power[0] >= fast[0.2].power[0] - 0.1
+
+
+def test_news_that_only_repeats_momentum_passes_h1_often_and_the_sequence_within_the_level(fast):
+    bound = v2_power.null_bound(FAST.runs)
+    (mild_h1, mild_seq), (strong_h1, strong_seq) = fast[0.2].confounded
+    assert strong_h1 > 0.5 and mild_h1 > 2 * bound  # the raw test mistakes momentum for news
+    assert all(seq <= bound for s in fast.values() for _, seq in s.confounded)
+
+
+def test_the_price_scores_never_change_h1():
+    plain = v2_power.simulate(Settings(runs=8, sessions=(3,), cs=(0.5,), confounds=(), chunk=4))
+    full = v2_power.simulate(Settings(runs=8, sessions=(3,), cs=(0.5,), chunk=4))
+    for a, b in zip(plain, full):
+        assert (a.null_rejection, a.detectable, a.power_90, a.power) == (b.null_rejection, b.detectable, b.power_90,
+                                                                         b.power)
+    assert plain[0].confounded == () and len(full[0].confounded) == 2
+
+
+def test_price_scores_have_unit_variance_their_persistence_and_a_common_share():
+    scores = v2_power.noise_scores(np.random.default_rng(9), 40, 40, GEN)
+    assert scores.shape == (40, 480, 8, 9)
+    assert scores.var(axis=(0, 1, 2)) == pytest.approx(np.ones(9), abs=0.08)
+    lag1 = [np.mean(scores[:, 1:, :, f] * scores[:, :-1, :, f]) for f in range(9)]
+    assert lag1 == pytest.approx(np.linspace(0, 0.9, 9), abs=0.05)
+    assert np.mean(scores[..., 0, 0] * scores[..., 1, 0]) == pytest.approx(0.45, abs=0.05)
+    pred = np.random.default_rng(10).normal(size=(5000, 8))
+    score = v2_power.momentum(pred, np.random.default_rng(11).normal(size=pred.shape), 0.5, 1.0)
+    assert np.corrcoef(score.ravel(), pred.ravel())[0, 1] == pytest.approx(0.5, abs=0.02)
+    assert v2_power.with_momentum(scores[0], scores[0, ..., 0]).shape == (480, 8, 10)
+
+
 def test_an_impact_halves_every_120_minutes_and_drops_after_600():
     values = one([0], [0.0], [1.0])
     w = 2.0 ** (-30 * np.arange(30) / 120)
@@ -68,7 +107,29 @@ def test_an_impact_from_outside_the_session_keeps_full_weight_until_the_open():
     at_open = offset == 0
     assert (cell[at_open] % v2_power.BLOCKS_PER_SESSION == 0).all()
     assert at_open.mean() == pytest.approx(0.6, abs=0.05)
-    assert set(np.round(np.abs(strength) * 5).astype(int)) == {0, 1, 2, 3, 4, 5}
+    # prompt_v2's strengths, every one score_store.strength of a confidence, horizon and surprise.
+    possible = {round(abs(score_store.strength(1, c, h, s)), 12) for c in range(1, 6)
+                for h in score_store.HORIZON_WEIGHTS for s in range(4)}
+    assert set(np.round(np.abs(strength[strength != 0]), 12)) <= possible and np.abs(strength).max() <= 1
+
+
+def test_the_strength_draw_is_score_store_strength_at_the_planning_shares():
+    assert v2_power.HORIZON_WEIGHTS == score_store.HORIZON_WEIGHTS
+    assert sum(v2_power.HORIZON_SHARES.values()) == pytest.approx(1) and sum(v2_power.SURPRISE_SHARES) == 1
+    direction = np.repeat([-1.0, 0.0, 1.0], 20_000)
+    drawn = v2_power.draw_strengths(np.random.default_rng(3), direction)
+    rng = np.random.default_rng(3)
+    n = len(direction)
+    confidence = rng.integers(1, 6, n)
+    horizon = np.array(list(v2_power.HORIZON_SHARES))[rng.choice(3, n, p=list(v2_power.HORIZON_SHARES.values()))]
+    surprise = rng.choice(4, n, p=v2_power.SURPRISE_SHARES)
+    expected = [score_store.strength(int(d), int(c), str(h), int(s))
+                for d, c, h, s in zip(direction, confidence, horizon, surprise)]
+    assert drawn.tolist() == pytest.approx(expected, abs=1e-15)
+    assert (drawn[direction == 0] == 0).all() and (np.sign(drawn) == direction).all()
+    # An hours item at surprise 1 and confidence 5 keeps 0.6 of version 1's strength, and the mean factor is below it.
+    assert score_store.strength(1, 5, "hours", 1) == pytest.approx(0.6)
+    assert 0.3 < np.mean(np.abs(drawn[direction != 0])) / 0.6 < 0.6
 
 
 def test_evaluation_minutes_are_30_to_360_of_each_session():
@@ -126,14 +187,21 @@ def test_the_same_seed_gives_the_same_scenarios():
     assert v2_power.simulate(settings) == v2_power.simulate(settings)
 
 
-def test_main_prints_counts_a_verdict_a_timing_and_synthetic_rows(capsys):
+def test_main_prints_counts_verdicts_a_timing_and_synthetic_rows(capsys):
     assert v2_power.main(["--runs", "6", "--sessions", "3", "4", "--c", "0.5"]) == 0
     lines = capsys.readouterr().out.splitlines()
     assert lines[:4] == ["synthetic power", "runs: 6", "symbols: 8", "scenarios: 2"]
-    assert lines[4].split(": ")[0] == "null rejection within the level" and lines[4].split(": ")[1] in ("pass", "fail")
-    assert lines[5].startswith("run time: ") and lines[5].endswith(" s")
-    assert lines[6].split()[:4] == ["sessions", "rows", "per", "symbol"]
-    assert [line.split()[:3] for line in lines[7:]] == [["3", "24", "0.50"], ["4", "36", "0.50"]]
+    assert [line.split(": ")[0] for line in lines[4:7]] == [
+        "null rejection within the level", "incremental null rejection within the level",
+        "confounded sequence within the level"]
+    assert all(line.split(": ")[1] in ("pass", "fail") for line in lines[4:7])
+    assert lines[7].startswith("run time: ") and lines[7].endswith(" s")
+    assert lines[8].split()[:4] == ["sessions", "rows", "per", "symbol"] and "h2 null rejection" in lines[8]
+    assert [line.split()[:3] for line in lines[9:11]] == [["3", "24", "0.50"], ["4", "36", "0.50"]]
+    assert lines[11:13] == ["synthetic confounds", "confounds: 2"] and lines[13].split()[:4] == [
+        "sessions", "c", "b", "rho"]
+    assert [line.split()[:4] for line in lines[14:]] == [["3", "0.50", "0.05", "0.50"], ["3", "0.50", "0.10", "0.70"],
+                                                         ["4", "0.50", "0.05", "0.50"], ["4", "0.50", "0.10", "0.70"]]
     assert "hidden" not in "\n".join(lines)
 
 

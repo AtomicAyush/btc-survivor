@@ -143,7 +143,7 @@ class MarketLayer:
         self._fresh(restarted=False)
 
     def _fresh(self, restarted: bool) -> None:
-        """The state a restart rebuilds instead of restoring, the candles, price health, the heartbeat clock and the
+        """The state a restart rebuilds instead of restoring, the candles, price health, the heartbeat lines and the
         Roll accumulators, with every symbol marked restarted after a restart in session."""
         feed = self.cfg.stock_feed
         self.candles = StockCandles(self.symbols, self.rules)
@@ -151,7 +151,7 @@ class MarketLayer:
         self.rolls = {s: RollAccumulator() for s in self.symbols}
         self.restarted = {s: restarted for s in self.symbols}
         self._beats: list[HeartbeatLine] = []
-        self._beat_ms: int | None = None
+        self._beat: HeartbeatLine | None = None  # the newest line before the minute being judged, in force at its start
         self._channels: tuple[str, ...] = ()
 
     # Lines between boundaries
@@ -175,10 +175,10 @@ class MarketLayer:
 
     def on_heartbeat(self, line: HeartbeatLine) -> None:
         """Keep a news heartbeat line for the news health of the minute it was received in. A line more than a minute
-        older than this one can only be the newest before a later minute, so just its stamp and channels are kept."""
+        older than this one can only be the newest before a later minute, so only the newest such line is kept."""
         while self._beats and self._beats[0].recv_ms < line.recv_ms - MS_PER_MINUTE:
             old = self._beats.pop(0)
-            self._beat_ms, self._channels = old.recv_ms, old.channels_down
+            self._beat, self._channels = old, old.channels_down
         self._beats.append(line)
 
     def advance(self, now_ms: int) -> None:
@@ -303,16 +303,18 @@ class MarketLayer:
 
     def _news_minute(self, boundary_ms: int) -> str | None:
         """News health of the minute ending at boundary_ms from the heartbeat lines received in it and the newest one
-        before it, writing a feed event whenever it changes."""
+        before it, which is judged whole since it was in force at the minute's start, writing a feed event whenever it
+        changes."""
         start = boundary_ms - MS_PER_MINUTE
         before = [line for line in self._beats if line.recv_ms < start]
         inside = [line for line in self._beats if line.recv_ms >= start]
         if before:
-            self._beat_ms, self._channels = before[-1].recv_ms, before[-1].channels_down
-        reason = news_minute(boundary_ms, self._beat_ms, [line.heartbeat(self.launch_hashes) for line in inside],
+            self._beat, self._channels = before[-1], before[-1].channels_down
+        previous = None if self._beat is None else self._beat.heartbeat(self.launch_hashes)
+        reason = news_minute(boundary_ms, previous, [line.heartbeat(self.launch_hashes) for line in inside],
                              self.heartbeat_max_age_ms)
         if inside:
-            self._beat_ms, self._channels = inside[-1].recv_ms, inside[-1].channels_down
+            self._beat, self._channels = inside[-1], inside[-1].channels_down
         self._beats = []
         if (reason is None) != self.news_ok:
             self.news_ok = reason is None

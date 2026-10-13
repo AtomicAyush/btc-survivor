@@ -1,5 +1,5 @@
 """The evaluate command of PLAN_V2 section 11, the success criteria of section 11.6 and the outcomes fixed by arithmetic
-of section 12, read from both stock run databases, news.db, the key ledger and the tape check records, all read only.
+of section 12, read from both stock run databases, news.db, the key ledger and the coverage records, all read only.
 
 Settings come from the runs' meta at launch, the [evaluation] section from S2's evaluation_json and every cost, timer
 and margin from config_toml, so a config file edited later changes nothing. A run minute is a session minute in which
@@ -9,11 +9,22 @@ from launch, and the window runs from the first minute of the session after the 
 counts only when its label matured by the end, the cutoff or before it the newest run minute, so a later run never
 changes a result, and before the cutoff every number is descriptive.
 
+The confirmatory claim is a fixed sequence at one familywise level. H1 is predictor news against the label. Only when
+H1 passes is H2 run, the partial test of stats.partial_skill on the same rows with news and label residualised on the
+10 price z scores S2 stored in price_z, within each symbol, judged with the same clustered error and z value. Criterion
+1.1 is coverage stability. The gate session's median volume ratio is the baseline, from the earliest full session with
+a coverage record before launch, 12 October 2026, whether or not that session was clean, and the first clean full
+session at or after each due session must keep its median ratio within a factor of 2 of it. That session may come
+after the cutoff, so criterion 1.1 alone can change on a later run until its record exists. The trading gate has no
+margin, so the share of learner opens a learner made on its own, and the round trips per session forced by the timer
+and made on the learner's own, are reported, never judged.
+
 By default it prints each criterion's verdict, each outcome matched or not, and counts, never a price, a forecast or a
 statistic. --detail adds the problems behind each verdict, every predictor's pooled skill over all rows and event
-rows, the squared error and paired comparisons, calibration, the twin tests with each learner's share of long opens,
-deaths, the outcomes, data quality, spend and the code commits, for the owner's own terminal. Only the confirmatory
-test carries a pass label, and every other result is descriptive.
+rows, the incremental test, the squared error and paired comparisons, calibration, the twin tests with each learner's
+share of long opens, the own trades, the round trips per session, the largest notional over equity, the learners'
+mean equity with and without the dead, deaths, the outcomes, data quality, spend and the code commits, for the
+owner's own terminal. Only H1 and H2 carry a pass label, and every other result is descriptive.
 
     btc_survivor_v2 evaluate configs/v2/s1_prices.toml configs/v2/s2_news.toml [--detail] [--checks DIR] [--ledger FILE]
 """
@@ -48,15 +59,14 @@ from btc_survivor.v2.news.db import NewsDbError
 from btc_survivor.v2.news.health import FINBERT_SCORER
 from btc_survivor.v2.news.ledger import SPEND_ALERT
 from btc_survivor.v2.sessions import FULL_SESSION_MINUTES, CalendarError, Session
-from btc_survivor.v2.stocks import costs, store
+from btc_survivor.v2.stocks import costs, store, tapecheck
 from btc_survivor.v2.stocks.candles import StockCandle
 from btc_survivor.v2.stocks.health import HASH_MISMATCH
 from btc_survivor.v2.stocks.broker import SYMBOL_STALE
 from btc_survivor.v2.stocks.labels import recompute_labels
 from btc_survivor.v2.stocks.news_inputs import HAIKU_SCORER, SCORED_STATUSES, SONNET_SCORER
 from btc_survivor.v2.stocks.population import TWIN as TWIN_ORIGIN
-from btc_survivor.v2.stocks.records import LOCAL_ONLY, MATURED, NEWS_META
-from btc_survivor.v2.stocks.tapecheck import CONSOLIDATED, INCONCLUSIVE, RECORD_NAME
+from btc_survivor.v2.stocks.records import LOCAL_ONLY, MATURED, NEWS_META, PRICE_Z_COLUMNS
 
 
 class EvaluateError(RuntimeError):
@@ -85,10 +95,7 @@ ROUND_TRIPS_PER_SESSION = 2
 MOVE_BPS = 50.0  # a 30 minute move behind the founder equity bound
 FIRST_TRADE_SESSION = 3
 FIRST_TRADE_MINUTES = (60, 270)  # 10:30 to 13:30 ET, plus up to 29 minutes waiting for a phase minute
-RHYTHM = (1.5, 2.5)  # about two round trips per full session
 BURN_TOLERANCE = 0.25
-FORCED_SHARE = 0.95
-SPREAD_SD = 0.10
 
 Row = tuple[str, str, float, float]  # ts, symbol, prediction, label
 Pair = tuple[str, str, float, float, float]  # ts, symbol, first prediction, second prediction, label
@@ -169,6 +176,8 @@ class Evaluation:
     fallback_share: float | None
     spend_alert_days: int
     tables: dict[str, list[dict]]
+    incremental: stats.PooledSkill | None = None  # H2, None when H1 did not pass and H2 was not run
+    without_scores: int = 0  # H1 rows H2 left out because S2 stored no complete price z scores for them
 
     @property
     def valid(self) -> bool:
@@ -280,6 +289,25 @@ def skill(rows: Sequence[Row], s: EvaluationConfig) -> stats.PooledSkill:
     return stats.pooled_skill(*_columns(rows, 4), s.newey_west_lags, s.one_sided_z, s.upper_bound_z)
 
 
+PRICE_Z = f"SELECT ts, symbol, {', '.join(PRICE_Z_COLUMNS)} FROM price_z WHERE ts > ? AND ts <= ?"
+
+
+def price_scores(conn: sqlite3.Connection, window: Window) -> dict[tuple[str, str], tuple[float, ...]]:
+    """The 10 price z scores a run stored for each evaluation minute and symbol in the window, leaving out a row
+    whose vector was invalid and stored as nulls."""
+    return {(ts, symbol): tuple(z) for ts, symbol, *z in conn.execute(PRICE_Z, (window.start, window.end))
+            if None not in z}
+
+
+def incremental(rows: Sequence[Row], scores: dict[tuple[str, str], tuple[float, ...]],
+                s: EvaluationConfig) -> tuple[stats.PooledSkill, int]:
+    """H2 on the rows of H1 that have price z scores, with the lags and z values recorded at launch, and how many
+    rows of H1 had none."""
+    chosen = [(ts, symbol, p, y, scores[ts, symbol]) for ts, symbol, p, y in rows if (ts, symbol) in scores]
+    result = stats.partial_skill(*_columns(chosen, 5), s.newey_west_lags, s.one_sided_z, s.upper_bound_z)
+    return result, len(rows) - len(chosen)
+
+
 def paired(first: Sequence[Row], second: Sequence[Row]) -> list[Pair]:
     """The rows both forecasts have, with both predictions."""
     other = {(ts, symbol): prediction for ts, symbol, prediction, _ in second}
@@ -350,17 +378,17 @@ def comparison_row(c: Comparison) -> dict:
 # Criterion 1
 
 
-def tape_records(folder: Path) -> list[tuple[date, bool, str]]:
-    """Every tape check record of the checks folder, its session date, clean flag and final verdict, by date."""
-    out = []
-    for path in sorted(Path(folder).glob("tape_*.json")):
-        if RECORD_NAME.fullmatch(path.name):
-            try:
-                record = json.loads(path.read_text(encoding="utf-8"))
-                out.append((date.fromisoformat(record["session"]), record["clean"] is True, record["verdict"]))
-            except (ValueError, KeyError, TypeError) as exc:
-                raise EvaluateError(f"{path.name} is not a tape check record") from exc
-    return sorted(out)
+COVERAGE = "coverage stability"
+
+
+def coverage_records(folder: Path) -> list[tuple[date, bool, float]]:
+    """Every coverage record tape-check wrote in the checks folder, its session date, whether it was a clean session
+    that was no early close, and its median ratio, by date. A malformed record stops evaluate."""
+    try:
+        records = tapecheck.read_records(folder)
+    except tapecheck.TapeCheckError as exc:
+        raise EvaluateError(str(exc)) from exc
+    return sorted((r.session, r.clean and not r.early_close, r.median_ratio) for r in records)
 
 
 def full_session(day: date) -> bool:
@@ -369,26 +397,33 @@ def full_session(day: date) -> bool:
     return session is not None and not session.early_close
 
 
-def check_tape(records: Sequence[tuple[date, bool, str]], window: Window, due: Sequence[int]) -> Check:
-    """A consolidated check before launch, and for each due session that has closed a decided verdict on the first
-    clean full session at or after it, consolidated, past at most one inconclusive one. Before the cutoff a due
-    session without a decided record yet is not yet due, because its record waits for the official figures and a
-    clean session, and only at the cutoff does a missing record fail."""
+def check_coverage(records: Sequence[tuple[date, bool, float]], window: Window, due: Sequence[int]) -> Check:
+    """Criterion 1.1. The baseline is the median ratio of the gate session, the earliest full session with a coverage
+    record before launch, clean or not, as the owner set on 12 October 2026, and for each due session that has
+    closed, the first clean full session at or after it keeps its median ratio within a factor of 2 of the baseline,
+    edges included. Before the cutoff a due session without a record yet is not yet due, because its record waits for
+    the official figures and a clean session, and only at the cutoff does a missing record fail."""
     launch = parse_iso(window.launch)
     first = sessions.next_session(launch).day
-    problems = [] if any(day < first and verdict == CONSOLIDATED for day, _, verdict in records) else \
-        ["no consolidated tape check before launch"]
-    full = [(day, verdict) for day, clean, verdict in records if clean and full_session(day)]
+    full = [(day, ratio) for day, clean, ratio in records if clean and full_session(day)]
+    baseline = next((ratio for day, _, ratio in records if day < first and full_session(day)), None)
+    if baseline is None:
+        return Check(COVERAGE, False, ("no full session coverage record before launch, so no gate session",))
+    if not baseline > 0:
+        return Check(COVERAGE, False, ("the gate session's median ratio is not above zero",))
+    problems = []
     for n in due:
         session = nth_session(launch, n)
         if session.close_ms > parse_iso(window.end):
             continue
-        decided = next((verdict for day, verdict in full if day >= session.day and verdict != INCONCLUSIVE), None)
-        if decided is None and not window.final:
-            continue
-        if decided != CONSOLIDATED:
-            problems.append(f"the tape check at or after session {n} is {decided or 'missing'}")
-    return Check("tape checks", not problems, tuple(problems))
+        found = next(((day, ratio) for day, ratio in full if day >= session.day), None)
+        if found is None:
+            if window.final:
+                problems.append(f"the coverage record at or after session {n} is missing")
+        elif not tapecheck.within_factor(baseline, found[1]):
+            problems.append(f"the median ratio of {found[0]}, the first clean session at or after session {n}, is "
+                            f"{found[1] / baseline:.2f} times the gate session's")
+    return Check(COVERAGE, not problems, tuple(problems))
 
 
 def check_lookahead(runs: Sequence[Run], window: Window) -> Check:
@@ -696,10 +731,11 @@ def outcome_money(run: Run, books: list[dict]) -> list[Outcome]:
                     f"{expected:.2f} within {bound:.2f}", f"{actual:.2f}")]
 
 
-def outcome_timeline(run: Run, usable: dict[str, list[str]], books: list[dict], window: Window) -> list[Outcome]:
-    """First trades in session 3 between about 10:30 and 13:30 ET, then about two round trips per full session."""
+def outcome_timeline(run: Run, books: list[dict], window: Window) -> list[Outcome]:
+    """First trades in session 3 between about 10:30 and 13:30 ET, forced by the timer or made on the learner's own
+    once warmup ends."""
     launch = parse_iso(window.launch)
-    third, steady = nth_session(launch, FIRST_TRADE_SESSION), nth_session(launch, FIRST_TRADE_SESSION + 1)
+    third = nth_session(launch, FIRST_TRADE_SESSION)
     out = []
     if window.end < iso(third.close_ms) or not books:
         out.append(Outcome(run.name, "first trades", None, "session 3 from 10:30 to 13:30 ET", "not reached"))
@@ -717,21 +753,33 @@ def outcome_timeline(run: Run, usable: dict[str, list[str]], books: list[dict], 
         out.append(Outcome(run.name, "first trades", ok, f"session {FIRST_TRADE_SESSION} minutes {lo} to {hi}",
                            f"sessions {sorted({n for n, _ in places if n is not None})} minutes "
                            f"{min(minutes, default='')} to {max(minutes, default='')}"))
-    if window.end < iso(steady.close_ms) or not books:
-        out.append(Outcome(run.name, "rhythm", None, f"{RHYTHM[0]} to {RHYTHM[1]} per session", "not reached"))
-    else:
-        rates = []
-        after = iso(steady.open_ms)
-        for b in books:
-            minutes = _between(usable[b["home"]], after, window.end)
-            trips = run.conn.execute("SELECT count(*) FROM trades WHERE bot_id = ? AND closed_at > ? "
-                                     "AND closed_at <= ?", (b["bot_id"], after, window.end)).fetchone()[0]
-            if minutes:
-                rates.append(trips / (minutes / FULL_SESSION_MINUTES))
-        rate = statistics.fmean(rates) if rates else 0.0
-        out.append(Outcome(run.name, "rhythm", RHYTHM[0] <= rate <= RHYTHM[1],
-                           f"{RHYTHM[0]} to {RHYTHM[1]} per session", f"{rate:.2f} per session"))
     return out
+
+
+TRIPS = "SELECT forced, count(*) FROM trades WHERE bot_id = ? AND closed_at > ? AND closed_at <= ? GROUP BY forced"
+
+
+def round_trips(run: Run, usable: dict[str, list[str]], books: list[dict], window: Window) -> dict:
+    """The learners' mean closed round trips per full session of usable home minutes from session 4, all of them,
+    those the timer forced and those the learner opened on its own, descriptive since the zero margin lets own trades
+    come beside the timer and restart it, so section 12's two forced trips a session is no longer a fixed outcome."""
+    steady = nth_session(parse_iso(window.launch), FIRST_TRADE_SESSION + 1)
+    row = {"run": run.name, "from session": FIRST_TRADE_SESSION + 1, "learners": 0, "all": "", "forced": "",
+           "own": "", "timer alone": f"about {ROUND_TRIPS_PER_SESSION}"}
+    if window.end < iso(steady.close_ms):
+        return row
+    after, rates = iso(steady.open_ms), []
+    for b in books:
+        minutes = _between(usable[b["home"]], after, window.end)
+        if minutes:
+            counts = dict(run.conn.execute(TRIPS, (b["bot_id"], after, window.end)).fetchall())
+            sessions_seen = minutes / FULL_SESSION_MINUTES
+            rates.append((counts.get(1, 0) / sessions_seen, sum(v for k, v in counts.items() if not k) / sessions_seen))
+    if rates:
+        forced, own = (statistics.fmean(r[i] for r in rates) for i in (0, 1))
+        row.update({"learners": len(rates), "all": _f(forced + own, ".2f"), "forced": _f(forced, ".2f"),
+                    "own": _f(own, ".2f")})
+    return row
 
 
 STALE_CLOSE = ("SELECT 1 FROM fills WHERE bot_id = ? AND symbol = ? AND leg = 'close' AND status = 'rejected' "
@@ -760,20 +808,78 @@ def outcome_closes(run: Run, deaths: int, window: Window) -> list[Outcome]:
             Outcome(run.name, "flat at every close", not carried, "none carried but after a stale close", actual)]
 
 
-def outcome_gate(run: Run, window: Window) -> Outcome:
-    """At least 95 percent of learner opens forced while the prediction spread stays at or under 0.10 label standard
-    deviations."""
+def label_sds(run: Run, window: Window) -> dict[str, float]:
+    """Each symbol's standard deviation of its matured labels in the window, the scale of the prediction spread."""
+    labels: dict[str, list[float]] = defaultdict(list)
+    for symbol, label in run.conn.execute("SELECT symbol, label_bps FROM stock_labels WHERE status = ? AND ts > ? "
+                                          "AND ts <= ?", (MATURED, window.start, window.end)):
+        labels[symbol].append(label)
+    return {symbol: float(np.std(values)) for symbol, values in labels.items() if len(values) >= 2}
+
+
+def own_trades(run: Run, window: Window) -> dict:
+    """The margin recorded at launch, the learner decisions and opens in the window, how many opens the exploration
+    timer forced and how many the learner made on its own once its prediction cleared the required edge, the own
+    trade share, the share of decisions that cleared it and the spread of the predictions in label standard
+    deviations, all descriptive, since with a margin of 0 a learner trades on its own whenever its prediction beats
+    the cost."""
     rows = run.conn.execute(
-        "SELECT d.action, d.forced, d.prediction_bps, d.margin_bps FROM decisions d JOIN bots b ON b.bot_id = d.bot_id "
-        "WHERE b.origin != ? AND d.ts > ? AND d.ts <= ?", (TWIN_ORIGIN, window.start, window.end)).fetchall()
-    opens = [forced for action, forced, _, _ in rows if action in OPENS]
-    spreads = [p * run.config.trading.margin_sigma / m for _, _, p, m in rows if m and m > 0]
-    expected = f"forced share at least {FORCED_SHARE} with spread at most {SPREAD_SD}"
-    if not opens or not spreads:
-        return Outcome(run.name, "gate", None, expected, "no learner opens yet")
-    share, spread = sum(opens) / len(opens), float(np.std(spreads))
-    return Outcome(run.name, "gate", share >= FORCED_SHARE and spread <= SPREAD_SD, expected,
-                   f"forced share {share:.4f} with spread {spread:.4f}")
+        "SELECT d.action, d.forced, d.gate_passed, d.prediction_bps, d.symbol FROM decisions d JOIN bots b "
+        "ON b.bot_id = d.bot_id WHERE b.origin != ? AND d.ts > ? AND d.ts <= ?",
+        (TWIN_ORIGIN, window.start, window.end)).fetchall()
+    forced = [bool(f) for action, f, *_ in rows if action in OPENS]
+    own = forced.count(False)
+    sds = label_sds(run, window)
+    spreads = [p / sds[symbol] for *_, p, symbol in rows if sds.get(symbol)]
+    return {"run": run.name, "margin sigma": f"{run.config.trading.margin_sigma:g}", "decisions": len(rows),
+            "opens": len(forced), "forced opens": len(forced) - own,
+            "own opens": own, "own share": _f(own / len(forced) if forced else None),
+            "gate passed share": _f(sum(bool(g) for _, _, g, _, _ in rows) / len(rows) if rows else None),
+            "prediction spread sd": _f(float(np.std(spreads)) if spreads else None)}
+
+
+# Every open fill from launch to the end with the bot's latest equity snapshot at or before its decision.
+OPEN_NOTIONALS = ("SELECT f.bot_id, f.decided_at, f.notional, b.origin, (SELECT e.equity FROM equity_snapshots e "
+                  "WHERE e.bot_id = f.bot_id AND e.ts <= f.decided_at ORDER BY e.ts DESC LIMIT 1) "
+                  "FROM fills f JOIN bots b ON b.bot_id = f.bot_id WHERE f.leg = 'open' AND f.status = 'filled' "
+                  "AND f.notional IS NOT NULL AND f.decided_at > ? AND f.decided_at <= ? ORDER BY f.decided_at")
+
+
+def notional_over_equity(run: Run, window: Window) -> dict:
+    """The largest notional over equity of any open fill from launch to the end, learner or twin, with equity the
+    bot's latest snapshot at or before the decision, or start equity before its first, about 0.05 by design."""
+    start = run.config.trading.start_equity
+    largest: tuple[float, int, str, str] | None = None
+    fills = 0
+    for bot_id, decided, notional, origin, equity in run.conn.execute(OPEN_NOTIONALS, (window.launch, window.end)):
+        fills += 1
+        equity = start if equity is None else equity
+        ratio = notional / equity if equity > 0 else math.inf
+        if largest is None or ratio > largest[0]:
+            largest = (ratio, bot_id, TWIN if origin == TWIN_ORIGIN else LEARNER, decided)
+    if largest is None:
+        return {"run": run.name, "open fills": 0, "largest": "", "bot_id": "", "kind": "", "decided_at": ""}
+    ratio, bot_id, kind, decided = largest
+    return {"run": run.name, "open fills": fills, "largest": _f(ratio), "bot_id": bot_id, "kind": kind,
+            "decided_at": decided}
+
+
+def learner_equity(run: Run, window: Window) -> dict:
+    """The learners born by the end, those still alive at their latest equity snapshot by the end, or start equity
+    before their first, their mean, and the mean over every learner with each dead one at its final equity."""
+    start = run.config.trading.start_equity
+    dead = dict(run.conn.execute("SELECT d.bot_id, d.final_equity FROM deaths d JOIN bots b ON b.bot_id = d.bot_id "
+                                 "WHERE b.origin != ? AND d.died_at <= ?", (TWIN_ORIGIN, window.end)).fetchall())
+    alive = []
+    for (bot_id,) in run.conn.execute("SELECT bot_id FROM bots WHERE origin != ? AND born_at <= ? ORDER BY bot_id",
+                                      (TWIN_ORIGIN, window.end)).fetchall():
+        if bot_id not in dead:
+            snap = run.conn.execute(SNAPSHOT, (bot_id, window.end)).fetchone()
+            alive.append(start if snap is None else snap[1])
+    every = [*alive, *dead.values()]
+    return {"run": run.name, "learners": len(every), "survivors": len(alive),
+            "survivors mean equity": _f(statistics.fmean(alive) if alive else None, ".2f"),
+            "all learners mean equity": _f(statistics.fmean(every) if every else None, ".2f")}
 
 
 def outcome_pairing(s1: Run, s2: Run, window: Window) -> Outcome:
@@ -846,6 +952,22 @@ def skill_row(run: str, predictor: str, subset: str, result: stats.PooledSkill, 
             "left out": " ".join(result.left_out), "corr": _f(result.corr), "se": _f(result.se),
             "t": _f(result.t, ".2f"), "detectable": _f(result.detectable), "upper bound": _f(result.upper_bound),
             **extra}
+
+
+def verdict_word(result: stats.PooledSkill | None, window: Window) -> str:
+    """Pass or fail at the cutoff, descriptive before it, and not run for an H2 that H1 never reached."""
+    if result is None:
+        return "not run"
+    return ("pass" if result.passed else "fail") if window.final else "descriptive"
+
+
+def incremental_rows(result: stats.PooledSkill | None, without: int, window: Window) -> list[dict]:
+    """H2 as one detail row, the partial correlation of news and label beyond the 10 price z scores with its error,
+    or a row saying it was not run."""
+    if result is None:
+        return [{"run": RUNS[1], "predictor": "news beyond price scores", "verdict": verdict_word(None, window)}]
+    return [skill_row(RUNS[1], "news beyond price scores", "all", result, **{
+        "rows without price scores": str(without), "verdict": verdict_word(result, window)})]
 
 
 def dm_row(name: str, result: stats.PooledDM) -> dict:
@@ -924,7 +1046,7 @@ def skill_tables(runs: Sequence[Run], rows: dict[str, dict[str, list[Row]]],
         for predictor, chosen in sorted(rows[run.name].items()):
             result, extra = skill(chosen, s), {}
             if run is s2 and predictor == s.confirmatory_predictor:
-                extra["verdict"] = ("pass" if result.passed else "fail") if window.final else "descriptive"
+                extra["verdict"] = verdict_word(result, window)
             tables["skill"].append(skill_row(run.name, predictor, "all", result, **extra))
             if run is s2 and predictor in EVENT_LINES:
                 chosen_events = events(chosen, stamps.get(EVENT_LINES[predictor], {}))
@@ -949,17 +1071,27 @@ def skill_tables(runs: Sequence[Run], rows: dict[str, dict[str, list[Row]]],
     return tables
 
 
-def outcomes(s1: Run, s2: Run, window: Window) -> list[Outcome]:
-    """Every outcome of section 12 in each run, and the pairing of the two runs."""
+def outcomes(s1: Run, s2: Run, window: Window) -> tuple[list[Outcome], list[dict]]:
+    """Every outcome of section 12 in each run and the pairing of the two runs, with each run's round trips per
+    session, which section 12 reports beside them without a verdict."""
     news_ok = {ts for (ts,) in s2.conn.execute("SELECT ts FROM news_minutes WHERE healthy = 1 AND ts > ? AND ts <= ?",
                                                 (window.launch, window.end))}
-    out = []
+    out, trips = [], []
     for run in (s1, s2):
         usable = usable_minutes(run.conn, news_ok, window)
         books = learner_books(run, usable, window)
-        out += [*outcome_timeline(run, usable, books, window), *outcome_money(run, books),
-                *outcome_closes(run, len(death_rows(run, window)), window), outcome_gate(run, window)]
-    return [*out, outcome_pairing(s1, s2, window)]
+        out += [*outcome_timeline(run, books, window), *outcome_money(run, books),
+                *outcome_closes(run, len(death_rows(run, window)), window)]
+        trips.append(round_trips(run, usable, books, window))
+    return [*out, outcome_pairing(s1, s2, window)], trips
+
+
+def trading_tables(runs: Sequence[Run], window: Window) -> dict[str, list[dict]]:
+    """The descriptive trading tables of each run, its own trades, its largest notional over equity and its
+    learners' mean equity with and without the dead."""
+    return {"own trades": [own_trades(run, window) for run in runs],
+            "notional over equity": [notional_over_equity(run, window) for run in runs],
+            "learner equity": [learner_equity(run, window) for run in runs]}
 
 
 def evaluate(s1: Run, s2: Run, news: sqlite3.Connection, checks_dir: Path, ledger: Path) -> Evaluation:
@@ -972,30 +1104,35 @@ def evaluate(s1: Run, s2: Run, news: sqlite3.Connection, checks_dir: Path, ledge
     spend = ledger_spend(ledger, window.end)
     labels, compared = check_labels(runs, window, horizon)
     commits, listed = check_commits(runs, window)
-    checks = (check_tape(tape_records(checks_dir), window, settings.tape_check_sessions),
+    checks = (check_coverage(coverage_records(checks_dir), window, settings.tape_check_sessions),
               check_lookahead(runs, window), labels, check_identical(s1, s2, window, horizon),
               check_invariants(runs, window), check_one_config(s1, s2, news, window), check_spend(spend, window),
               check_local_only(runs, window), commits)
     rows = {run.name: scored_rows(run.conn, window, horizon) for run in runs}
+    news_rows = rows[s2.name].get(settings.confirmatory_predictor, [])
+    confirmatory = skill(news_rows, settings)
+    h2, without = incremental(news_rows, price_scores(s2.conn, window), settings) if confirmatory.passed else (None, 0)
     stamps = receipts(s2.conn, window)
     tables = skill_tables(runs, rows, stamps, window, settings)
+    tables["incremental test"] = incremental_rows(h2, without, window)
     comparisons = compare(rows[s2.name], stamps, settings)
     tables["paired comparisons"] = [comparison_row(c) for c in comparisons]
     tables["planned"] = planned_rows(s2.config, settings.final_healthy_session_minutes)
     tables["twins"], tables["long opens"], pairs = twin_tables(runs, window)
+    tables.update(trading_tables(runs, window))
     tables["data quality"], share, alert_days = data_quality(s2, news, window)
     tables["spend"] = [{"month": month, "model": model, "dollars": _f(usd)}
                        for month, models in sorted((spend or {}).items()) for model, usd in sorted(models.items())]
     tables["commits"] = [{"commit": commit} for commit in listed]
-    return Evaluation(window, settings, all(run.file_matches for run in runs), checks,
-                      skill(rows[s2.name].get(settings.confirmatory_predictor, []), settings), compared,
+    found, tables["round trips"] = outcomes(s1, s2, window)
+    return Evaluation(window, settings, all(run.file_matches for run in runs), checks, confirmatory, compared,
                       sum(len(v) for r in rows.values() for v in r.values()), tuple(comparisons),
-                      tuple(outcomes(s1, s2, window)), tuple(row for run in runs for row in death_rows(run, window)),
-                      pairs, share, alert_days, dict(tables))
+                      tuple(found), tuple(row for run in runs for row in death_rows(run, window)),
+                      pairs, share, alert_days, dict(tables), h2, without)
 
 
 def evaluate_runs(s1_path: Path, s2_path: Path, checks: Path | None = None, ledger: Path | None = None) -> Evaluation:
-    """Open both runs and news.db read only, evaluate them and close every connection. The tape check records default
+    """Open both runs and news.db read only, evaluate them and close every connection. The coverage records default
     to the checks folder beside the run folders and the key ledger to its place under ~/.config/btc_survivor."""
     s1_config, s2_config = load_run_pair(s1_path, s2_path)
     conns: list[sqlite3.Connection] = []
@@ -1023,6 +1160,19 @@ def _verdict(matched: list[bool | None]) -> bool | output.Word:
     return output.Word("not yet") if any(m is None for m in matched) else True
 
 
+def _test_line(result: stats.PooledSkill | None, window: Window) -> bool | output.Word:
+    """A test's summary value, its verdict at the cutoff and a word before it or when it was not run."""
+    word = verdict_word(result, window)
+    return result.passed if word in ("pass", "fail") and result is not None else output.Word(word)
+
+
+def _own_lines(ev: Evaluation) -> list[tuple[str, Any]]:
+    """Each run's learner opens and own opens, counts only, since the own trade share is a descriptive figure."""
+    return [line for row in ev.tables.get("own trades", ()) for line in (
+        (f"{row['run']} learner opens", output.Count(row["opens"])),
+        (f"{row['run']} own opens", output.Count(row["own opens"])))]
+
+
 def report(ev: Evaluation) -> tuple[output.Report, list[output.Report]]:
     """The default summary of verdicts and counts, and the detail sections --detail adds."""
     w = ev.window
@@ -1036,9 +1186,12 @@ def report(ev: Evaluation) -> tuple[output.Report, list[output.Report]]:
               ("fallback caveat", output.Word("above a quarter" if caveat else "none")),
               ("spend alert days", output.Count(ev.spend_alert_days)),
               ("confirmatory rows", output.Count(ev.confirmatory.rows)),
-              ("confirmatory test", ev.confirmatory.passed if w.final else output.Word("descriptive")),
+              ("confirmatory test", _test_line(ev.confirmatory, w)),
+              ("incremental rows", output.Count(0 if ev.incremental is None else ev.incremental.rows)),
+              ("rows without price scores", output.Count(ev.without_scores)),
+              ("incremental test", _test_line(ev.incremental, w)),
               ("scored rows", output.Count(ev.scored_rows)), ("paired comparisons", output.Count(len(ev.comparisons))),
-              ("twin pairs", output.Count(ev.twin_pairs)), ("deaths", output.Count(len(ev.deaths)))]
+              ("twin pairs", output.Count(ev.twin_pairs)), *_own_lines(ev), ("deaths", output.Count(len(ev.deaths)))]
     names = list(dict.fromkeys(o.name for o in ev.outcomes))
     lines += [(name, _verdict([o.matched for o in ev.outcomes if o.name == name])) for name in names]
     criteria = [{"check": c.name, "verdict": "pass" if c.passed else "fail", "problem": problem}
@@ -1048,7 +1201,8 @@ def report(ev: Evaluation) -> tuple[output.Report, list[output.Report]]:
                for o in ev.outcomes]
     detail = [output.Report("criteria", (), tuple(criteria)), output.Report("outcomes", (), tuple(matched)),
               *(output.Report(title, (), tuple(ev.tables.get(title, ()))) for title in (
-                  "planned", "skill", "squared error", "paired comparisons", "calibration", "twins", "long opens")),
+                  "planned", "skill", "incremental test", "squared error", "paired comparisons", "calibration",
+                  "twins", "long opens", "own trades", "round trips", "notional over equity", "learner equity")),
               output.Report("deaths", (), ev.deaths),
               *(output.Report(title, (), tuple(ev.tables.get(title, ()))) for title in (
                   "data quality", "spend", "commits"))]
@@ -1056,7 +1210,7 @@ def report(ev: Evaluation) -> tuple[output.Report, list[output.Report]]:
 
 
 DESCRIPTION = ("Print the success criteria of PLAN_V2 section 11 and the outcomes of section 12 for the prices run and "
-               "the news run, read from their databases, news.db, the key ledger and the tape check records, all read "
+               "the news run, read from their databases, news.db, the key ledger and the coverage records, all read "
                "only. By default it prints only verdicts and counts.")
 
 
@@ -1065,7 +1219,8 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("s1", metavar="S1", type=Path, help="the prices run config, such as configs/v2/s1_prices.toml")
     parser.add_argument("s2", metavar="S2", type=Path, help="the news run config, such as configs/v2/s2_news.toml")
     parser.add_argument("--checks", type=Path, default=None,
-                        help="the folder of tape check records (default the checks folder beside the run folders)")
+                        help="the folder of coverage records that tape-check writes (default the checks folder "
+                             "beside the run folders)")
     parser.add_argument("--ledger", type=Path, default=None, help=f"the key ledger (default {DEFAULT_LEDGER})")
     output.add_detail_flag(parser)
 

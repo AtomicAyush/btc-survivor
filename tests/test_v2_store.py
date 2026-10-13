@@ -33,7 +33,8 @@ from helpers import ROOT
 CONFIGS = ROOT / "configs" / "v2"
 # The version 1 tables a run database keeps, each with the columns section 9.2 adds at its end.
 GAINED = {"bots": ["home_symbol"], "decisions": ["symbol"], "trades": ["symbol"],
-          "fills": ["symbol", "print_price", "allowance_bps", "notional", "sec_fee", "taf_fee"],
+          "fills": ["symbol", "print_price", "allowance_bps", "notional", "sec_fee", "taf_fee", "print_after_due_ms",
+                    "news_window"],
           "equity_snapshots": [], "deaths": [], "feed_events": ["symbol"], "checkpoints": []}
 NEWS_META = {"config_hash": "a" * 64, "prompt_sha256": "b" * 64, "schema_sha256": "c" * 64,
              "haiku_model": "claude-haiku-5-5", "sonnet_model": "claude-sonnet-5-5"}
@@ -50,6 +51,7 @@ class StockFill(Fill):
     notional: float | None
     sec_fee: float | None
     taf_fee: float | None
+    print_after_due_ms: int | None = None
 
 
 class LabelRow(NamedTuple):
@@ -196,9 +198,9 @@ def test_the_new_tables_are_the_sql_block_of_plan_section_9_2(tmp_path):
     try:
         want = layout(plan)
         have = layout(st.conn)
-        assert len(want) == 10
+        assert len(want) == 11 and "price_z" in want
         assert {name: have[name] for name in want} == want
-        assert list(want) == list(store.TABLES[-10:])
+        assert list(want) == list(store.TABLES[-11:])
     finally:
         st.close()
         plan.close()
@@ -260,8 +262,8 @@ def changed_schema(path, old, new, extra=""):
 
 
 def test_the_check_names_a_missing_or_extra_column_and_an_extra_table(tmp_path):
-    path = changed_schema(tmp_path / "changed.db", "notional REAL, sec_fee REAL, taf_fee REAL);",
-                          "notional REAL, sec_fee REAL, note TEXT);",
+    path = changed_schema(tmp_path / "changed.db", "notional REAL, sec_fee REAL, taf_fee REAL,",
+                          "notional REAL, sec_fee REAL, note TEXT,",
                           "CREATE TABLE lineage (bot_id INTEGER PRIMARY KEY);")
     for opener in (StockStore.open, store.open_reader):
         with pytest.raises(StoreError) as info:
@@ -442,7 +444,7 @@ def test_every_row_builder_writes_its_table(tmp_path, monkeypatch):
     fill = StockFill(bot_id=1, trade_id=7, leg="open", taker_side="sell", qty=2.0, ref_mid=250.1, decided_ms=t,
                      filled_ms=t + 1200, book_avg_price=None, price=249.92, levels=None, slippage_bps=3.0, fee=0.03,
                      latency_ms=1200, status="filled", reason="decision", symbol="TSLA", print_price=250.0,
-                     allowance_bps=3.0, notional=499.84, sec_fee=0.02, taf_fee=0.01)
+                     allowance_bps=3.0, notional=499.84, sec_fee=0.02, taf_fee=0.01, print_after_due_ms=40)
     rejected = StockFill(bot_id=1, trade_id=None, leg="open", taker_side="sell", qty=2.0, ref_mid=250.1,
                          decided_ms=t, filled_ms=None, book_avg_price=None, price=None, levels=None, slippage_bps=None,
                          fee=None, latency_ms=1200, status="rejected", reason="symbol_stale", symbol="TSLA",
@@ -459,6 +461,9 @@ def test_every_row_builder_writes_its_table(tmp_path, monkeypatch):
         (records.SET_LABEL, (12.5, 1, iso(t))),
         (records.INSERT_FILL, records.fill_row(fill)),
         (records.INSERT_FILL, records.fill_row(rejected)),
+        (records.INSERT_FILL_WITH_REPORTS, records.fill_row_with_reports(fill, True)),
+        (records.INSERT_FILL_WITH_REPORTS, records.fill_row_with_reports(rejected, False)),
+        (records.INSERT_FILL_WITH_REPORTS, records.fill_row_with_reports(fill, None)),
         (records.OPEN_TRADE, records.open_trade_row(1, "TSLA", acct)),
         (records.INSERT_FEED_EVENT, records.feed_event_row(*HealthEvent(t, "stale", "AAPL", "no eligible print"))),
         (records.INSERT_FEED_EVENT, records.feed_event_row(t, "disconnected", None, f"close reason {CANARY}")),
@@ -473,6 +478,8 @@ def test_every_row_builder_writes_its_table(tmp_path, monkeypatch):
         records.label_statement(LabelRow(t, "MSFT", 400.0, 401.0, 25.0, "matured")),
         (records.INSERT_FORECAST, records.forecast_row(t, "AAPL", "news", 0.12, 3, t - 5000)),
         (records.INSERT_FORECAST, records.forecast_row(t, "AAPL", "population", 1.5)),
+        (records.INSERT_PRICE_Z, records.price_z_row(sessions.k_at(t), t, "AAPL", [0.5 * i - 2 for i in range(10)])),
+        (records.INSERT_PRICE_Z, records.price_z_row(sessions.k_at(t), t, "MSFT", None)),
         (records.INSERT_NEWS_SEEN, records.news_seen_row(
             score_seq=11, item_seq=5, recv_ms=t - 5000, scored_at="2026-10-19T13:59:54.100Z", source="edgar",
             route="llm", scorer="haiku_v1", status="scored", tickers=["AAPL", "MACRO"], primary_use=True,
@@ -500,14 +507,26 @@ def test_every_row_builder_writes_its_table(tmp_path, monkeypatch):
         "state": "warmup", "margin_bps": 0.25, "lr": 0.0001, "seed": 12345, "origin": "random", "home_symbol": "TSLA"}]
     assert rows(st, "SELECT symbol, ts, gate_passed, forced, label_bps FROM decisions") == [
         {"symbol": "TSLA", "ts": stamp, "gate_passed": 0, "forced": 1, "label_bps": 12.5}]
-    assert rows(st, "SELECT decided_at, filled_at, book_avg_price, levels_consumed, price, status, symbol, "
-                    "print_price, allowance_bps, notional, sec_fee, taf_fee FROM fills ORDER BY id") == [
+    written = rows(st, "SELECT decided_at, filled_at, book_avg_price, levels_consumed, price, status, symbol, "
+                       "print_price, allowance_bps, notional, sec_fee, taf_fee FROM fills ORDER BY id")
+    assert written[:2] == [
         {"decided_at": stamp, "filled_at": iso(t + 1200), "book_avg_price": None, "levels_consumed": None,
          "price": 249.92, "status": "filled", "symbol": "TSLA", "print_price": 250.0, "allowance_bps": 3.0,
          "notional": 499.84, "sec_fee": 0.02, "taf_fee": 0.01},
         {"decided_at": stamp, "filled_at": None, "book_avg_price": None, "levels_consumed": None, "price": None,
          "status": "rejected", "symbol": "TSLA", "print_price": None, "allowance_bps": 3.0, "notional": None,
          "sec_fee": None, "taf_fee": None}]
+    assert written[2:] == [written[0], written[1], written[0]]
+    # The report only columns, null from the plain builder, and news_window null in S1, which reads no news.
+    assert [tuple(r) for r in st.query("SELECT print_after_due_ms, news_window FROM fills ORDER BY id")] == [
+        (None, None), (None, None), (40, 1), (None, 0), (40, None)]
+    assert rows(st, "SELECT * FROM price_z ORDER BY symbol") == [
+        {"k": sessions.k_at(t), "symbol": "AAPL", "ts": stamp,
+         **{f"z{i + 1}": 0.5 * i - 2 for i in range(10)}},
+        {"k": sessions.k_at(t), "symbol": "MSFT", "ts": stamp, **{f"z{i + 1}": None for i in range(10)}}]
+    assert records.PRICE_Z_COLUMNS == tuple(f"z{i}" for i in range(1, 11))
+    with pytest.raises(ValueError, match="10 z scores"):
+        records.price_z_row(sessions.k_at(t), t, "AAPL", [0.0] * 9)
     with pytest.raises(ValueError, match="not 'open'"):
         records.label_statement(LabelRow(t, "AAPL", 100.25, None, None, "open"))
     assert rows(st, "SELECT id, side, qty, symbol, exit_reason FROM trades") == [
@@ -598,6 +617,7 @@ def history(st):
                 (records.INSERT_CHECKPOINT, (ts, 1, "{}", b"")),
                 (records.INSERT_FEED_EVENT, records.feed_event_row(t, "stale", "AAPL")),
                 (records.INSERT_FORECAST, records.forecast_row(t, "AAPL", "population", 1.0)),
+                (records.INSERT_PRICE_Z, records.price_z_row(sessions.k_at(t), t, "AAPL", [1.0] * 10)),
                 (records.INSERT_NEWS_SEEN, records.news_seen_row(
                     score_seq=seq, item_seq=seq, recv_ms=t, scored_at=ts, source="finnhub", route="llm",
                     scorer="haiku_v1", status="scored", tickers="AAPL", primary_use=True, fallback=False)),
@@ -634,7 +654,7 @@ def test_rollback_after_removes_or_reopens_everything_newer_and_keeps_the_rest(t
     assert col("SELECT id, closed_at, pnl_net, exit_reason FROM trades ORDER BY id") == [
         (1, None, None, None), (3, OLD, 1.97, "session_flatten")]
     for table, column in (("fills", "decided_at"), ("equity_snapshots", "ts"), ("benchmark", "ts"),
-                          ("checkpoints", "ts"), ("stock_forecasts", "ts"), ("news_seen", "recv_at"),
+                          ("checkpoints", "ts"), ("stock_forecasts", "ts"), ("price_z", "ts"), ("news_seen", "recv_at"),
                           ("news_minutes", "ts")):
         assert col(f"SELECT {column} FROM {table} ORDER BY {column}") == [(OLD,), (MID,)], table
     assert col("SELECT ts FROM stock_candles ORDER BY ts") == [(OLD_DAY,), (OLD,), (MID,)]

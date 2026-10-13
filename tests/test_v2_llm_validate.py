@@ -1,4 +1,4 @@
-"""Validation of model answers against schema_v1.json, PLAN_V2 section 8.4, plus the probe rows and agreement of
+"""Validation of model answers against schema_v2.json, PLAN_V2 section 8.4, plus the probe rows and agreement of
 section 8.8 that are built from validated answers. Every answer here is hand written and fictional."""
 
 import json
@@ -57,7 +57,7 @@ def test_answer_order_does_not_matter_and_scored_follows_the_batch():
     ("is_new", 1), ("is_new", "true"), ("is_new", None),
     ("direction", 2), ("direction", True), ("direction", 1.0), ("direction", "1"),
     ("surprise", 4), ("surprise", -1), ("surprise", False),
-    ("horizon", "months"), ("horizon", "Days"),
+    ("horizon", "months"), ("horizon", "Days"), ("horizon", "weeks"),
     ("confidence", 0), ("confidence", 6), ("confidence", True), ("confidence", 4.0),
 ])
 def test_an_enum_violation_fails_only_its_item(field, bad):
@@ -186,9 +186,10 @@ IDS20 = tuple(position_id(i) for i in range(20))
 
 
 def key_answer():
-    """An answer giving each probe exactly its key, with fixed surprise, horizon and confidence."""
+    """An answer giving each probe exactly its key, with a fixed confidence."""
     return answer(*[entry(position_id(i), *[impact(ticker=k.ticker, event_type=k.event_type, is_new=k.is_new,
-                                                   direction=k.direction) for k in p.key])
+                                                   direction=k.direction, surprise=k.surprise, horizon=k.horizon)
+                                            for k in p.key])
                     for i, p in enumerate(PROBES)])
 
 
@@ -231,7 +232,13 @@ def test_a_probe_without_a_valid_answer_gets_no_row():
 def test_agreement_with_the_key_is_full_for_the_key_answer():
     rows = probes.probe_rows("2026-10-13T06:00:00.123Z", 41, PROBES, validate(key_answer(), IDS20))
     result = probes.agreement(probes.key_rows(PROBES), rows, probes.KEY_FIELDS)
-    assert result == {"probes": 20, "pairs": 21, "tickers": 1.0, "event_type": 1.0, "is_new": 1.0, "direction": 1.0}
+    assert result == {"probes": 20, "pairs": 21, "tickers": 1.0, "event_type": 1.0, "is_new": 1.0, "direction": 1.0,
+                      "surprise": 1.0, "horizon": 1.0}
+    data = json.loads(key_answer())
+    data["items"][0]["impacts"][0]["horizon"] = "minutes"
+    moved = probes.probe_rows("2026-10-13T06:00:00.123Z", 41, PROBES, validate(json.dumps(data), IDS20))
+    result = probes.agreement(probes.key_rows(PROBES), moved, probes.KEY_FIELDS)
+    assert result["horizon"] == pytest.approx(20 / 21) and result["direction"] == 1.0
 
 
 def test_agreement_counts_changed_fields_and_pairs_only_one_run_named():

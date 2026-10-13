@@ -9,7 +9,8 @@ more than max_calls_per_batch calls. Errors follow the failure table of section 
 or off, every item routed to it gets a final skipped_off or skipped_cap row at once, so FinBERT takes over. The
 monthly cap and a spend limit belong to the key, so they turn both models off until the next UTC month, and nothing
 else one model meets changes the other's state. Haiku also sends the daily probe between its batches, so one call is
-in flight per model.
+in flight per model. A reservation prices the whole max_tokens a request sends, its thinking room included, and a
+thinking block raises an alert only from a model whose thinking is disabled.
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ from btc_survivor.v2.news.llm_client import (
     AUTH, BAD_REQUEST, MALFORMED as MALFORMED_CALL, MAX_TOKENS, MODEL_MISMATCH, OK, RATE_LIMITED, REFUSAL,
     SPEND_LIMIT, CallResult, sdk_version)
 from btc_survivor.v2.news.llm_request import (
-    BYTES, COUNT_TOKENS, Request, RequestTooLarge, ScorerSpec, build_request, check_size, request_item)
+    BYTES, COUNT_TOKENS, DISABLED, Request, RequestTooLarge, ScorerSpec, build_request, check_size, request_item)
 from btc_survivor.v2.news.llm_validate import MISSING, Impact, Validation, validate
 from btc_survivor.v2.news.score_store import (
     EXPIRED, FAILED, IRRELEVANT, MALFORMED, REFUSED, SCORED, SKIPPED_CAP, SKIPPED_OFF, Final, write_call, write_finals)
@@ -136,7 +137,7 @@ class Caller:
             counted, basis = exact, COUNT_TOKENS
             bound = exact + overhead
         spec = request.spec
-        return Prepared(request, counted, basis, self.prices.reserve(spec.model, bound, spec.max_tokens))
+        return Prepared(request, counted, basis, self.prices.reserve(spec.model, bound, spec.request_max_tokens))
 
     async def send(self, prepared: Prepared, ref: str, n_items: int,
                    on_reserved: Callable[[Reservation, int], None] | None = None) -> Sent | None:
@@ -352,9 +353,11 @@ class LlmScorer:
             self._paused_until = max(self._paused_until or 0, now_ms + decision.pause_ms)
         elif decision.state == CAPPED:
             self.cap.until_ms = cap_until(now_ms)
-        if result.thinking_blocks:
-            self._alert(now_ms, f"{self.name} answered with {result.thinking_blocks} thinking blocks")
         usage = result.usage
+        thought = 0 if usage is None else usage.thinking_tokens
+        if self.spec.thinking == DISABLED and (result.thinking_blocks or thought):
+            self._alert(now_ms, f"{self.name} answered with {result.thinking_blocks} thinking blocks and {thought} "
+                                f"thinking tokens while its thinking is disabled")
         if self.role == SONNET and usage is not None and (usage.cache_creation_input_tokens
                                                           or usage.cache_read_input_tokens):
             self._alert(now_ms, f"{self.name} reported cache tokens, whose prices are not in the research")
@@ -397,7 +400,7 @@ class LlmScorer:
             "started_at": iso(started_ms), "n_items": n_items, "model": reservation.model,
             "sdk_version": sdk_version(), "prompt_sha256": self.llm.prompt_sha256,
             "schema_sha256": self.llm.schema_sha256, "request_sha256": prepared.request.sha256 if sent else "",
-            "effort": spec.effort, "thinking": spec.thinking, "max_tokens": spec.max_tokens,
+            "effort": spec.effort, "thinking": spec.thinking, "max_tokens": spec.request_max_tokens,
             "counted_tokens": prepared.counted if sent else None, "count_basis": prepared.basis if sent else None,
             "reserved_usd": reservation.reserved_usd, "price_table": self.caller.prices.table(),
         }

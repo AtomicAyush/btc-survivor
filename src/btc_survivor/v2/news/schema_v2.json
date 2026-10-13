@@ -23,7 +23,7 @@
                 "is_new": {"type": "boolean"},
                 "direction": {"type": "integer", "enum": [-1, 0, 1]},
                 "surprise": {"type": "integer", "enum": [0, 1, 2, 3]},
-                "horizon": {"type": "string", "enum": ["hours", "days", "weeks"]},
+                "horizon": {"type": "string", "enum": ["minutes", "hours", "days"]},
                 "confidence": {"type": "integer", "enum": [1, 2, 3, 4, 5]}
               }
             }

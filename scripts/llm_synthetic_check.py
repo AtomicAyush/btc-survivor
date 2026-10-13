@@ -10,10 +10,14 @@ news process uses, so the script can never pass the monthly cap and the ledger h
 * With no mode it runs the live check. The first Haiku call must return HTTP 200 from claude-haiku-5-5 with no
   thinking block, stop reason end_turn and an answer passing the schema with integer enums, and the second, sent at
   once, must read the cached prompt and write nothing to the cache. The first Sonnet call must do the same from
-  claude-sonnet-5-5 with no cache tokens, and runs only while [llm.sonnet] enabled is true. Every Haiku answer on the
-  40 items must pass the schema and match the answer key on at least 90 percent of the clear cases, every Sonnet
-  answer on the official items must pass the schema, and two probe runs back to back record the launch baseline. A
-  model whose first call fails sends nothing more.
+  claude-sonnet-5-5 with no cache tokens, thinking blocks allowed unless its thinking is disabled, and runs only while
+  [llm.sonnet] enabled is true. The report names Sonnet's thinking setting and the thinking tokens of its first call,
+  the one live call that chooses between thinking disabled and the lowest setting Sonnet accepts. --sonnet-thinking
+  turns Sonnet on at one setting with its thinking room for that run alone, so each setting can be tried while the
+  config keeps Sonnet off, and the config file is never written. Every Haiku answer
+  on the 40 items must pass the schema and match the answer key on at least 90 percent of the clear cases, every
+  Sonnet answer on the official items must pass the schema, and two probe runs back to back record the launch
+  baseline. A model whose first call fails sends nothing more.
 * --cap-drill runs the rehearsal drill of section 16 phase 19. It writes a copy of the news config with every channel
   and Sonnet off, a cap of one cent and a throwaway ledger in its own folder under data/v2/rehearsal, starts a
   separate news process on it, and inserts fictional long form FOMC statements one at a time, each after the last has
@@ -28,7 +32,8 @@ news process uses, so the script can never pass the monthly cap and the ledger h
 
 By default it prints only verdicts, counts and hashes, and --detail adds a row per call or item.
 
-    python scripts/llm_synthetic_check.py configs/v2/news.toml [--dry-run | --cap-drill] [--detail]
+    python scripts/llm_synthetic_check.py configs/v2/news.toml [--dry-run | --cap-drill] [--sonnet-thinking SETTING]
+        [--detail]
 """
 
 from __future__ import annotations
@@ -45,7 +50,7 @@ import sys
 import time
 import tomllib
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -56,7 +61,7 @@ from btc_survivor.v2.local_secrets import REFUSED, SecretsError, load_secrets
 from btc_survivor.v2.news import db, health, llm_client, probes
 from btc_survivor.v2.news.ledger import Ledger, LedgerError, Prices, Reservation, byte_bound, cap_until, make_ref
 from btc_survivor.v2.news.llm_request import (
-    Request, RequestError, RequestItem, RequestTooLarge, build_request, check_pins, check_size, haiku_spec,
+    DISABLED, Request, RequestError, RequestItem, RequestTooLarge, build_request, check_pins, check_size, haiku_spec,
     request_item, sonnet_spec)
 from btc_survivor.v2.news.llm_scorer import CAP_UNTIL, CAPPED, HAIKU, STATE_EVENT, Caller, Client, Sent, decide
 from btc_survivor.v2.news.llm_validate import Impact, Validation, validate
@@ -75,6 +80,8 @@ DRILL_CHARS = 24_000          # long_form_max_chars, so each drill item is a ful
 DRILL_WAIT_S = 180.0          # for one item's final rows, a call taking up to request_timeout_seconds
 START_WAIT_S = 120.0          # for the drill's news process to start, FinBERT loading included
 STOP_WAIT_S = 40.0
+# The thinking room --sonnet-thinking gives each setting, the values section 8.1 names for the config.
+THINKING_ROOM = {"disabled": 0, "between_tools": 1024, "adaptive": 4096}
 
 
 @dataclass(frozen=True)
@@ -96,7 +103,9 @@ def _media(n: int, headline: str, text: str, key: tuple[tuple[str, int], ...], c
     return Synthetic(f"s{n:02d}", "media", "finnhub", "", headline, text, key, clear)
 
 
-# Written before any call, and never changed to fit an answer.
+# Written before any call, and never changed to fit an answer. s09 and s17 became unclear on 12 Oct 2026, before any
+# call, when prompt_v2 asked for the move still to come after the first reaction, which a buyback or a reported yield
+# move may not have.
 SYNTHETIC = (
     _media(1, "Apple quarterly profit tops estimates as Mac and services sales climb",
            "Apple reported quarterly earnings per share and revenue above the average analyst estimate, with record "
@@ -124,7 +133,7 @@ SYNTHETIC = (
            "growth in advertising prices is fading.", (("META", -1),)),
     _media(9, "Apple adds 100 billion dollars to its share buyback",
            "Apple's board authorized an additional 100 billion dollars of share repurchases and raised the quarterly "
-           "dividend.", (("AAPL", 1),)),
+           "dividend.", (("AAPL", 1),), clear=False),
     _media(10, "Microsoft names a new chief financial officer in planned succession",
            "Microsoft said its chief financial officer will retire and named a longtime finance executive as her "
            "successor, a change the company had planned for a year.", (("MSFT", 0),), clear=False),
@@ -147,7 +156,7 @@ SYNTHETIC = (
            "fee.", ()),
     _media(17, "Treasury yields surge to a one year high as traders bet on rate hikes",
            "Yields on ten year Treasury notes jumped to their highest level in a year as traders priced in further "
-           "interest rate increases after hawkish comments.", (("MACRO", -1),)),
+           "interest rate increases after hawkish comments.", (("MACRO", -1),), clear=False),
     _media(18, "US announces 30 percent tariff on imported semiconductors",
            "The administration said it will impose a 30 percent tariff on chips made abroad, starting in 90 days, "
            "with no exemption for designs from US companies.", (("MACRO", -1), ("NVDA", -1))),
@@ -328,7 +337,7 @@ async def dry_run(config: NewsConfig, client: Client) -> output.Report:
         counts.append(counted)
         try:
             basis = bound if counted is None else counted + llm.caps.reserve_overhead_tokens
-            reserve = f"{prices.reserve(request.spec.model, basis, request.spec.max_tokens):.6f}"
+            reserve = f"{prices.reserve(request.spec.model, basis, request.spec.request_max_tokens):.6f}"
         except LedgerError:
             reserve, fits = "past the long prompt price line", False
         rows.append({"request": item.name, "model": request.spec.model, "items": len(request.ids),
@@ -361,14 +370,15 @@ async def dry_run(config: NewsConfig, client: Client) -> output.Report:
 
 @dataclass(frozen=True)
 class Checked:
-    """One live call and what it showed. sent is None when the cap refused it, and validation None unless the call
-    came back with an answer to validate."""
+    """One live call and what it showed. sent is None when the cap refused it, validation None unless the call came
+    back with an answer to validate, and thinking is the setting the call sent."""
 
     name: str
     model: str
     items: tuple[Synthetic, ...]
     sent: Sent | None
     validation: Validation | None
+    thinking: str = DISABLED
 
 
 def passes_schema(checked: Checked) -> bool:
@@ -378,15 +388,16 @@ def passes_schema(checked: Checked) -> bool:
 
 
 def clean_first(checked: Checked | None) -> bool:
-    """The first call checks of section 17, HTTP 200 from the model requested, no thinking block, stop reason
-    end_turn and an answer passing the schema, and no cache token on Sonnet."""
+    """The first call checks of section 17, HTTP 200 from the model requested, no thinking block while thinking is
+    disabled, stop reason end_turn and an answer passing the schema, and no cache token on Sonnet."""
     if checked is None or not passes_schema(checked):
         return False
     result = checked.sent.result
     usage = result.usage
     no_cache = checked.model != SONNET_MODEL or (usage.cache_creation_input_tokens == 0
                                                   and usage.cache_read_input_tokens == 0)
-    return (result.http_status == 200 and result.response_model == checked.model and result.thinking_blocks == 0
+    no_thinking = checked.thinking != DISABLED or (result.thinking_blocks == 0 and usage.thinking_tokens == 0)
+    return (result.http_status == 200 and result.response_model == checked.model and no_thinking
             and result.stop_reason == "end_turn" and no_cache)
 
 
@@ -398,7 +409,7 @@ async def call_once(caller: Caller, name: str, request: Request, items: tuple[Sy
     valid = None
     if sent is not None and sent.result.status == llm_client.OK:
         valid = validate(sent.result.text or "", request.ids)
-    return Checked(name, spec.model, items, sent, valid)
+    return Checked(name, spec.model, items, sent, valid, spec.thinking)
 
 
 def call_row(checked: Checked) -> dict[str, Any]:
@@ -409,6 +420,7 @@ def call_row(checked: Checked) -> dict[str, Any]:
     result, usage = checked.sent.result, checked.sent.result.usage
     return {**row, "status": result.status, "http": result.http_status, "response model": result.response_model,
             "stop": result.stop_reason, "thinking": result.thinking_blocks,
+            "thinking tokens": None if usage is None else usage.thinking_tokens,
             "in": None if usage is None else usage.input_tokens, "out": None if usage is None else usage.output_tokens,
             "cache write": None if usage is None else usage.cache_creation_input_tokens,
             "cache read": None if usage is None else usage.cache_read_input_tokens,
@@ -464,6 +476,12 @@ def _status(calls: Sequence[Checked]) -> output.Word:
     return output.Word(calls[0].sent.result.status if calls and calls[0].sent is not None else "not sent")
 
 
+def _thought(calls: Sequence[Checked]) -> output.Count:
+    """The thinking tokens a model's first call reported, 0 when it returned no usage."""
+    usage = calls[0].sent.result.usage if calls and calls[0].sent is not None else None
+    return output.Count(0 if usage is None else usage.thinking_tokens)
+
+
 def live_report(llm: LlmConfig, calls: Sequence[Checked], probe_runs: Sequence[list[dict[str, Any]]],
                 with_sonnet: bool) -> output.Report:
     """The verdicts of the live check, with a row per call and per item for --detail."""
@@ -493,9 +511,12 @@ def live_report(llm: LlmConfig, calls: Sequence[Checked], probe_runs: Sequence[l
         ("verdict", all(verdicts.values())), ("calls", output.Count(len(calls))), *verdicts.items(),
         ("haiku first status", _status(haiku)), ("haiku cache read tokens", output.Count(cache_read)),
         ("clear cases", output.Count(len(clear))), ("clear cases matched", output.Count(matched)),
-        ("sonnet first status", _status(sonnet)) if with_sonnet else
-        ("sonnet", output.Word("skipped while disabled in the config")),
     ]
+    if with_sonnet:
+        summary += [("sonnet first status", _status(sonnet)), ("sonnet thinking", output.Word(llm.sonnet.thinking)),
+                    ("sonnet first call thinking tokens", _thought(sonnet))]
+    else:
+        summary.append(("sonnet", output.Word("skipped while disabled in the config")))
     rows = [call_row(c) for c in calls]
     rows += [{"item": item.synthetic_id, "kind": item.kind, "clear": item.clear,
               "haiku matches": matches(item.key, haiku_answers.get(item.synthetic_id)),
@@ -826,8 +847,20 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--cap-drill", action="store_true", help="run the rehearsal cap drill with its own news "
                                                                "process, config and throwaway ledger")
     parser.add_argument("--drill-root", type=Path, help="the folder of the drill, by default data/v2/rehearsal")
+    parser.add_argument("--sonnet-thinking", choices=tuple(THINKING_ROOM),
+                        help="send Sonnet at this thinking setting for this run alone, with its thinking room, "
+                             "leaving the config file unchanged")
     output.add_detail_flag(parser)
     return parser
+
+
+def with_sonnet(config: NewsConfig, thinking: str | None) -> NewsConfig:
+    """The config with Sonnet on at one thinking setting and the room THINKING_ROOM gives it, for one live check that
+    chooses the setting, or the config unchanged without one. The config file is never written."""
+    if thinking is None:
+        return config
+    sonnet = replace(config.llm.sonnet, enabled=True, thinking=thinking, thinking_tokens=THINKING_ROOM[thinking])
+    return replace(config, llm=replace(config.llm, sonnet=sonnet))
 
 
 def main(argv: list[str] | None = None, connector: Callable[[NewsConfig], Client] = connect,
@@ -839,6 +872,9 @@ def main(argv: list[str] | None = None, connector: Callable[[NewsConfig], Client
     try:
         config = load_news_config(args.config)
         check_pins(config.llm)
+        if args.cap_drill and args.sonnet_thinking:
+            raise DrillError("the cap drill keeps Sonnet off, so it takes no --sonnet-thinking")
+        config = with_sonnet(config, args.sonnet_thinking)
         if args.cap_drill:
             report = cap_drill(args.config, start, args.drill_root)
         else:
