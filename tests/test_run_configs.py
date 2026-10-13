@@ -15,7 +15,7 @@ from enginekit import fast_config, feed, new_engine, synthetic
 from helpers import EXAMPLE_CONFIG, ROOT
 
 EXAMPLE = load_config(EXAMPLE_CONFIG)
-RUN_NAMES = ["run_a", "run_b", "run_c", "run_d", "run_e"]
+RUN_NAMES = ["run_a", "run_b", "run_c", "run_d", "run_d2", "run_e"]
 
 
 def differences(cfg):
@@ -39,6 +39,9 @@ def flat_toml(name: str) -> dict:
     ("run_c", {"trading.start_equity": 500.0}),
     ("run_d", {"costs.fee_profile": "low_fee_tier", "time.horizon_minutes": 240, "genes.lr_init": 0.00003,
                "genes.lr_min": 0.000003, "genes.lr_max": 0.0003}),
+    ("run_d2", {"costs.fee_profile": "low_fee_tier", "time.horizon_minutes": 240, "genes.lr_init": 0.00003,
+                "genes.lr_min": 0.000003, "genes.lr_max": 0.0003, "feed.stale_after_seconds": 30.0,
+                "feed.max_clock_skew_seconds": 5.0}),
     ("run_e", {"costs.fee_profile": "hypothetical_zero",
                "costs.taker_fees_bps": {"retail_default": 90.0, "active_retail": 30.0, "low_fee_tier": 5.0,
                                         "hypothetical_zero": 0.0},
@@ -73,6 +76,69 @@ def test_run_e_differs_from_run_b_only_in_the_intended_keys():
     assert e["run.master_seed"] == b["run.master_seed"] and e["costs.daily_running_cost"] == 1.16
 
 
+def test_run_d2_differs_from_run_d_only_in_the_stall_tolerance():
+    """Run D2 is run D that rides through short feed stalls, so everything else, the master seed included, stays as
+    in run D and its founders start from the same networks."""
+    d, d2 = flat_toml("run_d"), flat_toml("run_d2")
+    changed = {key: (d.get(key), d2.get(key)) for key in sorted(d.keys() | d2.keys()) if d.get(key) != d2.get(key)}
+    assert changed == {
+        "run.data_dir": ("../data/run_d", "../data/run_d2"),
+        "feed.stale_after_seconds": (5, 30),
+        "feed.max_clock_skew_seconds": (2.0, 5.0),
+    }
+    assert d2["run.master_seed"] == d["run.master_seed"]
+
+
+def stall(health, scenario: str) -> None:
+    """Ten seconds of trouble from 120 s, then normal messages again, with the stale check every second."""
+    if scenario == "delay":
+        for ms in range(120_000, 130_000, 100):
+            health.on_message(ms, ms - 3_000)
+            health.on_book_update(ms)
+            if ms % 1_000 == 0:
+                health.check(ms)
+    elif scenario == "silence":
+        for ms in range(120_000, 130_000, 1_000):
+            health.check(ms)
+    else:
+        for ms in range(120_000, 130_000, 1_000):
+            health.check(ms)
+        for sent in range(120_000, 130_000, 100):
+            health.on_message(130_000, sent)
+            health.on_book_update(130_000)
+
+
+@pytest.mark.parametrize("scenario, expected, run_d_event", [
+    ("delay", {"run_d": False, "run_d2": True}, "clock_skew"),
+    ("silence", {"run_d": False, "run_d2": True}, "stale"),
+    ("held_back", {"run_d": False, "run_d2": False}, "stale"),
+])
+def test_run_d2_tolerates_short_stalls_that_end_run_d_epochs(scenario, expected, run_d_event):
+    """A 3 second delay for 10 seconds, or 10 seconds in which Coinbase sends nothing, ends run D's epoch and leaves
+    run D2's. Ten seconds held back and then delivered at once arrive more than 5 seconds late, so they end both."""
+    from btc_survivor.feed.health import HEALTHY, HealthMonitor
+
+    results, events = {}, {}
+    for name in ("run_d", "run_d2"):
+        feed_cfg = load_config(ROOT / "configs" / f"{name}.toml").feed
+        health = HealthMonitor(int(feed_cfg.stale_after_seconds * 1000), int(feed_cfg.max_clock_skew_seconds * 1000))
+        health.on_connected(0)
+        health.on_snapshot(0, True, "fresh")
+        for ms in range(0, 120_000, 100):
+            health.on_message(ms, ms - 50)
+            health.on_book_update(ms)
+        assert health.judge_minute(120_000) and health.state == HEALTHY
+        epoch, seen = health.epoch, len(health.events)
+        stall(health, scenario)
+        for ms in range(130_000, 190_000, 100):
+            health.on_message(ms, ms - 50)
+            health.on_book_update(ms)
+        results[name] = health.judge_minute(190_000) and health.epoch == epoch
+        events[name] = [kind for _, kind, _ in health.events[seen:]]
+    assert results == expected
+    assert events["run_d"][0] == run_d_event
+
+
 def test_run_e_is_labelled_hypothetical_in_its_header():
     text = (ROOT / "configs" / "run_e.toml").read_text(encoding="utf-8")
     header = text.split("[run]")[0]
@@ -99,7 +165,7 @@ def test_run_e_leaves_only_the_book_in_the_required_edge():
         required = est.total_bps + e.genes.margin_bps_init
         pred = side * (required + 0.01)
         assert decide(FLAT, pred, required, True, False)[:2] == ("open_long" if side == LONG else "open_short", True)
-    for name in ("run_a", "run_b", "run_c", "run_d"):
+    for name in ("run_a", "run_b", "run_c", "run_d", "run_d2"):
         cfg = load_config(ROOT / "configs" / f"{name}.toml")
         est = estimate_round_trip(book, cfg.trading.notional, cfg.costs, LONG, cfg.time.horizon_minutes)
         required = est.total_bps + cfg.genes.margin_bps_init

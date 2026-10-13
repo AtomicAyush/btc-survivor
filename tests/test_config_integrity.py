@@ -106,7 +106,7 @@ def test_a_relative_data_folder_resolves_from_the_config_folder(tmp_path):
         tmp_path / "copies" / "run_y" / "btc_survivor.db"
 
 
-@pytest.mark.parametrize("name", ["run_a", "run_b", "run_c", "run_d", "run_e"])
+@pytest.mark.parametrize("name", ["run_a", "run_b", "run_c", "run_d", "run_d2", "run_e"])
 def test_the_run_configs_flatten_to_every_setting(name):
     """Only the files are read here, never a run's database."""
     import tomllib

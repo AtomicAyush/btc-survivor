@@ -1,6 +1,6 @@
 # How the bots learn
 
-Every bot is a small neural network that predicts the Bitcoin return over the next horizon, 30 minutes in runs A, B, C and E and 4 hours in run D. It learns online, one minute at a time, from labels that have already happened, and every prediction is scored before its own label is allowed to train anything. This page covers the inputs, the labels, the network and its optimizer, how the learning rate was chosen, and how skill is measured. The full design is in [section 8 of the plan](../PLAN.md#8-learning), and the trading side is in [the execution model](execution_model.md).
+Every bot is a small neural network that predicts the Bitcoin return over the next horizon, 30 minutes in runs A, B, C and E and 4 hours in runs D and D2. It learns online, one minute at a time, from labels that have already happened, and every prediction is scored before its own label is allowed to train anything. This page covers the inputs, the labels, the network and its optimizer, how the learning rate was chosen, and how skill is measured. The full design is in [section 8 of the plan](../PLAN.md#8-learning), and the trading side is in [the execution model](execution_model.md).
 
 ## The 11 features
 

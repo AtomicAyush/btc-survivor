@@ -1,10 +1,10 @@
 # Operations
 
-This guide covers running BTC Survivor day to day on the MacBook that hosts the five live runs, and reading what the runs report. Commands assume the project folder as the working directory and the `.venv311` environment. On a Raspberry Pi each run is a systemd service instead, as [raspberry_pi.md](raspberry_pi.md) describes, and the runtime design is in [section 14 of the plan](../PLAN.md#14-runtime-and-command-line).
+This guide covers running BTC Survivor day to day on the machine that hosts the six live runs, the MacBook until 12 October 2026 and the owner's home PC since, and reading what the runs report. Commands assume the project folder as the working directory and the `.venv311` environment. On a Raspberry Pi each run is a systemd service instead, as [raspberry_pi.md](raspberry_pi.md) describes, and the runtime design is in [section 14 of the plan](../PLAN.md#14-runtime-and-command-line).
 
 ## Where everything lives
 
-* `configs/run_a.toml` to `configs/run_e.toml` hold the settings of each run. Run E's config is hypothetical and never a realistic cost setting, as its header says. A relative `data_dir` is resolved from the config's own folder, so `../data/run_a` means `data/run_a` in the project.
+* `configs/run_a.toml` to `configs/run_e.toml` and `configs/run_d2.toml` hold the settings of each run. Run E's config is hypothetical and never a realistic cost setting, as its header says. A relative `data_dir` is resolved from the config's own folder, so `../data/run_a` means `data/run_a` in the project.
 * `data/run_a/btc_survivor.db` is the run's database, with its `-wal` and `-shm` files beside it. The three belong together, so never delete or move one of them alone.
 * `data/run_a/logs/btc_survivor.log` is the log file, rotated at UTC midnight with 14 days kept.
 * `data/run_a/stdout.log` is everything the process prints. It holds the same lines as the log file and is never rotated.
@@ -56,15 +56,27 @@ nohup .venv311/bin/python -m btc_survivor dashboard configs/run_a.toml configs/r
 
 Run E follows the same timeline as runs A to C. Features need 6 hours of healthy history and the label scale about another hour, then 6 hours of warmup follow, so its learners turn active about 13 hours after launch. Its gate then passes almost every prediction, so its first trades on its own calls come within half an hour of that, each copied by its coin flip twin, and forced trades become rare.
 
-The dashboard's help panel was written for runs A to D. It does not name run E, and its notes that most trades are forced every 12 hours and that trading will not beat cash at retail fees do not describe run E's tab. The file is left unchanged for now, because the running dashboard reads `dashboard.html` on every request, so any edit would change the open page at once, as the rules below explain.
+The dashboard's help panel was written for runs A to D. It names neither run E nor run D2, and its notes that most trades are forced every 12 hours and that trading will not beat cash at retail fees do not describe run E's tab. The file is left unchanged for now, because the running dashboard reads `dashboard.html` on every request, so any edit would change the open page at once, as the rules below explain.
+
+Run D2 was added on 13 October 2026 by the owner's decision. It is run D with `stale_after_seconds` at 30 instead of 5 and `max_clock_skew_seconds` at 5 instead of 2, so delay trips and brief pauses in Coinbase's stream no longer end its feed epochs, within the limits [section 21 of the plan](../PLAN.md#21-controls-parallel-runs-and-success-criteria) explains. On 12 October 2026 the five runs moved to the owner's always on home PC, an Ubuntu machine on Ethernet with the same Python 3.11.16 and numpy 2.4.6, one run at a time, each with a gap of about 2 minutes. There every run is a user systemd unit in `~/.config/systemd/user`, made from a template adapted from `deploy/btc_survivor@.service` and kept outside the repository. Unlike the repository unit, its instance name is the run's letter and it runs `configs/run_%i.toml`, so `btc_survivor@d2` runs `configs/run_d2.toml` with its data in `data/run_d2`. It asserts that the run's database exists, so `init-db` comes first. The dashboard unit lists its configs in its own `ExecStart` line, so `configs/run_d2.toml` is added there before the reload and the dashboard restarted, which costs the runs nothing because it only reads.
+
+```bash
+.venv311/bin/python -m btc_survivor --config configs/run_d2.toml init-db
+systemctl --user enable --now btc_survivor@d2.service
+sed -i 's#configs/run_d.toml configs/run_e.toml#configs/run_d.toml configs/run_d2.toml configs/run_e.toml#' ~/.config/systemd/user/btc_survivor_dashboard.service
+systemctl --user daemon-reload
+systemctl --user restart btc_survivor_dashboard.service
+```
+
+Run D2 follows run D's timeline from its own launch, about 10.5 hours of healthy data before training and about 16.5 before its learners turn active, later whenever a disconnect, a resync or a long stall ends its epoch.
 
 A few rules keep restarts safe.
 
 * Restart a run with `>>` in place of `>`, because `>` empties `stdout.log`. The rotated log file keeps its own 14 days either way.
 * Never start a second process on the same config. Nothing in the code prevents it, and two writers would mix two histories in one database. Check with `pgrep -fl btc_survivor` first.
 * Never edit a run's config, even between restarts. A restart refuses a changed master seed, population size or twin setting, but any other edit would pass unnoticed and break the rule that settings are fixed before launch.
-* Before any restart run `.venv311/bin/python scripts/check_config_integrity.py configs/run_*.toml` and restart only on match, same settings or logging only. A setting that differs means a config file no longer holds the settings its run launched with, so put the file back first, and record the check in the results. Run E's database holds no stored config until its first checkpoint, within about five minutes of its start, so until then the glob reports run E as missing and the script exits 2. In that window name `configs/run_a.toml` to `configs/run_d.toml` instead.
-* Restart a run in the environment it started with, `.venv311` for all five, so its Python and numpy stay the same.
+* Before any restart run `.venv311/bin/python scripts/check_config_integrity.py configs/run_*.toml` and restart only on match, same settings or logging only. A setting that differs means a config file no longer holds the settings its run launched with, so put the file back first, and record the check in the results. A newly launched run's database holds no stored config until its first checkpoint, within about five minutes of its start, so until then the glob reports that run as missing and the script exits 2. The same happens on a machine without that run's data folder, such as the Mac for run D2. In either case name the other configs instead.
+* Restart a run in the environment it started with, `.venv311` for all six, so its Python and numpy stay the same.
 * Both environments on the Mac are editable installs, so a restarted run loads the source as it stands at that moment. Restart only from a commit that leaves version 1 behaviour unchanged, and note the commit in the results.
 * Never check out another branch in `~/code/btc_survivor` while the runs are live. The dashboard reads `dashboard.html` from that tree on every request and reloads the open page when the file changes, so a checkout changes the running dashboard at once, with no restart. Other work happens in a separate worktree, as [section 3 of the version 2 plan](../PLAN_V2.md#3-scope-isolation-from-version-1-and-module-layout) arranges.
 * Put `--config` before the command. After the command it is rejected.
@@ -111,7 +123,7 @@ Three other lines are worth a search. `slow minute step` appears when a minute s
 
 Two warnings matter. One says the system is not running, when `runtime_status` is missing or more than two minutes old. The other says the feed is not healthy, so bots are paused. Bot rows come from the latest checkpoint and can be up to five minutes old, while the price and the feed state are at most a minute old.
 
-The dashboard at [http://127.0.0.1:8050](http://127.0.0.1:8050) shows the same numbers from the same read only queries for all five runs, with the equity chart, the skill so far and the latest decisions, fills and feed events. A run whose panel shows an error could not be read, and `data/dashboard.log` holds the reason. Days in `status`, the dashboard and `evaluate` are days of healthy data, 1,440 healthy minutes each, not calendar days. The page is described in the [README](../README.md#the-local-dashboard).
+The dashboard at [http://127.0.0.1:8050](http://127.0.0.1:8050) shows the same numbers from the same read only queries for all six runs, with the equity chart, the skill so far and the latest decisions, fills and feed events. A run whose panel shows an error could not be read, and `data/dashboard.log` holds the reason. Days in `status`, the dashboard and `evaluate` are days of healthy data, 1,440 healthy minutes each, not calendar days. The page is described in the [README](../README.md#the-local-dashboard).
 
 The Bots header names the checkpoint its rows come from, such as `as of the checkpoint at 17:10:30 UTC, 3 min ago`. A run commits its decisions, fills, trades, deaths and births only with each checkpoint, in one transaction, so no committed row is newer than the newest checkpoint and the table cannot be fresher than it. Only the price, the feed state and the living count in `runtime_status`, and the feed events, are newer. The UTC and Local switch at the top right shows every time on the page, times quoted inside feed events included, in UTC or in this Mac's own time zone with its abbreviation, and the browser remembers it. Run logs, `status` and the database stay in UTC whatever the switch says, so compare them with the page in UTC. In Local the explorer's from and to fields take local times, and the page sends the server the same moment in UTC, so a date alone in to means the end of that local day. A time ending in Z is read as UTC in either zone, so a time copied from a log or from `status` can be pasted as it is. A time in the hour that repeats when the clocks go back is shown in UTC with a Z, so it is never read as the other one. The persistence rules are in [section 6.5 of the plan](../PLAN.md#65-persistence-points).
 
@@ -132,7 +144,7 @@ The feed is always in one of three states.
 
 * **Healthy.** Messages arrive, the local book is valid, and local time agrees with the exchange's timestamps. Bots predict, learn, pay rent and trade in healthy minutes and in no others.
 * **Recovering.** Something broke and is being repaired, after a reconnect, a lost book or clock skew. The feed turns healthy at the first minute boundary that closes a full minute in which everything held, logged as `healthy a full clean minute`, so a short break usually costs one or two minutes.
-* **Stale.** No message, or no good book update, arrived for more than `stale_after_seconds`, which is 5. The detail says `no messages` or `no good book`, and the connection is closed and opened again.
+* **Stale.** No message, or no good book update, arrived for more than `stale_after_seconds`, which is 5, or 30 in run D2. The detail says `no messages` or `no good book`, and the connection is closed and opened again.
 
 | Kind | Meaning |
 | --- | --- |
@@ -150,15 +162,15 @@ Reconnects are log lines rather than events, such as `feed connection 16 ended (
 
 ## What clock skew really measures
 
-Every live message carries Coinbase's own timestamp. The health monitor keeps the difference between receive time and that timestamp for the last 50 messages, and once it holds at least 10 it compares their median with `max_clock_skew_seconds`, which is 2. Above that it logs `clock_skew` with the median and moves the feed to recovering without reconnecting, because a reconnect cannot fix a clock. When the median falls back it logs `clock_skew cleared`, and the usual full clean minute follows.
+Every live message carries Coinbase's own timestamp. The health monitor keeps the difference between receive time and that timestamp for the last 50 messages, and once it holds at least 10 it compares their median with `max_clock_skew_seconds`, which is 2 in every run but run D2, where it is 5. Above that it logs `clock_skew` with the median and moves the feed to recovering without reconnecting, because a reconnect cannot fix a clock. When the median falls back it logs `clock_skew cleared`, and the usual full clean minute follows.
 
-The name says clock, but the number is the clock error plus the delivery delay. A wrong local clock raises it, and so do a sleeping or waking Mac, slow delivery from Wi Fi, the network path or Coinbase itself, and a busy machine. Every trip on 11 October came after the lid had closed, with medians of 2.0 to 3.0 seconds. The power log shows a clamshell sleep at `23:26:19` UTC, and 27 seconds later all four runs and the recorder logged `clock_skew` within the same second, as messages that had queued while the Mac slept arrived during its short dark wakes. More trips followed over the next half hour while it went on sleeping and waking. The recorder's earlier trip, at `19:38` UTC before the runs started, came as the Mac woke from a clamshell sleep that began at `19:35:36` UTC. The closed lid caused both the trips and the outage that followed, and neither caused the other. The only trip so far while the Mac was awake came at `02:07` UTC on 12 October, when run D logged three `clock_skew` events with medians of 2.0 to 2.6 seconds and run C went stale with no messages in the same minute, while runs A and B stayed healthy. The Mac's clock was checked against `time.apple.com` that night and agreed to within about 25 ms, the uncertainty of the measurement, so none of these events was a wrong clock. This command prints the offset and changes nothing.
+The name says clock, but the number is the clock error plus the delivery delay. A wrong local clock raises it, and so do a sleeping or waking Mac, slow delivery from Wi Fi, the network path or Coinbase itself, and a busy machine. Every trip on 11 October came after the lid had closed, with medians of 2.0 to 3.0 seconds. The power log shows a clamshell sleep at `23:26:19` UTC, and 27 seconds later all four runs and the recorder logged `clock_skew` within the same second, as messages that had queued while the Mac slept arrived during its short dark wakes. More trips followed over the next half hour while it went on sleeping and waking. The recorder's earlier trip, at `19:38` UTC before the runs started, came as the Mac woke from a clamshell sleep that began at `19:35:36` UTC. The closed lid caused both the trips and the outage that followed, and neither caused the other. The only trip so far while the Mac was awake came at `02:07` UTC on 12 October, when run D logged three `clock_skew` events with medians of 2.0 to 2.6 seconds and run C went stale with no messages in the same minute, while runs A and B stayed healthy. The Mac's clock was checked against `time.apple.com` that night and agreed to within about 25 ms, the uncertainty of the measurement, so none of these events was a wrong clock. On the home PC, whose clock chrony held within a millisecond of NTP, three trips came between `00:57` and `05:46` UTC on 13 October with medians of 2.06 to 2.34 seconds, so they too were Coinbase's delivery and not the clock. This command prints the offset on the Mac and changes nothing.
 
 ```bash
 sntp time.apple.com
 ```
 
-A trip out of healthy is a real gap with the same costs as any other, listed in the next section, so in run D each one pauses learning for 4 hours. The limit is fixed for the length of each run, like every other setting. The guard is described in [section 7 of the plan](../PLAN.md#7-feed).
+A trip out of healthy is a real gap with the same costs as any other, listed in the next section, so in run D each one pauses learning for 4 hours. Run D2 allows a median of 5 seconds, so trips like these do not end its epochs as long as the median stays under 5. The limit is fixed for the length of each run, like every other setting. The guard is described in [section 7 of the plan](../PLAN.md#7-feed).
 
 ## Sleep, restarts and outages
 
@@ -167,8 +179,9 @@ When the Mac sleeps, every process freezes. On wake the one second ticker catche
 * **Rent stops.** Rent accrues only in healthy minutes, so no bot pays for downtime. By `02:33` UTC on 12 October each learner in run A had paid about 0.20 dollars of rent, which matches the roughly 4.2 healthy hours since launch and not the 5.9 hours on the clock.
 * **Shorts keep paying funding.** Funding accrues through stale minutes and downtime, because a real short would still be open.
 * **Long gaps flatten.** At the first healthy minute after a gap longer than `max_resume_gap_minutes`, which is 10, every open position is closed through the normal broker. The exit reason is `restart_flatten` after a restart and `gap_flatten` after an outage while the process stayed up, and a `resume` event records the length of the gap and how many closing orders went out. A rejected flatten is sent again at the next healthy minute.
-* **Pending outcomes are dropped.** Every exit from healthy starts a new feed epoch, and no label crosses an epoch, so every pending prediction is discarded. No outcome matures for one horizon afterwards, so learning pauses for 30 minutes in runs A, B, C and E and for 4 hours in run D, and warmup, which counts training minutes, takes that much longer.
+* **Pending outcomes are dropped.** Every exit from healthy starts a new feed epoch, and no label crosses an epoch, so every pending prediction is discarded. No outcome matures for one horizon afterwards, so learning pauses for 30 minutes in runs A, B, C and E and for 4 hours in runs D and D2, and warmup, which counts training minutes, takes that much longer.
 * **Features need clean windows.** A return needs a healthy minute exactly at its start, and each volatility and volume window needs 80 percent of its minutes healthy. A gap of 1 to 3 minutes costs four times its length, the later minutes whose return windows start inside it. A gap of 4 or 5 minutes costs about 25 minutes, a gap of 6 to 23 minutes about 35 to 55 minutes, one longer than 23 minutes about 1.6 hours, and one longer than 72 minutes about 4.8 hours of healthy data, while the 30 minute volatility, the 120 minute volatility and the 360 minute volume baseline refill. In that time bots neither predict nor learn nor decide, while rent, marking and stop checks go on.
+* **Run D's forced trades slip a whole window.** The forced timer counts healthy minutes since a bot's last open, and a run D bot decides only in its own minute of each 4 hour block, so 12 healthy hours is exactly three blocks. One unhealthy minute in between leaves the timer short at the third block, and the forced trade waits for the fourth, 16 hours after the last open. With trips every few hours that is the usual case, so run D's bots trade about every 16 hours rather than 12. That lowers a quiet run D bot's burn from about 2.36 to about 2.06 dollars a day and changes no outcome, because none dies either way. Run D2 has the same timer, and fewer trips may bring it nearer 12, though the home PC also saw 2 disconnects in its first 16 hours, and each ends run D2's epoch too.
 * **A restart is not a death.** Bots keep their weights, genes, accounts and positions, as the next section explains.
 
 The first night shows the whole sequence. Each run's last healthy minute before the outage was at `23:26` UTC. From `23:27` UTC, seconds after the lid closed at `23:26` UTC, run A's log shows stale connections and reconnects whose waits grew from 0.9 seconds at `23:27:03` to 58.6 seconds at `23:33:59`, and the first DNS failure, a `gaierror`, came at `23:37:39`. At `01:05` UTC every run logged `resume 99.0 minutes since the last healthy minute, gap_flatten sent 0 closing orders`. No bot was trading yet, so nothing needed closing.
@@ -183,7 +196,7 @@ On start, `run` loads the newest checkpoint that decodes and logs a `resume` eve
 
 ## The recorder
 
-Runs A to E record no raw messages, because their configs set `record_raw_messages = false`. A separate development recorder has run since `16:58` UTC on 11 October, reading `config.toml` and writing into `data/raw`.
+Runs A to E and D2 record no raw messages, because their configs set `record_raw_messages = false`. A separate development recorder has run since `16:58` UTC on 11 October, reading `config.toml` and writing into `data/raw`.
 
 ```bash
 nohup .venv311/bin/python scripts/record_feed.py --config config.toml > data/record_feed.log 2>&1 &
@@ -300,7 +313,7 @@ A true network cut affects the whole Mac and every run at once, so it is done on
 
 ## Python and TLS
 
-* `.venv311` is built on pyenv Python 3.11.16, and all five live runs use it. It connects to Coinbase with no extra step.
+* `.venv311` is built on pyenv Python 3.11.16, and all six live runs use it. It connects to Coinbase with no extra step.
 * `.venv` is built on the python.org Python 3.13.1 installer. That build carries its own OpenSSL without any trusted certificates, so the websocket fails with `CERTIFICATE_VERIFY_FAILED` until the installer's certificate script has run once.
 * The tests need no network, so both environments run the whole suite, with `.venv/bin/python -m pytest -q` and `.venv311/bin/python -m pytest -q`.
 * numpy is pinned per Python version, 2.4.6 on 3.11 and 2.5.3 on 3.12 and newer, because numpy 2.5 dropped Python 3.11. That is one more reason to keep each run on the environment it started with.

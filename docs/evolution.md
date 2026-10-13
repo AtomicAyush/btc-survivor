@@ -38,7 +38,7 @@ Each learner carries two genes. Everything else, such as the horizon, the weight
 | Gene | Meaning | Initial value | Bounds |
 | --- | --- | --- | --- |
 | `margin_bps` | the extra edge in bps a prediction must clear beyond the estimated round trip cost | 8, or 0 in run E | 2 to 60, or 0 to 60 in run E |
-| `lr` | the AdamW learning rate | 0.0001, or 0.00003 in run D | 0.00001 to 0.001, or 0.000003 to 0.0003 in run D |
+| `lr` | the AdamW learning rate | 0.0001, or 0.00003 in runs D and D2 | 0.00001 to 0.001, or 0.000003 to 0.0003 in runs D and D2 |
 
 The required edge at a decision is the estimated round trip cost plus the margin gene. At retail fees the cost is about 182 bps, so the required edge is about 190 bps and the margin barely matters. At the 5 bps fee the cost is about 12 bps and the required edge about 20 bps, so the margin is a large part of it. In run E, which is hypothetical and has no fee, slippage or short charges, the cost is only the spread and the walk through the book, about 0.001 bps, and the margin starts at its floor of 0, where mutation keeps it because it multiplies the gene. A test in [tests/test_genes.py](../tests/test_genes.py) runs 100,000 mutations with an extreme noise level and checks that both genes always stay within their bounds. How the learning rate was chosen is in [learning.md](learning.md#the-learning-rate-of-00001).
 
@@ -83,7 +83,7 @@ The list follows [section 11](../PLAN.md#11-evolution) and [section 21](../PLAN.
 
 The version 1 road map has four steps, each adding one source of information that must show skill on the forecast records before it is trusted. They are longer horizons, more market data, current affairs as a predictor, and variable position sizing only after the skill test passes. The approved [version 2 plan](../PLAN_V2.md) turns these into stages, each switched on only by evidence from the one before.
 
-1. **The bench.** Version 1, runs A to E on Bitcoin, checks the machinery of learning, trading, feed health and evaluation.
+1. **The bench.** Version 1, runs A to E and D2 on Bitcoin, checks the machinery of learning, trading, feed health and evaluation.
 2. **The skill stage.** Version 2 adds large US stocks and news scored by language models, and asks only whether a predictor forecasts the next return, through a skill test fixed before launch. Its details are in the [version 2 plan](../PLAN_V2.md#117-road-map-after-version-2).
 3. **The profit stage.** Only after a predictor passes the skill test, each bot predicts several horizons at once, for example 30 minutes, 2 hours, the rest of the session and the next session. It enters where the expected gain after costs is largest, holds while the expected remaining gain beats the cost of exiting, and exits when it does not, so the holding period comes from the predictions rather than a timer. Position sizes grow with confidence. Its rules are written before its own launch and tested forward against a fixed horizon version of the same bots launched beside it, never fitted to data already collected.
 

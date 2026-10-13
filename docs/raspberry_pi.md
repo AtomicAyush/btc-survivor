@@ -4,7 +4,7 @@ A Raspberry Pi 4 is the long term home for the runs. It draws little power, neve
 
 ## Hardware
 
-* **A Raspberry Pi 4 Model B with 2 GB of memory or more.** One run of 20 learners and their twins is estimated at about 110 MB at its peak, so five runs fit in 2 GB, and 4 GB leaves room for tools.
+* **A Raspberry Pi 4 Model B with 2 GB of memory or more.** One run of 20 learners and their twins is estimated at about 110 MB at its peak, so six runs fit in 2 GB, and 4 GB leaves room for tools.
 * **The official 5.1 V, 3 A USB C power supply.** A weak supply causes undervoltage throttling and can drop a USB drive, and the SSD draws its power from the Pi.
 * **A USB SSD** in a USB 3 enclosure, plugged into one of the blue USB 3 ports. The next sections explain why.
 * **A case with a heatsink or a fan.** A Pi 4 that runs hot slows its own clock, and a throttled Pi runs noticeably slower.
@@ -69,18 +69,18 @@ timedatectl status
 
 `timedatectl status` should report that the system clock is synchronized. With the service enabled, a boot without a network holds the runs back until the first sync, which costs nothing, because they could not read the feed anyway.
 
-The runs also guard themselves. The feed health monitor compares the exchange's message timestamps with local time, and when the median gap over the last 50 messages passes 2 seconds it writes a `clock_skew` feed event and holds the feed out of Healthy until a clean minute, so nothing trades or learns on a wrong clock. On the Mac this event has also fired when messages arrived late, so on a Pi whose clock is synchronized a `clock_skew` event points at slow delivery on the network rather than at the clock. The guard is described in [section 7 of the plan](../PLAN.md#7-feed) and the service in the [systemd documentation](https://www.freedesktop.org/software/systemd/man/latest/systemd-time-wait-sync.service.html).
+The runs also guard themselves. The feed health monitor compares the exchange's message timestamps with local time, and when the median gap over the last 50 messages passes 2 seconds, or 5 in run D2, it writes a `clock_skew` feed event and holds the feed out of Healthy until a clean minute, so nothing trades or learns on a wrong clock. On the Mac this event has also fired when messages arrived late, so on a Pi whose clock is synchronized a `clock_skew` event points at slow delivery on the network rather than at the clock. The guard is described in [section 7 of the plan](../PLAN.md#7-feed) and the service in the [systemd documentation](https://www.freedesktop.org/software/systemd/man/latest/systemd-time-wait-sync.service.html).
 
 ## The systemd template unit
 
-`deploy/btc_survivor@.service` is a template, so one file runs every run as its own service. The text after the `@` names the config, so `btc_survivor@run_a` runs `configs/run_a.toml`, `btc_survivor@run_b` runs `configs/run_b.toml`, and likewise `btc_survivor@run_c`, `btc_survivor@run_d` and `btc_survivor@run_e`. Each run's config points at its own data folder under `data/`.
+`deploy/btc_survivor@.service` is a template, so one file runs every run as its own service. The text after the `@` names the config, so `btc_survivor@run_a` runs `configs/run_a.toml`, `btc_survivor@run_b` runs `configs/run_b.toml`, and likewise `btc_survivor@run_c`, `btc_survivor@run_d`, `btc_survivor@run_d2` and `btc_survivor@run_e`. Each run's config points at its own data folder under `data/`.
 
 The unit has two placeholders, `User` and `WorkingDirectory`, both written as `CHANGE_ME`, and the path in `ExecStart` uses the same folder. Fill them in while installing the unit, then start the runs.
 
 ```bash
 sed 's/CHANGE_ME/btc/g' ~/btc_survivor/deploy/btc_survivor@.service | sudo tee /etc/systemd/system/btc_survivor@.service > /dev/null
 sudo systemctl daemon-reload
-sudo systemctl enable --now btc_survivor@run_a btc_survivor@run_b btc_survivor@run_c btc_survivor@run_d btc_survivor@run_e
+sudo systemctl enable --now btc_survivor@run_a btc_survivor@run_b btc_survivor@run_c btc_survivor@run_d btc_survivor@run_d2 btc_survivor@run_e
 systemctl status 'btc_survivor@*'
 ```
 
@@ -116,7 +116,7 @@ The file logs already keep two weeks, so a modest journal limit such as `SystemM
 
 ## Memory and CPU targets
 
-The target for each run is 20 learners, with their twins, under 150 MB of resident memory and under 25 percent of one core on average, in a single process. Each run has its own target, so five runs together use about five times the memory and feed CPU of one, and they share the Pi's four cores.
+The target for each run is 20 learners, with their twins, under 150 MB of resident memory and under 25 percent of one core on average, in a single process. Each run has its own target, so six runs together use about six times the memory and feed CPU of one, and they share the Pi's four cores.
 
 The estimates leave room. Memory is estimated at about 110 MB at the peak, about half of it the baseline and half a brief spike while the 4.5 MB order book snapshot is parsed after a reconnect. CPU is estimated at 1 to 4 percent of one core at the measured quiet rate of 17 messages a second, and at about 6 percent in the central case and 24 percent in the pessimistic case at an assumed busy rate of 100 messages a second. The bots themselves cost only about 9 milliseconds a minute in total, and handling the feed is nearly all of the load.
 
@@ -153,14 +153,14 @@ Runs A to D started on 11 October 2026 on a MacBook, and the hypothetical run E 
 
    ```bash
    # on the Mac, from ~/code/btc_survivor
-   rsync -a data/run_a data/run_b data/run_c data/run_d data/run_e btc@btcpi.local:btc_survivor/data/
+   rsync -a data/run_a data/run_b data/run_c data/run_d data/run_d2 data/run_e btc@btcpi.local:btc_survivor/data/
    ```
 
 5. On the Pi, check each database with `.venv/bin/btc_survivor --config configs/run_a.toml init-db`, which reports that it matches the schema, and look at it with `status`. Then compare each config with the text the run stored in its `meta` table at launch. They must match byte for byte.
 
    ```bash
    # on the Pi, from ~/btc_survivor
-   for run in run_a run_b run_c run_d run_e; do
+   for run in run_a run_b run_c run_d run_d2 run_e; do
      sqlite3 -readonly data/$run/btc_survivor.db "SELECT rtrim(value, char(10)) FROM meta WHERE key = 'config_toml'" \
        | diff - configs/$run.toml && echo "$run config matches"
    done
