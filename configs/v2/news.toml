@@ -179,15 +179,15 @@ probe_time_utc = "06:00"
 probe_alert_direction_agreement = 0.8     # probes run on Haiku only
 
 [llm.sonnet]                              # the comparison scorer, official items only
-enabled = false                           # off until one live call settles the thinking setting, section 8.1
+enabled = true                            # on since 13 Oct 2026, after the live call of section 8.1
 model = "claude-sonnet-5-5"               # the only accepted value, and Opus is never accepted
 effort = "low"                            # the only accepted value
-thinking = "disabled"                     # disabled, between_tools or adaptive, chosen by the live call of section 8.1,
-                                          # since Anthropic's docs say Sonnet 5.5 answers disabled with a 400
+thinking = "between_tools"                # the live call of 13 Oct 2026 refused disabled with a 400 and passed
+                                          # between_tools with 0 thinking tokens used, so Sonnet reasons no more than Haiku
 scorer_name = "sonnet_v1"
 kinds = ["8k", "fed_press", "fed_monetary", "fed_speech", "bls_release"]
 max_tokens = 1024                         # one item with up to 10 impacts
-thinking_tokens = 0                       # room added to max_tokens for thinking, reserved and booked as output, 0
+thinking_tokens = 1024                    # room added to max_tokens for thinking, reserved and booked as output, 0
                                           # exactly while thinking is disabled, 1024 for between_tools, 4096 adaptive
 cache_control = false                    # Sonnet cache prices are not in the research
 
