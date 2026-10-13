@@ -24,6 +24,9 @@ body { margin: 0; background: var(--bg); color: var(--ink);
 header { position: sticky; top: 0; z-index: 2; background: var(--panel); border-bottom: 1px solid var(--line);
   padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
 header h1 { font-size: 16px; margin: 0 8px 0 0; letter-spacing: .2px; }
+.btcpx { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.btcpx small { font-size: 12px; font-weight: 400; color: var(--muted); }
+.btcpx .up { color: var(--good); } .btcpx .down { color: var(--bad, var(--warn)); }
 .tabs { display: flex; gap: 6px; flex-wrap: wrap; }
 .tab { border: 1px solid var(--line); background: var(--chip); color: var(--ink); border-radius: 999px;
   padding: 5px 12px; cursor: pointer; font: inherit; }
@@ -143,6 +146,7 @@ table.dx tr.dxrow > td { padding: 4px 10px 14px; text-align: left; white-space: 
 <body>
 <header>
   <h1>BTC Survivor</h1>
+  <div class="btcpx" id="btcpx" title="The newest Bitcoin price any run has written, the middle of the order book">BTC …</div>
   <div class="tabs" id="tabs"></div>
   <a class="jump" href="#decisions" title="Jump to the decisions explorer below">every decision</a>
   <div class="updated"><span class="live" id="live"></span><span id="updated">connecting</span></div>
@@ -301,6 +305,7 @@ function render() {
   document.querySelectorAll(".tab").forEach(b => b.onclick = () => {
     current = b.dataset.run; try { localStorage.setItem("run", current); } catch (e) {} render(); dxRefresh();
   });
+  headerPrice();
   const run = state.runs.find(r => r.name === current);
   const scrolled = [...document.querySelectorAll("#main .scroll")].map(el => el.scrollLeft);
   document.getElementById("main").innerHTML = run.error ? `<div class="banner">${esc(run.error)}</div>` : view(run);
@@ -311,6 +316,19 @@ function render() {
   attachHover();
   const t = document.getElementById("twins");
   if (t) t.onchange = () => { showTwins = t.checked; try { localStorage.setItem("twins", showTwins ? "1" : "0"); } catch (e) {} render(); };
+}
+
+// The freshest Bitcoin price across the runs, pinned in the header, with an arrow against the previous refresh.
+let lastHeaderPrice = null;
+function headerPrice() {
+  const el = document.getElementById("btcpx");
+  const priced = state.runs.map(r => r.summary).filter(s => s && s.price);
+  if (!priced.length) { el.textContent = "BTC unknown"; return; }
+  const s = priced.reduce((a, b) => (b.price_age_s ?? 1e9) < (a.price_age_s ?? 1e9) ? b : a);
+  const dir = lastHeaderPrice == null || s.price === lastHeaderPrice ? "" : s.price > lastHeaderPrice ? "up" : "down";
+  const arrow = dir === "up" ? "▲" : dir === "down" ? "▼" : "";
+  el.innerHTML = `BTC ${usd(s.price)} ${arrow ? `<span class="${dir}">${arrow}</span>` : ""} <small>${ago(s.price_age_s)}</small>`;
+  lastHeaderPrice = s.price;
 }
 
 function view(run) {
