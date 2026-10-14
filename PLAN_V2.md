@@ -1005,7 +1005,7 @@ So the news predictor's detectable correlation runs from about 0.075 if company 
 
    A fallback share above 25 percent of the items routed to Haiku in session is a caveat, not a failure, and so is a day that raised the spend alert.
 2. **Confirmatory news skill,** H1 and then H2, as in section 11.5.
-3. **Descriptive results.** Every predictor's skill, S2 against S1, `linear_news` against `linear_prices`, `haiku` against `finbert_matched` and `sonnet` against `haiku_official` over all rows and over event rows, `news_company` and `news_macro`, calibration, the twin test per run, any deaths, the own trade share, the round trips per session forced and made on a learner's own with the mean minutes they were held, the largest notional over equity, the learners' mean equity with dead learners at their final equity beside the survivors' mean, and data quality, meaning the healthy fraction, run minutes lost to news health by cause, channel outage minutes, receipt to scoring latency, items per source and the fallback share.
+3. **Descriptive results.** Every predictor's skill, S2 against S1, `linear_news` against `linear_prices`, `haiku` against `finbert_matched` and `sonnet` against `haiku_official` over all rows and over event rows, `news_company` and `news_macro`, calibration, the twin test per run, any deaths, the own trade share, the round trips per session forced and made on a learner's own with the mean minutes they were held, the largest notional over equity, the learners' mean equity with dead learners at their final equity beside the survivors' mean, the chooser scorecard of section 11.8, and data quality, meaning the healthy fraction, run minutes lost to news health by cause, channel outage minutes, receipt to scoring latency, items per source and the fallback share.
 4. **The outcomes fixed by arithmetic** in section 12 matched.
 5. **Version 1 undisturbed.** Runs A to D kept running and `test_v1_untouched` passes.
 6. **Cost.** About 1 to 5 dollars a month for both models together and never above the 20 dollar cap, reported per model, expected to come from the Max plan's included credits as confirmed in Phase 15.
@@ -1026,6 +1026,30 @@ Two conditions bind the profit stage.
 * Its rules for choosing horizons, exits and sizes are written before its own launch and tested forward against a fixed horizon version of the same bots, launched beside it on the same data. They are never fitted to data already collected, version 2's recordings included.
 
 The low stock costs are what make this plausible. A round trip here costs 3.6 to 6.6 bps against about 190 bps for the version 1 retail Bitcoin round trip, so a modest forecast held over a horizon the predictions choose has a chance to clear its costs, which a forecast of the same skill on Bitcoin at retail costs would not. A horizon past the close also needs overnight holding, which version 2 leaves out, as question 13 of section 19 notes. Version 2 itself keeps the fixed 30 minute horizon and fixed 500 dollar positions.
+
+### 11.8 The chooser scorecard
+
+Added on 14 October 2026 by the owner's decision, before launch and before any session was traded, so the rule below is fixed and is never tuned to results. Every learner predicts all eight symbols but trades only its home symbol. The chooser asks what the population's forecasts would have earned if, at each decision, they had picked the one symbol they rated best. It is a scorecard computed from rows the runs already store, `stock_forecasts` and `stock_labels`, not a trading run, so it changes nothing S1 or S2 does, and it is descriptive with no pass label.
+
+**The rule.** At every evaluation minute t of a run, for every symbol s with a `population` forecast f at t, before anything about the label is known.
+
+1. The cost c is the round trip cost in bps of a 500 dollar position on the side of f over 30 minutes, from `stocks/costs.py` `round_trip` with the run's own cost settings, for the quantity the run would trade for 500 dollars at the symbol's reference price at t, so a short pays its borrow and the sale fees fall on the right leg.
+2. The scale is the standard deviation of the symbol's matured labels whose exit is at or before t, over the last 20 full sessions, and a symbol with fewer than 60 such labels is skipped, so the scale never looks ahead.
+3. The edge is the absolute value of f minus c, divided by the scale. Dividing by the scale keeps the chooser from simply picking the symbol that moves most, TSLA or NVDA, whose forecasts are larger in bps for that reason alone.
+4. If no symbol has a positive edge the chooser stays flat at t. Otherwise it picks the symbol with the largest edge, the earlier one in config order on a tie, on the side of its forecast.
+5. The result is the side times the picked symbol's label, minus its cost, in bps. A pick whose label ended as gap has no result and is counted.
+
+**What it is compared with,** at the same minutes.
+
+* A seeded random pick, a symbol and a side drawn uniformly from the symbols with a forecast at t, from a generator seeded by the master seed, the run and the minute, so it is the same on every run of `evaluate`.
+* All eight symbols with a forecast at t traded together in the direction of their forecasts, the mean result after costs.
+* The largest raw forecast after costs without the scale, to show how much of any gain is only the pick of the most volatile symbol.
+* QQQ held long for the same 30 minutes, after costs.
+* Staying flat, zero.
+
+**What it reports,** for S1's and S2's `population`, with `linear_prices` and S2's `linear_news` beside them. The number of picks and flat minutes, the picks per symbol, the mean result per pick and per evaluation minute, the share of picks that were right, the running total in bps, and the chooser minus each comparison per minute with the version 1 `newey_west_se` at 12 lags and its one sided 95 percent upper bound. The score predictors such as `news` have no bps scale and cannot pay a cost, so the chooser does not use them. The day runs, if they launch, get the same scorecard with one pick per session at their decision minute, their own label and their own cost.
+
+**What it can and cannot show.** It shows whether the forecasts were better at ranking the eight symbols than at calling each one alone, and whether the best ranked call cleared its cost. Choosing cannot create skill. If the forecasts carry none, picking the strongest only picks the noisiest, and the expected result is minus the cost. The minutes of one session are correlated through the market, so its figures are descriptive only. It switches on no trading. A chooser that trades for real belongs to the profit stage of section 11.7, only after a predictor passes criterion 2, in a new run whose settings are fixed before its own launch. `evaluate --detail` prints the scorecard and the stock dashboard shows it, built after launch from the stored rows, which the rule above already fixes.
 
 ## 12. Outcomes fixed by arithmetic
 
