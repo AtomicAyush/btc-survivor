@@ -385,9 +385,10 @@ async def serve(process: StockProcess, stop: asyncio.Event | None = None) -> Non
             started = clock.monotonic()
             try:
                 await asyncio.wait_for(feed_stop.wait(), TICK_SECONDS)
-                return  # the final checkpoint does the last step, so nothing is recorded after the feed closes
-            except asyncio.TimeoutError:
+            except asyncio.TimeoutError:  # also when the stop lands as the wait times out
                 process.lag_s = max(process.lag_s, clock.monotonic() - started - TICK_SECONDS)
+            if feed_stop.is_set():
+                return  # the final checkpoint does the last step, so nothing is recorded after the feed closes
             for symbol in process.tick():
                 if await client.send(client.adapter.subscribe_frame(symbol)):
                     log.info("subscribed again to %s, which has not printed on connection %d", symbol, client.conn_id)

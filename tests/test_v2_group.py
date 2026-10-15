@@ -2,9 +2,10 @@
 news.db in a test folder: one decode feeding both engines, news kinds dispatched before the version 1 decode, recorded
 order equal to stamp order, a puller opened before the writer exists seeing later rows, a reopen after 60 seconds
 without a heartbeat, each engine resuming from its own news sequence, and a local_only event written to both databases
-before each open and at a start inside a session. Also the whole process run end to end in a subprocess against a fake
-Finnhub on 127.0.0.1 with a shifted clock, and its dry run and lock refusal. No test opens data/v2, the real secrets
-file or the network beyond 127.0.0.1.
+before each open and at a start inside a session. Also no tick once the feed is told to stop, even when the ticker's
+wait times out as the stop lands, and the whole process run end to end in a subprocess against a fake Finnhub on
+127.0.0.1 with a shifted clock, and its dry run and lock refusal. No test opens data/v2, the real secrets file or the
+network beyond 127.0.0.1.
 
 The helpers here, configs in a test folder, seeded tapes of feed lines with heartbeat and score lines and a launch
 through open_runs, are shared with test_v2_stock_replay and test_v2_stock_checkpoint."""
@@ -23,6 +24,7 @@ import subprocess
 import sys
 import time
 from concurrent.futures import Executor, Future
+from contextlib import suppress
 from datetime import date, datetime
 from datetime import time as clock_time
 from pathlib import Path
@@ -554,6 +556,62 @@ def test_the_process_prunes_recordings_older_than_keep_raw_days_once_a_utc_day(t
 
 
 # The whole process
+
+
+class ClosingFeed:
+    """A feed client that opens at once and records its close the moment the feed is told to stop, as the real one
+    does when its close is already under way, after which the news process commits one more heartbeat."""
+
+    def __init__(self, proc: process.StockProcess, news: sqlite3.Connection) -> None:
+        self.proc, self.news = proc, news
+        self.adapter, self.conn_id, self.connected_ms = adapter(), 1, None
+
+    def stamp(self) -> int:
+        return self.proc.clock.stamp(self.proc.group.now_ms)
+
+    async def run(self, stop: asyncio.Event) -> None:
+        self.proc.sink(OPEN, "", self.stamp(), self.conn_id)
+        await stop.wait()
+        self.proc.sink(CLOSE, "shutdown", self.stamp(), self.conn_id)
+        add_heartbeat(self.news, iso(self.stamp()))
+
+    async def send(self, text: str) -> bool:
+        return False
+
+
+def test_no_tick_runs_once_the_feed_is_told_to_stop_even_when_the_wait_times_out(tmp_path, monkeypatch):
+    # A wait of zero always times out, even after the stop, as the one second wait can when its timeout and the stop
+    # land within a few loop steps of each other, up to three on Python 3.11 and fewer on 3.13.
+    monkeypatch.setattr(process, "TICK_SECONDS", 0)
+    t = at(THU, "10:00")
+    cfgs, group = launch(tmp_path, t)
+    news = news_database(cfgs[0].news_db_path)
+    add_heartbeat(news, iso(t))
+    puller = process.NewsPuller(cfgs[0].news_db_path, 0, 60 * MS_PER_SECOND, heartbeat_seq=0)
+    proc = process.StockProcess(group, puller, ScriptedClock(t), StockRecorder(cfgs[0].raw_dir), check=lambda: PASSED,
+                                executor=Inline())
+    proc.client = ClosingFeed(proc, news)
+
+    async def main() -> bool:
+        stop = asyncio.Event()
+        served = asyncio.create_task(process.serve(proc, stop))
+        deadline = time.monotonic() + 5
+        while puller.last_heartbeat_ms is None and not served.done():
+            assert time.monotonic() < deadline
+            await asyncio.sleep(0.01)
+        stop.set()
+        done, _ = await asyncio.wait({served}, timeout=5)
+        served.cancel()
+        with suppress(asyncio.CancelledError):
+            await served
+        return bool(done)
+
+    finished = asyncio.run(main())
+    proc.close()
+    news.close()
+    assert [kind for kind, *_ in read_recording([cfgs[0].raw_dir])] == [OPEN, HEARTBEAT_LINE, CLOSE]
+    assert finished and query(cfgs[0].db_path, "SELECT feed_state FROM runtime_status") == [("stopped",)]
+    close(group)
 
 
 SCRIPT = """
