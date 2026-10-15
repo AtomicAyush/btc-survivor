@@ -72,8 +72,12 @@ def test_the_rehearsal_configs_differ_from_the_run_configs_only_where_the_plan_s
     runs, rehearsals = load_run_pair(*RUNS), load_run_pair(*REHEARSALS)
     for run, rehearsal, name, folder in zip(runs, rehearsals, ("rehearsal_s1", "rehearsal_s2"),
                                             ("s1_prices", "s2_news")):
+        # The rehearsal keeps the price exclusions it launched with on 15 October 2026, code 41 among them, because a
+        # run's settings never change during its life, while the launch configs count code 41 (PLAN_V2 4.4).
+        launched_with = (*run.stock_feed.price_excluded_conditions, "41")
         assert differences(run, rehearsal) == {("run", "name"): name,
-                                               ("run", "data_dir"): f"../../data/v2/rehearsal/{folder}", **PLUMBING}
+                                               ("run", "data_dir"): f"../../data/v2/rehearsal/{folder}", **PLUMBING,
+                                               ("stock_feed", "price_excluded_conditions"): launched_with}
         assert rehearsal.data_dir.resolve() == (ROOT / "data" / "v2" / "rehearsal" / folder).resolve()
         assert rehearsal.news_db_path.resolve() == run.news_db_path.resolve() == \
             (ROOT / "data" / "v2" / "news" / "news.db").resolve()
