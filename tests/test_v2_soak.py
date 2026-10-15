@@ -580,3 +580,24 @@ def test_the_soak_refuses_a_busy_folder_a_folder_inside_the_recordings_and_a_bad
     assert soak.main(["--s1", str(s2), "--s2", str(s1), "--out", str(tmp_path / "swapped")]) == soak.CANNOT_RUN
     err = capsys.readouterr().err
     assert err.startswith("error: invalid configuration") and not (tmp_path / "swapped").exists()
+
+
+def test_the_home_pc_judges_resident_memory_on_the_final_week_when_asked():
+    # The owner's decision of 15 October 2026: on the home PC, resident memory that fills its windows and then holds
+    # still passes on the final week, as memory in use does on a Mac, while the default stays strict for a Pi.
+    def rss(h, leak=0.0):
+        return 60.0 + 17.0 * min(h, 48) / 48 + leak * h
+
+    for leak, outcome in ((0.0, "passed"), (0.005, "passed"), (0.01, "failed")):
+        samples = [reading(h, rss(h, leak)) for h in range(1, 360)]
+        strict = soak.memory_verdict(samples, reading(360, rss(360, leak)))
+        assert strict["outcome"] == "failed" and strict["decided_by"] == "first hour"
+        result = soak.memory_verdict(samples, reading(360, rss(360, leak)), final_week_on_linux=True)
+        assert result["outcome"] == outcome and result["judged_on"] == "resident"
+        assert result["decided_by"] == "final week"
+        assert "resident memory grew" in result["reason"] and "over the final replayed week against 1.0 MB" in \
+            result["reason"]
+    held = soak.memory_verdict([reading(1, 100.0)], reading(30, 104.0), final_week_on_linux=True)
+    assert held["outcome"] == "passed" and held["decided_by"] == "first hour"
+    short = soak.memory_verdict([reading(1, 100.0)], reading(30, 112.0), final_week_on_linux=True)
+    assert short["outcome"] == "failed" and "holds no final week" in short["reason"]

@@ -576,10 +576,12 @@ def _growth(name: str, samples: list[dict], end: dict, limit_mb: float) -> dict 
 
 
 def memory_verdict(samples: list[dict], end: dict | None, limit_mb: float = MAX_GROWTH_MB,
-                   week_limit_mb: float = MAX_WEEK_GROWTH_MB) -> dict:
+                   week_limit_mb: float = MAX_WEEK_GROWTH_MB, final_week_on_linux: bool = False) -> dict:
     """The plan's rule, memory at the end at most limit_mb above it at the end of the first replayed hour, decided by
     resident memory read from /proc on Linux alone and by memory in use on a Mac, where growth in use below
-    week_limit_mb over the final replayed week also passes, and inconclusive without either reading."""
+    week_limit_mb over the final replayed week also passes, and inconclusive without either reading. With
+    final_week_on_linux, the owner's decision of 15 October 2026 for the home PC, resident memory gets the same final
+    week rule, while a Raspberry Pi keeps the strict rule."""
     end = dict(end or {})
     samples = [{**s, "in_use_mb": _in_use(s)} for s in samples]
     end["in_use_mb"] = _in_use(end)
@@ -594,7 +596,9 @@ def memory_verdict(samples: list[dict], end: dict | None, limit_mb: float = MAX_
     result = {"source": source, "judged_on": judged_on, "decided_by": "first hour", "limit_mb": limit_mb,
               "week_limit_mb": week_limit_mb, **rss,
               "footprint": _growth("footprint_mb", samples, end, limit_mb), "in_use": in_use}
-    if judged_on == "resident":
+    if judged_on == "resident" and final_week_on_linux:
+        result.update(_final_week_verdict(rss, "resident memory", limit_mb, week_limit_mb))
+    elif judged_on == "resident":
         result["outcome"] = "passed" if rss["rule_held"] else "failed"
         result["reason"] = f"resident memory grew {rss['growth_mb']} MB after the first hour against {limit_mb} MB"
     elif judged_on == "in_use":
@@ -610,9 +614,15 @@ def memory_verdict(samples: list[dict], end: dict | None, limit_mb: float = MAX_
 def _in_use_verdict(in_use: dict, limit_mb: float, week_limit_mb: float) -> dict:
     """The Mac's verdict on memory in use, passing when it grew at most limit_mb after the first hour or, failing that,
     less than week_limit_mb over the final replayed week."""
-    growth, week = in_use["growth_mb"], in_use["week_over_week_mb"]
-    first = f"memory in use grew {growth} MB after the first hour against {limit_mb} MB"
-    if in_use["rule_held"]:
+    return _final_week_verdict(in_use, "memory in use", limit_mb, week_limit_mb)
+
+
+def _final_week_verdict(measure: dict, label: str, limit_mb: float, week_limit_mb: float) -> dict:
+    """Passing when the measure grew at most limit_mb after the first hour or, failing that, less than week_limit_mb
+    over the final replayed week."""
+    growth, week = measure["growth_mb"], measure["week_over_week_mb"]
+    first = f"{label} grew {growth} MB after the first hour against {limit_mb} MB"
+    if measure["rule_held"]:
         return {"outcome": "passed", "decided_by": "first hour", "reason": first}
     if week is None:
         return {"outcome": "failed", "decided_by": "first hour",
@@ -1121,7 +1131,7 @@ def _soak(args: argparse.Namespace, cfgs: tuple[StockConfig, StockConfig], out: 
     run = Run(cfgs, (Path(args.s1), Path(args.s2)), out, recordings, hashes_from, plan, state, sent, samples, ends,
               codes, failure,
               time.monotonic() - started, time.process_time() - cpu_started)
-    report = build_report(run, args.max_growth_mb, args.max_week_growth_mb)
+    report = build_report(run, args.max_growth_mb, args.max_week_growth_mb, args.final_week_on_linux)
     write_outputs(out, report, samples)
     return report
 
@@ -1173,7 +1183,8 @@ def _cpu(end: dict, session_minutes: int, replayed_s: float) -> dict:
             "worker_cpu_s": round(end["worker_cpu_s"], 3), "segments": segments}
 
 
-def build_report(run: Run, limit_mb: float = MAX_GROWTH_MB, week_limit_mb: float = MAX_WEEK_GROWTH_MB) -> dict:
+def build_report(run: Run, limit_mb: float = MAX_GROWTH_MB, week_limit_mb: float = MAX_WEEK_GROWTH_MB,
+                 final_week_on_linux: bool = False) -> dict:
     """The outcome with memory, CPU, invariants, determinism and activity, from what the soak gathered."""
     cfgs, out, end = run.cfgs, run.out, run.ends[0]
     names = [cfg.run.name for cfg in cfgs]
@@ -1213,7 +1224,7 @@ def build_report(run: Run, limit_mb: float = MAX_GROWTH_MB, week_limit_mb: float
     checks.append({"check": "invariant violation log lines", "run": "both", "rows": end["lines"],
                    "failures": end["log_counts"].get("invariant violation", 0)})
     failing = [c for c in checks if c["failures"]]
-    memory = memory_verdict(run.samples, end, limit_mb, week_limit_mb)
+    memory = memory_verdict(run.samples, end, limit_mb, week_limit_mb, final_week_on_linux)
     memory["peak_rss_mb"] = round(end["peak_rss_mb"], 3)
     if run.samples:  # live blocks flat while arenas rise means fragmentation, not a leak
         memory["live_blocks"] = {"first_hour": run.samples[0]["live_blocks"], "end": end["live_blocks"]}
@@ -1345,6 +1356,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-growth-mb", type=float, default=MAX_GROWTH_MB)
     p.add_argument("--max-week-growth-mb", type=float, default=MAX_WEEK_GROWTH_MB,
                    help="on a Mac, growth in use over the final replayed week below this also passes")
+    p.add_argument("--final-week-on-linux", action="store_true",
+                   help="apply the final week rule to resident memory on Linux too, the owner's decision of 15 October "
+                        "2026 for the home PC, never on a Raspberry Pi")
     p.add_argument("--out", type=Path, default=None, help="a new or empty folder, by default under data/v2/soak")
     output.add_detail_flag(p)
     p.add_argument("--leak-kb-per-message", type=float, default=0.0, help=argparse.SUPPRESS)
