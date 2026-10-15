@@ -107,9 +107,11 @@ def test_price_rules_come_from_the_stock_feed_config():
     feed = load_stock_config(ROOT / "configs" / "v2" / "s1_prices.toml").stock_feed
     # Every code Finnhub's table does not mark as updating the last sale, set on 15 October 2026 (PLAN_V2 4.4).
     not_last_sale = {"3", "5", "9", "10", "11", "12", "15", "16", "17", "18", "20", "21", "22", "24", "25", "26", "27",
-                     "30", "31", "32", "34", "36", "37", "38", "40", "41"}
+                     "30", "31", "32", "34", "36", "37", "38", "40"}
     assert PriceRules.from_config(feed) == PriceRules(4_000, frozenset(not_last_sale))
-    assert {"1", "8"}.isdisjoint(not_last_sale)
+    # Regular trades, sweeps and the trade through exempt flag a sweep carries all set the price, by the owner's
+    # decision of 15 October 2026.
+    assert {"1", "8", "41"}.isdisjoint(not_last_sale)
     changed = dataclasses.replace(feed, late_print_seconds=7.5, price_excluded_conditions=("Z", "12"))
     assert PriceRules.from_config(changed) == PriceRules(7_500, frozenset({"Z", "12"}))
 
