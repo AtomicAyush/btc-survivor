@@ -125,9 +125,10 @@ footer p { border-top: 1px solid var(--line); padding-top: 12px; margin: 0; }
     <p><b>News.</b> The news process writes a heartbeat every 30 seconds. Without a fresh healthy heartbeat both runs pause rent, learning and decisions. Model spend has one cap of 20 dollars a month, and a day above a quarter of it raises an alert that stops nothing.</p>
     <p><b>Skill.</b> The correlation of each predictor with the next 30 minute return, pooled over the eight symbols from session 2. Everything here is descriptive until the cutoff, and only the news predictor in S2 is ever tested. At the cutoff its pass or fail word here is the first test, and evaluate runs the second, news beyond the price features, only after a pass.</p>
     <p><b>Populations.</b> 24 learners per run, three per home symbol, each with a coin flip twin. Learner against twin separates skill from luck. There is no margin over cost, so a flat learner opens on its own whenever its prediction clears the round trip cost, and the forced timer opens a trade for a flat learner after the configured healthy session hours without one, 3 in the runs and half an hour in the rehearsal.</p>
+    <p><b>Scorecards.</b> Two reports fixed before launch from the stored rows, with no pass label. The chooser asks what each run's bps forecasts would have earned picking, at each evaluation minute, the one symbol whose forecast beat its round trip cost by the most in that symbol's own 30 minute spread, against a seeded random pick, every symbol traded together, the largest raw forecast, QQQ held long and flat. The day scorecard holds each 10:00 call, the forecasts by sign, the news score, morning momentum and the chooser, to the 15:55 flatten after costs, against holding long, a seeded coin and flat, with early closes shown with and without.</p>
     <p><b>Holding.</b> By the owner's decision of 13 October 2026 a learner holding a position has already paid to enter and pays to exit whenever it leaves, so it keeps the position while its prediction still points the position's way by more than the cost of holding it 30 more minutes, nothing for a long and the borrow for a short. It flips only when the prediction points the other way by more than the full required edge of the new side, and otherwise closes. Stops, the 15:55 close and the flattens still end a held position.</p>
     <p><b>Decisions.</b> Every decision of both runs, newest first. A learner decides every 30 session minutes on its home symbol, and its twin copies opens, closes and flips with a coin for the side, keeping its own position while the learner keeps its. A hold keeps the position with no order, and its reason names the holding cost the prediction beat. The required edge and the gate are always the full edge an open needs, which a flip must pass. Choose a row to see its prediction, the edge it needed, its fill and costs, and its label once the 30 minutes have passed.</p>
-    <p><b>Freshness.</b> The overview refreshes every 10 seconds and the newest page of decisions every 30, from views the server recomputes at most every 5 seconds.</p>
+    <p><b>Freshness.</b> The overview refreshes every 10 seconds and the newest page of decisions every 30, from views the server recomputes at most every 5 seconds, and the scorecards at most once a minute.</p>
     <p><b>Times.</b> The runs keep UTC, and so does this page until you choose Local at the top. Local shows every time here in this computer's time zone with its abbreviation, times quoted inside feed events included, and the from and to filters of the decisions then read and show times in that zone too. Times marked ET are New York time, the market's clock, in either choice. A time ending in Z is read as UTC in either zone, so one copied from a log or from status can be pasted as it is, and an hour that repeats when the clocks go back is shown that way. The choice is remembered in this browser.</p>
   </div></details></div>
 <main id="main"><p class="empty">Loading the runs.</p></main>
@@ -159,12 +160,12 @@ footer p { border-top: 1px solid var(--line); padding-top: 12px; margin: 0; }
 <script>
 "use strict";
 const REFRESH_MS = 10000, EX_REFRESH_MS = 30000;
-let state = null, pageVersion = null, lastOk = null, nextAt = Date.now(), current = null, showTwins = false;
+let state = null, pageVersion = null, lastOk = null, nextAt = Date.now(), current = null, showTwins = false, showDaySymbols = false;
 const store = {
   get(key) { try { return localStorage.getItem(key); } catch (e) { return null; } },
   set(key, value) { try { localStorage.setItem(key, value); } catch (e) {} },
 };
-current = store.get("v2run"); showTwins = store.get("v2twins") === "1";
+current = store.get("v2run"); showTwins = store.get("v2twins") === "1"; showDaySymbols = store.get("v2daysymbols") === "1";
 
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 const num = (v, d = 2) => v == null ? "–" : Number(v).toLocaleString(undefined, {minimumFractionDigits: d, maximumFractionDigits: d});
@@ -290,13 +291,16 @@ function render() {
   if (!runs.some(r => r.name === current)) current = runs.length ? runs[runs.length - 1].name : null;
   const scrolled = [...document.querySelectorAll("#main .scroll")].map(el => el.scrollLeft);
   document.getElementById("main").innerHTML = [alerts(), market(state.market), feed(state.feed), news(state.news),
-    prices(state.prices), skill(state.runs, state.s2_against_s1, state.window), recent(state.news), populations(state.runs)].join("");
+    prices(state.prices), skill(state.runs, state.s2_against_s1, state.window), scorecards(state.scorecards, state.window),
+    recent(state.news), populations(state.runs)].join("");
   document.querySelectorAll("#main .scroll").forEach((el, i) => { el.scrollLeft = scrolled[i] || 0; });
   document.querySelectorAll("#main .tab[data-run]").forEach(b => b.onclick = () => {
     current = b.dataset.run; store.set("v2run", current); render();
   });
   const t = document.getElementById("twins");
   if (t) t.onchange = () => { showTwins = t.checked; store.set("v2twins", showTwins ? "1" : "0"); render(); };
+  const d = document.getElementById("daysymbols");
+  if (d) d.onchange = () => { showDaySymbols = d.checked; store.set("v2daysymbols", showDaySymbols ? "1" : "0"); render(); };
 }
 
 function alerts() {
@@ -376,6 +380,52 @@ function skill(runs, pair, win) {
   const p = pair && !pair.error ? `<p class="muted">S2 population against S1 on ${pair.rows} paired rows, squared error ratio ${num(pair.mse_ratio, 3)}, t ${num(pair.t, 2)}, a ratio below 1 favours S2.</p>` : failed(pair);
   const note = win && win.final ? `window ends at the cutoff ${esc(stamp(win.end))}, only S2 news is tested` : "descriptive until the cutoff";
   return panel("Forecast skill", (parts || empty("No run database yet.")) + p, note);
+}
+
+// The chooser of PLAN_V2 section 11.8 for the chosen run and the day scorecard of section 11.9, as evaluate prints
+// them, descriptive with no pass label. Results are bps after costs.
+const bps = v => v == null ? "–" : signed(v, 2);
+const right = v => v == null ? "–" : pct(v, 0);
+
+function scorecards(sc, win) {
+  const title = "Scorecards";
+  if (!sc) return panel(title, empty("No window yet. The scorecards start once the news run has launched."));
+  if (sc.error) return panel(title, failed(sc));
+  const runs = [...new Set(sc.chooser.map(c => c.run))];
+  const run = runs.includes(current) ? current : runs[runs.length - 1];
+  const tabs = runs.length ? `<div class="tabs">${runs.map(r => `<button class="tab ${r === run ? "on" : ""}" type="button" data-run="${esc(r)}">${esc(r)}</button>`).join("")}</div>` : "";
+  const cards = sc.chooser.filter(c => c.run === run);
+  const counted = cards.some(c => c.minutes);
+  const chooser = !counted ? empty("No evaluation minute with a matured label in the window yet. The window starts at session 2, and a symbol needs 60 labels for its scale.")
+    : table([["predictor", 1], ["strategy", 1], ["minutes", 0, "Evaluation minutes with a value, flat ones included"], ["picks", 0], ["flat", 0],
+      ["no result", 0, "Picks whose label ended as gap"], ["right", 0, "Share of picks on the side of their label, before costs"],
+      ["per pick", 0, "Mean result per pick in bps after costs"], ["per minute", 0, "Mean result per evaluation minute in bps"], ["total", 0, "Running total in bps"]],
+      cards.flatMap(c => c.strategies.map(r => `<tr><td class="l">${esc(c.predictor)}</td><td class="l">${esc(r.strategy)}</td><td>${r.minutes}</td><td>${r.picks}</td><td>${r.flat}</td>
+        <td>${r["no result"]}</td><td>${right(r["right share"])}</td><td class="${cls(r["mean per pick bps"])}">${bps(r["mean per pick bps"])}</td>
+        <td class="${cls(r["mean per minute bps"])}">${bps(r["mean per minute bps"])}</td><td class="${cls(r["total bps"])}">${bps(r["total bps"])}</td></tr>`)))
+      + table([["predictor", 1], ["chooser minus", 1], ["minutes", 0, "Minutes both have a value"], ["mean", 0, "Mean difference per minute in bps"],
+        ["se", 0, "Newey West error at the lags recorded at launch"], ["t", 0], ["upper bound", 0, "One sided 95 percent upper bound"]],
+        cards.flatMap(c => c.differences.map(r => `<tr><td class="l">${esc(c.predictor)}</td><td class="l">${esc(r.comparison)}</td><td>${r.minutes}</td>
+          <td class="${cls(r["mean bps"])}">${bps(r["mean bps"])}</td><td>${num(r.se, 2)}</td><td>${num(r.t, 2)}</td><td>${bps(r["upper bound"])}</td></tr>`)))
+      + cards.map(c => `<p class="muted">${esc(c.predictor)} picks per symbol ${Object.entries(c.picks_per_symbol).map(([s, n]) => `<span class="chip">${esc(s)} ${n}</span>`).join("")}
+        · ${c.no_scale_minutes} minutes before any symbol had a scale</p>`).join("");
+  const late = sc.late && sc.late[run] != null ? `<p class="muted">${sc.late[run]} forecasts left out because an input arrived after their minute</p>` : "";
+  const day = sc.day;
+  const labels = day.labels.map(l => `<span class="chip">${esc(l.scope)}: ${l.counted} of ${l["symbol days"]} symbol days counted, ${l["no entry price"]} without a 10:00 price, ${l["no exit price"]} without a flatten price, ${l["invalid stretch"]} with an invalid stretch, ${l["every minute valid"]} with every minute valid</span>`).join("");
+  const calls = !day.sessions ? empty("No session from session 3 has reached its 15:55 flatten in the window yet.")
+    : table([["scope", 1], ["call", 1], ["days", 0], ["symbol days", 0], ["calls", 0], ["no result", 0, "Calls on a symbol day that did not count"],
+      ["right", 0, "Share of calls on the side of the day label, before costs"], ["per call", 0, "Mean result per call in bps after costs"], ["total", 0, "Running total in bps"],
+      ["corr", 0, "Pooled correlation with the day label"], ["t", 0, "From the version 1 block test, one block per session"], ["upper bound", 0, "One sided 95 percent upper bound"]],
+      day.calls.map(r => `<tr><td class="l">${esc(r.scope)}</td><td class="l">${esc(r.call)}</td><td>${r.days}</td><td>${r["symbol days"]}</td><td>${r.calls}</td><td>${r["no result"]}</td>
+        <td>${right(r["right share"])}</td><td class="${cls(r["mean per call bps"])}">${bps(r["mean per call bps"])}</td><td class="${cls(r["total bps"])}">${bps(r["total bps"])}</td>
+        <td class="${cls(r.corr)}">${signed(r.corr, 3)}</td><td>${num(r.t, 2)}</td><td>${num(r["upper bound"], 3)}</td></tr>`))
+      + `<div class="tabs"><label class="toggle"><input type="checkbox" id="daysymbols" ${showDaySymbols ? "checked" : ""}> show each symbol alone</label></div>`
+      + (showDaySymbols ? table([["scope", 1], ["call", 1], ["symbol", 1], ["symbol days", 0], ["calls", 0], ["right", 0], ["per call", 0], ["total", 0]],
+        day.symbols.map(r => `<tr><td class="l">${esc(r.scope)}</td><td class="l">${esc(r.call)}</td><td class="l">${esc(r.symbol)}</td><td>${r["symbol days"]}</td><td>${r.calls}</td>
+          <td>${right(r["right share"])}</td><td class="${cls(r["mean per call bps"])}">${bps(r["mean per call bps"])}</td><td class="${cls(r["total bps"])}">${bps(r["total bps"])}</td></tr>`)) : "");
+  return panel(title, `${tabs}<h3>Chooser, the best ranked symbol at each evaluation minute against its comparisons</h3>${chooser}${late}
+    <h3>Day, the 10:00 calls held to the 15:55 flatten after costs, from session 3</h3><div>${labels}</div>${calls}`,
+    `descriptive with no pass label${win && win.final ? ", the window ends at the cutoff" : ", the run so far"}`);
 }
 
 const scored = (s, received) => !s ? `<span class="muted">–</span>` : `${chip(s.status, "scored " + when(s.scored_at))} <span class="muted">${secs(after(received, s.scored_at))}</span> ${s.impacts.map(i =>

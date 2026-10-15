@@ -29,6 +29,10 @@ share of long opens, the own trades, the round trips per session, the largest no
 mean equity with and without the dead, deaths, the outcomes, data quality, spend and the code commits, for the
 owner's own terminal. Only H1 and H2 carry a pass label, and every other result is descriptive.
 
+The chooser scorecard of section 11.8 and the day scorecard of section 11.9 come from v2/scorecards.py as descriptive
+sections, their counts in the summary and their figures with --detail. They never change a criterion, a verdict or the
+exit code, and a failure to build them is printed in their place.
+
     btc_survivor_v2 evaluate configs/v2/s1_prices.toml configs/v2/s2_news.toml [--detail] [--checks DIR] [--ledger FILE]
 """
 
@@ -181,6 +185,7 @@ class Evaluation:
     tables: dict[str, list[dict]]
     incremental: stats.PooledSkill | None = None  # H2, None when H1 did not pass and H2 was not run
     without_scores: int = 0  # H1 rows H2 left out because S2 stored no complete price z scores for them
+    scorecards: tuple[tuple[str, Any], ...] = ()  # the scorecards' summary counts, descriptive
 
     @property
     def valid(self) -> bool:
@@ -1046,6 +1051,58 @@ def death_rows(run: Run, window: Window) -> list[dict]:
                 "ON b.bot_id = d.bot_id WHERE d.died_at <= ? ORDER BY d.died_at, d.bot_id", (window.end,))]
 
 
+# The scorecards of sections 11.8 and 11.9
+
+
+SCORECARD_TITLES = ("chooser", "chooser against comparisons", "chooser picks per symbol", "day labels",
+                    "day scorecard", "day scorecard per symbol", "scorecards")
+
+
+def _cells(row: dict) -> dict:
+    """A scorecard row for --detail, each figure to four places and a missing one empty."""
+    return {key: _f(value) if value is None or isinstance(value, float) else value for key, value in row.items()}
+
+
+def scorecard_tables(runs: Sequence[Run], window: Window,
+                     s: EvaluationConfig) -> tuple[dict[str, list[dict]], tuple[tuple[str, Any], ...]]:
+    """The chooser of section 11.8 on each run's bps predictors and the day scorecard of section 11.9 over the
+    window, as detail tables, with their counts for the summary. Neither carries a pass label or decides anything, so
+    a failure to build them is reported in their place and never changes a verdict or the exit code."""
+    try:
+        # Imported here and never at the top, because the console script that starts the stock and news processes
+        # imports this module, and neither process may ever load the scorecards. It sits inside the try, so even a
+        # module that fails to import changes no verdict and no exit code.
+        from btc_survivor.v2 import scorecards
+        sources = [scorecards.Source(run.name, run.conn, run.config) for run in runs]
+        cards = [card for source in sources for card in scorecards.chooser_cards(
+            source, window.start, window.end, s.newey_west_lags, s.upper_bound_z)]
+        day = scorecards.day_card(sources, window.launch, window.end, s.upper_bound_z)
+        late = [(source.name, scorecards.late_forecasts(source, window.start, window.end)) for source in sources]
+    except Exception as exc:  # noqa: BLE001, a descriptive section must never change a verdict or the exit code
+        return ({"scorecards": [{"problem": f"the scorecards could not be built, {type(exc).__name__} {exc}"}]},
+                (("scorecards", output.Word("not computed")),))
+    tables: dict[str, list[dict]] = defaultdict(list)
+    lines: list[tuple[str, Any]] = []
+    for c in cards:
+        head = {"run": c.run, "predictor": c.predictor}
+        for row in c.strategies:
+            extra = {"no scale minutes": c.unscaled_minutes, "skipped symbol minutes": c.skipped} \
+                if row["strategy"] == scorecards.CHOOSER else {}
+            tables["chooser"].append(_cells({**head, **row, **extra}))
+        tables["chooser against comparisons"] += [_cells({**head, **row}) for row in c.differences]
+        tables["chooser picks per symbol"].append({**head, **c.picks_per_symbol})
+        lines += [(f"{c.run} {c.predictor} chooser picks", output.Count(c.picks)),
+                  (f"{c.run} {c.predictor} chooser flat minutes", output.Count(c.flat))]
+    tables["day labels"] = [_cells(row) for row in day.labels]
+    tables["day scorecard"] = [_cells(row) for row in day.calls]
+    tables["day scorecard per symbol"] = [_cells(row) for row in day.symbols]
+    lines += [("day scorecard sessions", output.Count(day.sessions)),
+              ("day scorecard counted symbol days", output.Count(day.counted)),
+              ("day scorecard failed symbol days", output.Count(day.failed))]
+    lines += [(f"{name} scorecard forecasts left out for late inputs", output.Count(n)) for name, n in late]
+    return dict(tables), tuple(lines)
+
+
 # The whole evaluation
 
 
@@ -1152,10 +1209,12 @@ def evaluate(s1: Run, s2: Run, news: sqlite3.Connection, checks_dir: Path, ledge
                        for month, models in sorted((spend or {}).items()) for model, usd in sorted(models.items())]
     tables["commits"] = [{"commit": commit} for commit in listed]
     found, tables["round trips"] = outcomes(s1, s2, window)
+    cards, card_lines = scorecard_tables(runs, window, settings)
+    tables.update(cards)
     return Evaluation(window, settings, all(run.file_matches for run in runs), checks, confirmatory, compared,
                       sum(len(v) for r in rows.values() for v in r.values()), tuple(comparisons),
                       tuple(found), tuple(row for run in runs for row in death_rows(run, window)),
-                      pairs, share, alert_days, dict(tables), h2, without)
+                      pairs, share, alert_days, dict(tables), h2, without, card_lines)
 
 
 def evaluate_runs(s1_path: Path, s2_path: Path, checks: Path | None = None, ledger: Path | None = None) -> Evaluation:
@@ -1221,6 +1280,7 @@ def report(ev: Evaluation) -> tuple[output.Report, list[output.Report]]:
               ("twin pairs", output.Count(ev.twin_pairs)), *_own_lines(ev), ("deaths", output.Count(len(ev.deaths)))]
     names = list(dict.fromkeys(o.name for o in ev.outcomes))
     lines += [(name, _verdict([o.matched for o in ev.outcomes if o.name == name])) for name in names]
+    lines += list(ev.scorecards)
     criteria = [{"check": c.name, "verdict": "pass" if c.passed else "fail", "problem": problem}
                 for c in ev.checks for problem in (c.problems or ("none",))]
     matched = [{"run": o.run, "outcome": o.name, "matched": "not yet" if o.matched is None else
@@ -1232,7 +1292,9 @@ def report(ev: Evaluation) -> tuple[output.Report, list[output.Report]]:
                   "twins", "long opens", "own trades", "round trips", "notional over equity", "learner equity")),
               output.Report("deaths", (), ev.deaths),
               *(output.Report(title, (), tuple(ev.tables.get(title, ()))) for title in (
-                  "data quality", "spend", "commits"))]
+                  "data quality", "spend", "commits")),
+              *(output.Report(title, (), tuple(ev.tables[title])) for title in SCORECARD_TITLES
+                if title in ev.tables)]
     return output.Report("evaluate", tuple(lines)), detail
 
 

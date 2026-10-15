@@ -17,6 +17,12 @@ from S2's run minutes, the lags and z values from S2's meta, and a row counts on
 of the window. Every figure is descriptive until the cutoff, and after it S2's news predictor alone carries the pass or
 fail word of H1, the first test of the confirmatory sequence, while H2, the test beyond price, is evaluate's alone.
 
+The scorecards panel shows the chooser scorecard of section 11.8 for each run and the day scorecard of section 11.9
+through the functions evaluate prints them with, over the same window, with each run's settings from its meta at
+launch, descriptive with no pass label. They are imported only when the view is built, as evaluate does, because the
+console script that starts the stock and news processes imports this module too. They change only when a label
+matures or a session reaches its flatten, so the server rebuilds them at most once a minute.
+
     btc_survivor_v2 dashboard configs/v2/s1_prices.toml configs/v2/s2_news.toml [--port 8060]
 """
 
@@ -43,7 +49,7 @@ from btc_survivor.logsetup import setup_logging
 from btc_survivor.store import StoreError
 from btc_survivor.v2 import decisions, evaluate, local_secrets, redact, sessions, status
 from btc_survivor.v2.config import (MAX_MONTHLY_USD, PREDICTORS, ConfigError, EvaluationConfig, StockConfig,
-                                    load_run_pair)
+                                    load_run_pair, parse_stock_config)
 from btc_survivor.v2.local_secrets import SecretsError
 from btc_survivor.v2.news import db as news_db
 from btc_survivor.v2.news.db import NewsDbError
@@ -59,6 +65,7 @@ PORT = 8060
 V1_PORT = 8050       # the version 1 dashboard's port, always refused
 PAGE = Path(__file__).with_name("dashboard.html")
 STATE_TTL_S = 5.0    # each response body is shared by every request for this long
+SCORECARDS_TTL_S = 60.0  # the scorecards panel, which reads every label and forecast of the window, is kept this long
 CACHE_ENTRIES = 64
 MAX_QUERY_FIELDS = 32
 RECENT = 25
@@ -292,6 +299,45 @@ def run_state(config: StockConfig, conn: sqlite3.Connection | str, rows: dict,
             "chart_minutes_per_point": guarded(f"the chart of run {name}", lambda: chart_step(conn))}
 
 
+def launched_config(config: StockConfig, conn: sqlite3.Connection) -> StockConfig:
+    """The config a run recorded in its meta at launch, as evaluate reads it, or the config file before launch."""
+    meta = store.read_meta(conn)
+    return parse_stock_config(meta["config_toml"], config.base_dir) if "config_toml" in meta else config
+
+
+def scorecards_view(configs: tuple[StockConfig, StockConfig], conns: list[sqlite3.Connection | str],
+                    judged: tuple[EvaluationConfig, evaluate.Window]) -> dict:
+    """The chooser of each run that opened and the day scorecard, as evaluate builds them over its window, empty
+    while a run has no rows yet."""
+    # Imported here and never at the top, as in evaluate, so the stock and news processes never load the scorecards.
+    from btc_survivor.v2 import scorecards
+    settings, window = judged
+    sources = [scorecards.Source(config.run.name, conn, launched_config(config, conn))
+               for config, conn in zip(configs, conns) if not isinstance(conn, str)]
+    chooser = [{"run": card.run, "predictor": card.predictor, "minutes": card.minutes,
+                "no_scale_minutes": card.unscaled_minutes, "skipped": card.skipped,
+                "strategies": list(card.strategies), "differences": list(card.differences),
+                "picks_per_symbol": card.picks_per_symbol}
+               for source in sources for card in scorecards.chooser_cards(
+                   source, window.start, window.end, settings.newey_west_lags, settings.upper_bound_z)]
+    day = scorecards.day_card(sources, window.launch, window.end, settings.upper_bound_z)
+    return {"chooser": chooser, "day": {"sessions": day.sessions, "labels": list(day.labels),
+                                        "calls": list(day.calls), "symbols": list(day.symbols)},
+            "late": {source.name: scorecards.late_forecasts(source, window.start, window.end) for source in sources}}
+
+
+def cached_scorecards(cache: TtlCache | None, configs: tuple[StockConfig, StockConfig],
+                      conns: list[sqlite3.Connection | str],
+                      judged: tuple[EvaluationConfig, evaluate.Window]) -> dict:
+    """The scorecards view, from the cache while it is younger than a minute, so the page's polling rebuilds it at most
+    once a minute. A view that fails to build raises before the cache stores it, so a failure is never kept."""
+    if cache is None:
+        return scorecards_view(configs, conns, judged)
+    window = judged[1]
+    return cache.get(("scorecards", window.launch, window.start),
+                     lambda: scorecards_view(configs, conns, judged))
+
+
 # News
 
 
@@ -394,8 +440,9 @@ def page_version() -> str:
     return str(PAGE.stat().st_mtime_ns)
 
 
-def build_state(s1: StockConfig, s2: StockConfig, now_ms: int) -> dict:
-    """Everything the page shows, every database opened read only for this one view and closed after it."""
+def build_state(s1: StockConfig, s2: StockConfig, now_ms: int, scorecards_cache: TtlCache | None = None) -> dict:
+    """Everything the page shows, every database opened read only for this one view and closed after it, the
+    scorecards from scorecards_cache when one is given."""
     conns = [open_run(config) for config in (s1, s2)]
     try:
         live = [conn for conn in conns if not isinstance(conn, str)]
@@ -423,6 +470,8 @@ def build_state(s1: StockConfig, s2: StockConfig, now_ms: int) -> dict:
             "runs": [run_state(c, conn, r, judged) for c, conn, r in zip((s1, s2), conns, rows)],
             "s2_against_s1": None if unpaired else guarded("S2 against S1",
                                                            lambda: s2_against_s1(*rows, judged[0])),
+            "scorecards": None if judged is None else guarded(
+                "the scorecards", lambda: cached_scorecards(scorecards_cache, (s1, s2), conns, judged)),
         }
     finally:
         for conn in conns:
@@ -501,11 +550,11 @@ def wall_ms() -> int:
 def make_handler(s1: StockConfig, s2: StockConfig,
                  now_ms: Callable[[], int] = wall_ms) -> type[BaseHTTPRequestHandler]:
     """The request handler for both runs, reading the time from now_ms so a test can fix it."""
-    cache = TtlCache()
+    cache, cards = TtlCache(), TtlCache(SCORECARDS_TTL_S, size=2)
 
     def state() -> tuple[int, bytes]:
         try:
-            return 200, body(build_state(s1, s2, now_ms()))
+            return 200, body(build_state(s1, s2, now_ms(), cards))
         except Exception:  # noqa: BLE001, the page must get an answer it can show
             log.exception("dashboard could not build its view")
             return 500, body({"error": NO_VIEW})

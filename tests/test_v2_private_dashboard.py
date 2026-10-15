@@ -25,7 +25,7 @@ from btc_survivor.v2 import dashboard, decisions, evaluate, local_secrets, redac
 from btc_survivor.v2.config import load_run_pair
 from btc_survivor.v2.local_secrets import ANTHROPIC, CONTACT, FINNHUB
 from btc_survivor.v2.news import db as news_db
-from btc_survivor.v2.stocks import store
+from btc_survivor.v2.stocks import records, store
 from test_v2_contact_absent import fingerprint, holds
 from test_v2_store import contents, news_database, run_database, v1_database
 import v2_runkit as kit
@@ -239,7 +239,7 @@ def test_the_page_names_its_panels_and_the_footer(server):
     page = payload.decode()
     assert headers["content-type"] == "text/html; charset=utf-8"
     for text in ("/api/state", "/api/decisions", "/api/decision?run=", "Market session", "Finnhub feed",
-                 "News process", "Prices", "Forecast skill", "Recent news", "Populations", "Decisions",
+                 "News process", "Prices", "Forecast skill", "Scorecards", "Recent news", "Populations", "Decisions",
                  "next forced trade", "This is a private view of Finnhub data for personal non professional use. "
                  "It is not to be shared, tunnelled or published."):
         assert text in page, text
@@ -298,6 +298,97 @@ def test_the_skill_panel_is_evaluate_s_window_rows_and_confirmatory_result_once_
     assert news["verdict"] == ("pass" if expected.passed else "fail")
     assert {row["verdict"] for run in state["runs"] for row in run["skill"] if row is not news} == {"descriptive"}
     assert state["s2_against_s1"]["rows"] == 56
+
+
+def test_the_scorecards_panel_is_the_scorecards_over_evaluate_s_window(runs):
+    from btc_survivor.v2 import scorecards
+    s1, s2 = load_run_pair(runs.s1, runs.s2)
+    state = json.loads(dashboard.body(dashboard.build_state(s1, s2, NOW)))
+    found = state["scorecards"]
+    assert [(c["run"], c["predictor"]) for c in found["chooser"]] == [
+        ("s1_prices", "population"), ("s1_prices", "linear_prices"), ("s2_news", "population"),
+        ("s2_news", "linear_prices"), ("s2_news", "linear_news")]
+    readers = [store.open_reader(path) for path in (runs.s1_db, runs.s2_db)]
+    try:
+        settings, window = dashboard.evaluation_window(readers[1])
+        sources = [scorecards.Source(c.run.name, conn, c) for c, conn in zip((s1, s2), readers)]
+        cards = [card for source in sources for card in scorecards.chooser_cards(
+            source, window.start, window.end, settings.newey_west_lags, settings.upper_bound_z)]
+        day = scorecards.day_card(sources, window.launch, window.end, settings.upper_bound_z)
+    finally:
+        for conn in readers:
+            conn.close()
+    for shown, card in zip(found["chooser"], cards):
+        assert shown["strategies"] == json.loads(dashboard.body(list(card.strategies)))
+        assert shown["differences"] == json.loads(dashboard.body(list(card.differences)))
+        assert shown["minutes"] == card.minutes and shown["picks_per_symbol"] == card.picks_per_symbol
+    # Three window sessions of 12 minutes, the last pending, and no linear_news row seeded at all.
+    assert [c["minutes"] for c in found["chooser"]] == [35, 35, 35, 35, 0]
+    assert found["day"]["calls"] == json.loads(dashboard.body(list(day.calls)))
+    # Only session 3 reached its 15:55 flatten. Its sparse candles leave seven symbols without a 10:00 price, and QQQ,
+    # seeded at every evaluation minute, without one at 15:55.
+    labels = found["day"]["labels"][0]
+    assert found["day"]["sessions"] == 1 and (labels["counted"], labels["no entry price"], labels["no exit price"]) == (
+        0, 7, 1)
+    assert found["late"] == {"s1_prices": 0, "s2_news": 0}
+
+
+def test_the_scorecards_panel_is_safe_before_any_row_and_before_launch(tmp_path):
+    s1_path, s2_path, _ = kit.configs(tmp_path)
+    s1, s2 = load_run_pair(s1_path, s2_path)
+    launch = parse_iso("2026-10-19T13:00:00.000Z")
+    for config in (s1, s2):
+        st = store.StockStore.open(config.db_path)
+        news = {"config_hash": "a" * 64, "prompt_sha256": "b" * 64, "schema_sha256": "c" * 64,
+                "haiku_model": "h", "sonnet_model": "s"}
+        for key, value in records.launch_meta(config, launch, news, 1, "0" * 40).items():
+            st.queue_meta(key, value)
+        st.flush()
+        st.close()
+    found = dashboard.build_state(s1, s2, launch + 60_000)["scorecards"]
+    assert "error" not in found and found["day"]["sessions"] == 0 and found["day"]["labels"][0]["symbol days"] == 0
+    assert {c["minutes"] for c in found["chooser"]} == {0} and len(found["chooser"]) == 5
+    assert {s["total bps"] for c in found["chooser"] for s in c["strategies"]} == {0.0}
+    conn = sqlite3.connect(s2.db_path)
+    with conn:
+        conn.execute("DELETE FROM meta WHERE key = 'launch_ts'")
+    conn.close()
+    assert dashboard.build_state(s1, s2, launch + 60_000)["scorecards"] is None
+
+
+def test_the_scorecards_are_rebuilt_at_most_once_a_minute_and_a_failure_is_never_kept(runs, monkeypatch):
+    s1, s2 = load_run_pair(runs.s1, runs.s2)
+    real, built, now = dashboard.scorecards_view, [], [0.0]
+
+    def counted(*args):
+        built.append(now[0])
+        if len(built) == 3:
+            raise ValueError("planted")
+        return real(*args)
+
+    monkeypatch.setattr(dashboard, "scorecards_view", counted)
+    cache = dashboard.TtlCache(dashboard.SCORECARDS_TTL_S, size=2, clock=lambda: now[0])
+    first = dashboard.build_state(s1, s2, NOW, cache)["scorecards"]
+    now[0] = 59.0
+    assert dashboard.build_state(s1, s2, NOW, cache)["scorecards"] == first and built == [0.0]
+    now[0] = 60.0
+    assert dashboard.build_state(s1, s2, NOW, cache)["scorecards"] == first and built == [0.0, 60.0]
+    now[0] = 120.0
+    assert dashboard.build_state(s1, s2, NOW, cache)["scorecards"] == {
+        "error": "the scorecards cannot be read, see the dashboard log"}
+    now[0] = 121.0  # the failure was not kept, so the next view builds again
+    assert dashboard.build_state(s1, s2, NOW, cache)["scorecards"] == first and built == [0.0, 60.0, 120.0, 121.0]
+    # Without a cache, as evaluate's tests and a single view use it, every view builds its own.
+    dashboard.build_state(s1, s2, NOW)
+    assert len(built) == 5 and dashboard.SCORECARDS_TTL_S == 60.0
+
+
+def test_scorecards_that_fail_show_an_error_and_the_rest_still_render(runs, monkeypatch):
+    s1, s2 = load_run_pair(runs.s1, runs.s2)
+    monkeypatch.setattr(dashboard, "scorecards_view", lambda *args: 1 / 0)
+    state = dashboard.build_state(s1, s2, NOW)
+    assert state["scorecards"] == {"error": "the scorecards cannot be read, see the dashboard log"}
+    assert state["runs"][1]["skill"] and state["window"]["end"]
 
 
 def test_the_news_panel_reads_the_heartbeat_spend_scores_and_what_s2_used(server):

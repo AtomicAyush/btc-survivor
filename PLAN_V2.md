@@ -1039,6 +1039,8 @@ Added on 14 October 2026 by the owner's decision, before launch and before any s
 4. If no symbol has a positive edge the chooser stays flat at t. Otherwise it picks the symbol with the largest edge, the earlier one in config order on a tie, on the side of its forecast.
 5. The result is the side times the picked symbol's label, minus its cost, in bps. A pick whose label ended as gap has no result and is counted.
 
+A minute at which no symbol has a scale yet, in the first sessions, is flat by step 4, and since the chooser could not act there while every comparison paid its cost, those minutes are counted apart and left out of the chooser minus each comparison, a reading fixed on 15 October 2026 before launch.
+
 **What it is compared with,** at the same minutes.
 
 * A seeded random pick, a symbol and a side drawn uniformly from the symbols with a forecast at t, from a generator seeded by the master seed, the run and the minute, so it is the same on every run of `evaluate`.

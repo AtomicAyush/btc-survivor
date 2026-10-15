@@ -121,6 +121,6 @@ Version 2 measures skill, not profit. Even a predictor that passes the test woul
 
 * [v2_data_and_licensing.md](v2_data_and_licensing.md) covers the sources, their terms, the owner's decisions on Finnhub headlines and on stock data in the assistant session, secrets, and the limits on shorts, margin and day trading.
 * [v2_news.md](v2_news.md) covers collection, routing, scoring with Haiku, Sonnet and FinBERT, the spend cap, the score streams and news health.
-* [v2_evaluation.md](v2_evaluation.md) covers the `evaluate` command, the criteria, the outcomes fixed by arithmetic, power and the learning rate.
+* [v2_evaluation.md](v2_evaluation.md) covers the `evaluate` command, the criteria, the outcomes fixed by arithmetic, the chooser and day scorecards, power and the learning rate.
 * [v2_operations.md](v2_operations.md) covers running everything on the Mac, the checks before and during the window, launchd and later systemd.
 * [RESULTS_V2_TEMPLATE.md](RESULTS_V2_TEMPLATE.md) holds the empty tables for writing up the window.

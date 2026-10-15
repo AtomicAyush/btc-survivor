@@ -15,6 +15,7 @@ import re
 import shutil
 import sqlite3
 import statistics
+import sys
 from datetime import date
 from pathlib import Path
 from typing import NamedTuple
@@ -22,6 +23,7 @@ from typing import NamedTuple
 import numpy as np
 import pytest
 
+import btc_survivor.v2
 from btc_survivor.clock import MS_PER_MINUTE, MS_PER_SECOND, iso, parse_iso
 from btc_survivor.v2 import evaluate, sessions, stats
 from btc_survivor.v2.config import HAIKU_MODEL, SONNET_MODEL, EvaluationConfig, load_run_pair
@@ -1014,6 +1016,90 @@ def test_data_quality_and_spend(base):
         ("2026-10", HAIKU_MODEL): "0.2500", ("2026-10", SONNET_MODEL): "0.5000"}
 
 
+# The scorecards
+
+
+def test_the_scorecards_are_descriptive_sections_with_counts_by_default_and_figures_in_detail(base):
+    from btc_survivor.v2 import scorecards
+    ev = run_eval(base)
+    summary, detail = evaluate.report(ev)
+    lines, sections = dict(summary.summary), {r.title: r for r in detail}
+    conns = [store.open_reader(path) for path in (base.s1_db, base.s2_db)]
+    try:
+        configs = load_run_pair(base.s1, base.s2)
+        sources = [scorecards.Source(name, conn, config) for name, conn, config in zip(evaluate.RUNS, conns, configs)]
+        cards = [card for source in sources for card in scorecards.chooser_cards(source, START, END, 12, 1.645)]
+        day = scorecards.day_card(sources, LAUNCH, END, 1.645)
+    finally:
+        for conn in conns:
+            conn.close()
+    assert [(c.run, c.predictor) for c in cards] == [("prices run", "population"), ("prices run", "linear_prices"),
+                                                     ("news run", "population"), ("news run", "linear_prices"),
+                                                     ("news run", "linear_news")]
+    for card in cards:
+        assert lines[f"{card.run} {card.predictor} chooser picks"] == evaluate.output.Count(card.picks)
+        assert lines[f"{card.run} {card.predictor} chooser flat minutes"] == evaluate.output.Count(card.flat)
+        assert card.minutes == 60 and card.unscaled_minutes == 48
+    # The window holds sessions 2 to 6, so the day scorecard covers sessions 3 to 6 of 8 symbols.
+    assert (lines["day scorecard sessions"], lines["day scorecard counted symbol days"],
+            lines["day scorecard failed symbol days"]) == tuple(evaluate.output.Count(n) for n in (4, 32, 0))
+    assert day.sessions == 4 and len(sections["day scorecard"].rows) == 2 * 11
+    assert len(sections["chooser"].rows) == 5 * 6 and len(sections["chooser against comparisons"].rows) == 5 * 5
+    assert len(sections["chooser picks per symbol"].rows) == 5 and len(sections["day labels"].rows) == 2
+    first = sections["chooser"].rows[0]
+    assert first["strategy"] == "chooser" and first["no scale minutes"] == 48 and isinstance(first["total bps"], str)
+    # No pass label anywhere in the scorecards, and the figures print only with --detail.
+    titles = evaluate.SCORECARD_TITLES
+    assert not any({"verdict", "passed", "threshold"} & set(row) for t in titles if t in sections
+                   for row in sections[t].rows)
+    assert not any("chooser" in label and not isinstance(value, evaluate.output.Count)
+                   for label, value in summary.summary)
+
+
+def test_scorecards_that_cannot_be_built_change_no_verdict_and_no_exit_code(base, monkeypatch, capsys):
+    from btc_survivor.v2 import scorecards
+    good = run_eval(base)
+    monkeypatch.setattr(scorecards, "day_card", lambda *args, **kwargs: 1 / 0)
+    broken = run_eval(base)
+    assert (broken.checks, broken.outcomes, broken.confirmatory, broken.incremental, broken.valid) == (
+        good.checks, good.outcomes, good.confirmatory, good.incremental, good.valid)
+    assert broken.scorecards == (("scorecards", evaluate.output.Word("not computed")),)
+    keep = [line for line in evaluate.report(good)[0].summary if line[0] not in dict(good.scorecards)]
+    assert [line for line in evaluate.report(broken)[0].summary if line[0] != "scorecards"] == keep
+    assert broken.tables["scorecards"][0]["problem"].startswith("the scorecards could not be built, ZeroDivisionError")
+    assert evaluate.main([str(base.s1), str(base.s2), "--ledger", str(base.ledger)]) == 0
+    out = capsys.readouterr().out
+    assert "scorecards: not computed" in out and "run valid: pass" in out
+
+
+def test_a_scorecards_module_that_cannot_be_imported_changes_no_verdict_and_no_exit_code(base, monkeypatch, capsys):
+    good = run_eval(base)
+    # None in sys.modules makes the import fail, as a module broken by a later edit would.
+    monkeypatch.delattr(btc_survivor.v2, "scorecards", raising=False)
+    monkeypatch.setitem(sys.modules, "btc_survivor.v2.scorecards", None)
+    broken = run_eval(base)
+    assert (broken.checks, broken.outcomes, broken.confirmatory, broken.valid) == (
+        good.checks, good.outcomes, good.confirmatory, good.valid)
+    assert broken.scorecards == (("scorecards", evaluate.output.Word("not computed")),)
+    assert "ModuleNotFoundError" in broken.tables["scorecards"][0]["problem"]
+    assert evaluate.main([str(base.s1), str(base.s2), "--ledger", str(base.ledger)]) == 0
+    out = capsys.readouterr().out
+    assert "scorecards: not computed" in out and "run valid: pass" in out and "Traceback" not in out
+
+
+def test_the_forecasts_the_scorecards_leave_out_for_late_inputs_are_counted(base, copy):
+    lines = dict(evaluate.report(run_eval(base))[0].summary)
+    assert lines["prices run scorecard forecasts left out for late inputs"] == evaluate.output.Count(0)
+    assert lines["news run scorecard forecasts left out for late inputs"] == evaluate.output.Count(0)
+    plant_lookahead(copy)
+    ev = run_eval(copy)
+    lines = dict(evaluate.report(ev)[0].summary)
+    assert lines["news run scorecard forecasts left out for late inputs"] == evaluate.output.Count(1)
+    assert lines["prices run scorecard forecasts left out for late inputs"] == evaluate.output.Count(0)
+    # The run is invalid through its lookahead audit, never through the scorecards.
+    assert not ev.valid and {c.name for c in ev.checks if not c.passed} == {"lookahead audit"}
+
+
 # The command
 
 
@@ -1029,11 +1115,15 @@ def test_by_default_it_prints_only_verdicts_and_counts(base, capsys):
     assert {"run valid: pass", "confirmatory test: pass", "cutoff reached: pass", "run minutes: 2340",
             "window sessions: 5", "confirmatory rows: 480", "founder equity: pass", "coverage stability: pass",
             "incremental test: pass", "incremental rows: 480", "rows without price scores: 0",
-            "prices run learner opens: 64", "prices run own opens: 0"} <= set(lines)
+            "prices run learner opens: 64", "prices run own opens: 0", "day scorecard sessions: 4",
+            "day scorecard counted symbol days: 32", "day scorecard failed symbol days: 0"} <= set(lines)
+    assert sum(1 for line in lines if " chooser picks: " in line) == 5
     assert not any(line.startswith("gate") for line in lines)
     assert evaluate.main([str(base.s1), str(base.s2), "--ledger", str(base.ledger), "--detail"]) == 0
     out = capsys.readouterr().out
     assert "\nskill\n" in out and "\npaired comparisons\n" in out and "rows hidden" not in out
+    for title in ("chooser", "chooser against comparisons", "day labels", "day scorecard", "day scorecard per symbol"):
+        assert f"\n{title}\n" in out
 
 
 def test_an_invalid_run_exits_1_and_an_unlaunched_run_exits_2(copy, capsys):

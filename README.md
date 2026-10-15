@@ -27,7 +27,7 @@ Version 2 adds seven large US technology stocks and the QQQ fund, priced from Fi
 * [v2_overview.md](docs/v2_overview.md) explains what version 2 does and why, from prices and news to the confirmatory test.
 * [v2_data_and_licensing.md](docs/v2_data_and_licensing.md) covers the data sources, the cost and fill model, shorts, margin, secrets and licensing.
 * [v2_news.md](docs/v2_news.md) covers news collection, the model and FinBERT scoring, spend controls and the score streams.
-* [v2_evaluation.md](docs/v2_evaluation.md) covers the `evaluate` command, the criteria, the outcomes, power, the planted news check and the learning rate.
+* [v2_evaluation.md](docs/v2_evaluation.md) covers the `evaluate` command, the criteria, the outcomes, the chooser and day scorecards, power, the planted news check and the learning rate.
 * [v2_operations.md](docs/v2_operations.md) covers running the processes, the coverage report and stale thresholds, the rehearsal, the soak and the secret scan.
 * [RESULTS_V2_TEMPLATE.md](docs/RESULTS_V2_TEMPLATE.md) is the empty template the results are written into after the window.
 
