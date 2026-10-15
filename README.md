@@ -1,5 +1,35 @@
 # BTC Survivor
 
+<p>
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white">
+  <img alt="ML" src="https://img.shields.io/badge/ML-NumPy%20online%20learning-013243?logo=numpy&logoColor=white">
+  <img alt="Storage" src="https://img.shields.io/badge/Storage-SQLite-003B57?logo=sqlite&logoColor=white">
+  <img alt="Tests" src="https://img.shields.io/badge/Tests-47%20files-2EA44F">
+</p>
+
+> **An evolutionary ML experiment: 20 small neural networks learn online from live Bitcoin market data, pay realistic costs, and die or reproduce. Paper trading only.**
+
+### Highlights
+- **Online learning on a live stream:** each bot is a NumPy network (11 → 16 → 1) trained one minute at a time on features computed from Coinbase's public order-book websocket. Nothing is fit to past data.
+- **Evolution with controls:** bots die when fees drain them, survivors reproduce through tournament selection and mutation, and a **coin-flip twin** for every bot separates skill from timing luck. Expected outcomes were written down before launch.
+- **Production-style operations:** checkpoints every 5 minutes in a single SQLite transaction, crash-safe resume, a feed health monitor for stalls and clock skew, a systemd unit, and a live dashboard. Six runs operate 24/7 on a Linux server.
+- **~6.5k lines of Python** with a 47-file test suite that needs no network.
+
+```mermaid
+flowchart LR
+  WS[Coinbase websocket] --> OB[Order book + health monitor]
+  OB --> FE[11 features / minute]
+  FE --> L[20 online learners]
+  L --> T[Coin-flip twins]
+  L --> PB[Paper broker: fees, slippage]
+  T --> PB
+  PB --> EV[Death · tournament · mutation]
+  PB --> DB[(SQLite + checkpoints)]
+  DB --> DASH[Dashboard]
+```
+
+---
+
 BTC Survivor is a population of 20 tiny neural networks that paper trade Bitcoin on live public market data from Coinbase, around the clock, on a laptop or a Raspberry Pi. Every bot starts with random weights and paper money, pays realistic fees, slippage and a daily running cost, and dies when its money can no longer cover one more round trip. A dead bot is replaced at once by a mutated copy of a survivor that won a small fitness tournament, or now and then by a random newcomer. At these costs only run C, which starts with 500 dollars, sees deaths within its window, and there costs and market noise rather than any plausible skill mostly decide who dies and who becomes a parent, so version 1 checks that this machinery works and does not test whether evolution helps. The bots learn forward in time only, one minute at a time, from data as it arrives. The design and the evidence behind every setting are in [PLAN.md](PLAN.md).
 
 ## What it is and what it is not
