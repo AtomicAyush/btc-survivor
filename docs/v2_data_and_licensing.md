@@ -25,6 +25,8 @@ Every source and limit is listed with its link in [section 20 of the plan](../PL
 
 So prices, candles, simulated fills, profit and loss, forecasts, labels and everything else derived from the stock feed stay on this Mac, under the gitignored `data` folder, together with recordings, databases, logs, exports, filled results and the official figures and coverage records of the tape coverage report. The only results file in the repository is [RESULTS_V2_TEMPLATE.md](RESULTS_V2_TEMPLATE.md), with empty tables. Docs pushed to GitHub carry no feed quality numbers either, which stay under `data/v2/checks`, as question 10 of [section 19 of the plan](../PLAN_V2.md#19-open-questions-for-the-owner) recommends.
 
+The GitHub repository is public, by the owner's decision of 15 October 2026, on exactly this condition, that it shows no data. Only code, configs and documentation are committed, and nothing derived from the stock feed, the news feeds, the model scores or the runs, as [section 13.1 of the plan](../PLAN_V2.md#131-why-stock-data-stays-private-and-the-finnhub-decision) records.
+
 ## The owner's decision on Finnhub headlines
 
 Finnhub headlines and summaries go to the Anthropic API for scoring by Haiku, by the owner's decision. Finnhub's terms bar sharing its data with third parties without written approval, and sending headlines to the Anthropic API arguably counts. The realistic consequence is that Finnhub could suspend the free key, which also carries the price feed, so prices and company news would stop together and the window would end. The owner accepts that risk.

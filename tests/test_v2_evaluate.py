@@ -53,7 +53,7 @@ COMMIT = "0123456789abcdef0123456789abcdef01234567"
 TWIN_BASE = 100
 NOTIONAL = 500.0
 SCORES = ("news_company", "news_macro", "finbert", "haiku", "finbert_matched", "sonnet", "haiku_official")
-GATE, BASELINE = date(2026, 10, 12), 0.04  # the gate session and its median ratio, about the free feed's share
+GATE, BASELINE = date(2026, 10, 12), 0.10  # the gate session and an arbitrary synthetic median ratio
 
 
 class Built(NamedTuple):

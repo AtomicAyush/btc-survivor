@@ -30,7 +30,7 @@ def test_iso_text_order_matches_time_order():
 
 
 def test_parse_exchange_timestamps_with_nanoseconds():
-    assert iso(parse_iso("2026-10-11T02:53:49.416825266Z")) == "2026-10-11T02:53:49.416Z"
+    assert iso(parse_iso("2026-10-11T02:53:49.416000123Z")) == "2026-10-11T02:53:49.416Z"
     assert iso(parse_iso("2026-10-11T02:53:49Z")) == "2026-10-11T02:53:49.000Z"
     assert iso(parse_iso("2026-10-11T02:53:49.5+00:00")) == "2026-10-11T02:53:49.500Z"
 
