@@ -7,12 +7,13 @@
   <img alt="Tests" src="https://img.shields.io/badge/Tests-47%20files-2EA44F">
 </p>
 
-> **An evolutionary ML experiment: 20 small neural networks learn online from live Bitcoin market data, pay realistic costs, and die or reproduce. Paper trading only.**
+> **Can tiny neural networks learn to predict a market live, well enough to pay real costs? Populations of online learners trade on paper against coin-flip twins. Version 1 has run live on Bitcoin around the clock since 11 October 2026. Version 2, on its own branch and scheduled for 19 October 2026, will trade seven large tech stocks and QQQ and test whether news scored by language models helps. Paper trading only.**
 
 ### Highlights
 - **Online learning on a live stream:** each bot is a NumPy network (11 → 16 → 1) trained one minute at a time on features computed from Coinbase's public order-book websocket. Nothing is fit to past data.
 - **Evolution with controls:** bots die when fees drain them, survivors reproduce through tournament selection and mutation, and a **coin-flip twin** for every bot separates skill from timing luck. Expected outcomes were written down before launch.
 - **Production-style operations:** checkpoints every 5 minutes in a single SQLite transaction, crash-safe resume, a feed health monitor for stalls and clock skew, a systemd unit, and a live dashboard. Six runs operate 24/7 on a Linux server.
+- **Six live runs, settings fixed in advance:** live on Bitcoin since 11–13 October 2026, each answering one question with its settings fixed before its own launch, and one confirmatory test written down before launch. [Version 2](https://github.com/AtomicAyush/btc-survivor/tree/feat/v2-stocks) adds two stock runs that differ only in whether they see scored news.
 - **~6.5k lines of Python** with a 47-file test suite that needs no network.
 
 ```mermaid
@@ -31,6 +32,25 @@ flowchart LR
 ---
 
 BTC Survivor is a population of 20 tiny neural networks that paper trade Bitcoin on live public market data from Coinbase, around the clock, on a laptop or a Raspberry Pi. Every bot starts with random weights and paper money, pays realistic fees, slippage and a daily running cost, and dies when its money can no longer cover one more round trip. A dead bot is replaced at once by a mutated copy of a survivor that won a small fitness tournament, or now and then by a random newcomer. At these costs only run C, which starts with 500 dollars, sees deaths within its window, and there costs and market noise rather than any plausible skill mostly decide who dies and who becomes a parent, so version 1 checks that this machinery works and does not test whether evolution helps. The bots learn forward in time only, one minute at a time, from data as it arrives. The design and the evidence behind every setting are in [PLAN.md](PLAN.md).
+
+## The experiments
+
+Version 1 runs six pre-registered experiments on Bitcoin. Each has 20 learners and 20 coin-flip twins that trade at the same moments as their learner but pick their side by coin flip, and each run's settings were fixed before its own launch. Only run A's test is confirmatory; runs D, D2 and E were added after the first three started and are exploratory.
+
+| Run | Question it answers | Status, 15 October 2026 |
+| --- | --- | --- |
+| A, main | the one confirmatory test: does the population's 30-minute forecast correlate with the real move, after 28 days of healthy data? | live since 11 October |
+| B, low fee | the same forced schedule at a 5 bps fee instead of 90, with its survival and cost split | live since 11 October |
+| C, machinery | starting at 500 dollars so bots die: do death, tournament replacement, mutation and lineage work live? It does not test whether evolution helps | live since 11 October |
+| D, long horizon | exploratory: does a 4-hour horizon, with larger moves, let real predictions clear the cost gate? | live since 11 October |
+| D2, stall tolerance | exploratory: what does the strict feed-stall rule cost a 4-hour run? | live since 13 October |
+| E, hypothetical frictionless | with fees, slippage and short charges set to zero (rent, spread and the walk through the book remain), do the bots' own calls make money against their twins and cash? | live since 12 October |
+
+As of 12 October, when run E was added, no learner prediction in runs A to D had cleared its trading gate: the largest was about 8 bps, against a required edge of about 190 bps in runs A and C and 20 to 24 bps in runs B and D, so every open in those runs was forced. No run has reached its scored day yet; run A's comes no earlier than about 8 November. On 12 October, the day after runs A to D launched, the engine passed a soak test on the Mac of 132 replayed hours with 61,680 invariant checks and no failures, plus kill and pause drills. The full design of each run is in [The six runs](#the-six-runs) below.
+
+### Version 2: stocks and news
+
+Version 2 lives on the [`feat/v2-stocks`](https://github.com/AtomicAyush/btc-survivor/tree/feat/v2-stocks) branch, with [its own README](https://github.com/AtomicAyush/btc-survivor/tree/feat/v2-stocks#readme). It is scheduled to launch on 19 October 2026 if its 15–16 October rehearsal passes, and will paper trade seven large US technology stocks and the QQQ fund from Finnhub's free trade feed, asking whether news scored by Claude Haiku, with FinBERT as fallback, predicts the next 30-minute return. Its two runs, S1 on prices and S2 on prices plus news, start as exact copies of each other, so any difference between them comes from news. It changes no version 1 module, config or run.
 
 ## What it is and what it is not
 
@@ -161,7 +181,7 @@ A learner may decide once per horizon, at its own phase minute, and only in a he
 * [docs/honesty_and_limits.md](docs/honesty_and_limits.md) covers what paper results cannot show, including why version 1 does not test evolution, run C's leverage and how to read a failed skill test.
 * [docs/RESULTS_TEMPLATE.md](docs/RESULTS_TEMPLATE.md) holds the empty tables for writing up each run.
 * [PLAN.md](PLAN.md) is the approved version 1 design, and [CONTRIBUTING.md](CONTRIBUTING.md) holds the rules for changes.
-* [PLAN_V2.md](PLAN_V2.md) is the approved version 2 plan, for seven large US technology stocks and the QQQ fund with news scored by language models. It runs beside version 1 and changes no version 1 module, config or run, and its [road map](PLAN_V2.md#117-road-map-after-version-2) sets out the stages after it.
+* [PLAN_V2.md](https://github.com/AtomicAyush/btc-survivor/blob/feat/v2-stocks/PLAN_V2.md) on the version 2 branch is the approved version 2 plan, for seven large US technology stocks and the QQQ fund with news scored by language models. It runs beside version 1 and changes no version 1 module, config or run, and its [road map](https://github.com/AtomicAyush/btc-survivor/blob/feat/v2-stocks/PLAN_V2.md#117-road-map-after-version-2) sets out the stages after it.
 
 ## Safety rules
 
