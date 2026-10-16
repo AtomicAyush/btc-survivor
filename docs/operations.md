@@ -33,12 +33,12 @@ nohup .venv311/bin/python -m btc_survivor --config configs/run_d.toml run > data
 nohup .venv311/bin/python -m btc_survivor dashboard configs/run_a.toml configs/run_b.toml configs/run_c.toml configs/run_d.toml --port 8050 > data/dashboard.log 2>&1 &
 ```
 
-`nohup` keeps each process alive after the terminal closes, and `2>&1` sends the log lines into `stdout.log`. A database without a checkpoint starts a fresh population from the master seed, and a database with one resumes. A clean start looks like this in run A's log, with its heartbeat lines left out and the data path shortened.
+`nohup` keeps each process alive after the terminal closes, and `2>&1` sends the log lines into `stdout.log`. A database without a checkpoint starts a fresh population from the master seed, and a database with one resumes. A clean start looks like this in run A's log, with its heartbeat lines left out, the data path shortened and the book sizes made up, since the repository carries no feed data.
 
 ```
 2026-10-11T20:41:43.261Z INFO btc_survivor.runner running coinbase BTC-USD with 20 learners, data in .../data/run_a
 2026-10-11T20:41:43.527Z INFO btc_survivor.engine feed event 2026-10-11T20:41:43.527Z connected
-2026-10-11T20:41:43.961Z INFO btc_survivor.engine feed event 2026-10-11T20:41:43.914Z snapshot 21626 bids, 19345 asks
+2026-10-11T20:41:43.961Z INFO btc_survivor.engine feed event 2026-10-11T20:41:43.914Z snapshot 20000 bids, 20000 asks
 2026-10-11T20:41:43.961Z INFO btc_survivor.engine feed event 2026-10-11T20:41:43.914Z recovering fresh data
 2026-10-11T20:43:00.078Z INFO btc_survivor.engine feed event 2026-10-11T20:43:00.000Z healthy a full clean minute
 ```
@@ -95,10 +95,10 @@ SIGTERM, or SIGINT from Ctrl+C in a foreground terminal, asks for a clean stop. 
 
 ## The heartbeat line
 
-Once a minute, about 30 seconds past the minute, each run logs one heartbeat line and writes the same values to the `runtime_status` row that `status` and the dashboard read. It keeps coming during stale periods, so a missing heartbeat means the process is frozen or gone. This is a real line from run A.
+Once a minute, about 30 seconds past the minute, each run logs one heartbeat line and writes the same values to the `runtime_status` row that `status` and the dashboard read. It keeps coming during stale periods, so a missing heartbeat means the process is frozen or gone. This line has the format run A writes, with made up values, since the repository carries no run data.
 
 ```
-2026-10-12T02:33:30.784Z INFO btc_survivor.runner heartbeat feed=healthy living=20 equity mean=9999.80 min=9999.80 max=9999.80 deaths=0 rss=n/a peak=90.9 MB lag=2 ms last_message_age=0.1 s
+2026-10-12T02:33:30.784Z INFO btc_survivor.runner heartbeat feed=healthy living=20 equity mean=10000.00 min=10000.00 max=10000.00 deaths=0 rss=n/a peak=90.9 MB lag=2 ms last_message_age=0.1 s
 ```
 
 * `feed` is the feed state, `healthy`, `recovering` or `stale`. Bots act only in healthy minutes.
@@ -160,7 +160,7 @@ The feed is always in one of three states.
 | `resume` | a restart restored a checkpoint, or the first healthy minute after a gap longer than 10 minutes flattened open positions |
 | `invariant_violation` | a ledger check failed, which should never happen |
 
-Reconnects are log lines rather than events, such as `feed connection 16 ended (stale), reconnecting in 58.4 s`. The wait doubles from 1 second up to 60, each wait is drawn between half and all of that, and it resets only once the feed is healthy again. A `gaierror` in that line means a DNS lookup failed, which is what a lost network looks like. The feed is specified in [section 7 of the plan](../PLAN.md#7-feed).
+Reconnects are log lines rather than events, such as `feed connection 2 ended (stale), reconnecting in 1.4 s`. The wait doubles from 1 second up to 60, each wait is drawn between half and all of that, and it resets only once the feed is healthy again. A `gaierror` in that line means a DNS lookup failed, which is what a lost network looks like. The feed is specified in [section 7 of the plan](../PLAN.md#7-feed).
 
 ## What clock skew really measures
 

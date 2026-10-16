@@ -1,5 +1,7 @@
 # BTC Survivor version 2 plan
 
+> This copy is frozen at the fork of version 2 and is out of date. The current plan is [PLAN_V2.md on the `feat/v2-stocks` branch](https://github.com/AtomicAyush/btc-survivor/blob/feat/v2-stocks/PLAN_V2.md).
+
 This is the design for version 2 of BTC Survivor. It adds seven large US technology stocks, AAPL, MSFT, NVDA, AMZN, GOOGL, META and TSLA, plus the QQQ fund, and it adds news scored by language models. Version 1, the approved design in [PLAN.md](PLAN.md), keeps running untouched. Its four Bitcoin runs A, B, C and D have been live since 11 October 2026, and nothing here may change how they behave, even after one of them restarts.
 
 Every hard rule of version 1 carries over.
@@ -79,7 +81,7 @@ Five area drafts fed this plan. Where they disagreed, this plan picks one answer
 
 **Order of work.** Version 1 Phases 9, docs and deploy, and 10, the soak, finish first on `feat/initial-bot`. Version 2 then runs as Phases 11 to 19, dated in section 16.
 
-**A separate worktree.** `git worktree add ~/code/btc_survivor_v2 -b feat/v2-stocks feat/initial-bot`, with its own `.venv-v2`. Runs A to D import `~/code/btc_survivor/src` through the editable install in `.venv311`, and the version 1 dashboard rereads `dashboard.html` from that tree on every request, so any checkout there would change running processes. Version 2 data lives under the worktree's gitignored `data/v2/`, and the branch is pushed to the existing private repository. A merge into the main tree waits until the experiment ends, and runs A to D restart onto merged code only with the owner's approval.
+**A separate worktree.** `git worktree add ~/code/btc_survivor_v2 -b feat/v2-stocks feat/initial-bot`, with its own `.venv-v2`. Runs A to D import `~/code/btc_survivor/src` through the editable install in `.venv311`, and the version 1 dashboard rereads `dashboard.html` from that tree on every request, so any checkout there would change running processes. Version 2 data lives under the worktree's gitignored `data/v2/`, and the branch is pushed to the same GitHub repository, which is public by the owner's decision of 15 October 2026 on the condition that it holds code, configs and documentation only, never data. A merge into the main tree waits until the experiment ends, and runs A to D restart onto merged code only with the owner's approval.
 
 **Version 1 files.** No version 1 module is edited.
 
@@ -1427,7 +1429,7 @@ threads = 1
 
 ## 16. Build phases with tests
 
-Each phase ends with the full suite green on Python 3.11 and 3.13, one single line commit carrying only the owner's name, a push of `feat/v2-stocks` to the private repository, and a short summary. Before existing code changes, the modules and tests that depend on it are listed. No test needs the network, randomized tests use seeded generators, no test puts a secret value inside an assert expression, and the suite never runs with `showlocals`.
+Each phase ends with the full suite green on Python 3.11 and 3.13, one single line commit carrying only the owner's name, a push of `feat/v2-stocks` to the public repository, carrying no data, and a short summary. Before existing code changes, the modules and tests that depend on it are listed. No test needs the network, randomized tests use seeded generators, no test puts a secret value inside an assert expression, and the suite never runs with `showlocals`.
 
 **Critical path.** Phase 14 may be built, and the collector started, in parallel with the Phase 13 live gate, because collection does not depend on the tape verdict. Phase 16 waits for a consolidated verdict.
 

@@ -1,4 +1,4 @@
-"""Adapter tests with message shapes copied from a live keyless probe of the Advanced Trade feed."""
+"""Adapter tests with message shapes that follow the documented Advanced Trade feed format, filled with synthetic values."""
 
 import json
 
@@ -7,7 +7,7 @@ from btc_survivor.feed.base import CLOSE, OPEN, decode
 from btc_survivor.feed.coinbase import CoinbaseAdapter
 from btc_survivor.types import ASK, BID, BookDelta, BookSnapshot, FeedNotice, Trade
 
-TS = "2026-10-11T03:00:12.113085165Z"
+TS = "2000-01-01T00:00:12.123456789Z"
 
 
 def msg(channel, seq, events, ts=TS):
@@ -15,25 +15,25 @@ def msg(channel, seq, events, ts=TS):
 
 
 SNAPSHOT = msg("l2_data", 0, [{"type": "snapshot", "product_id": "BTC-USD", "updates": [
-    {"side": "bid", "event_time": "2026-10-11T03:00:11.71911Z", "price_level": "83012", "new_quantity": "0.10374745"},
-    {"side": "bid", "event_time": "2026-10-11T03:00:11.71911Z", "price_level": "83011.98", "new_quantity": "0.00002053"},
-    {"side": "offer", "event_time": "2026-10-11T03:00:11.71911Z", "price_level": "83012.01", "new_quantity": "0.5"},
-    {"side": "offer", "event_time": "2026-10-11T03:00:11.71911Z", "price_level": "83012.5", "new_quantity": "1.25"},
+    {"side": "bid", "event_time": "2000-01-01T00:00:11.5Z", "price_level": "100", "new_quantity": "1.5"},
+    {"side": "bid", "event_time": "2000-01-01T00:00:11.5Z", "price_level": "99.99", "new_quantity": "0.25"},
+    {"side": "offer", "event_time": "2000-01-01T00:00:11.5Z", "price_level": "100.01", "new_quantity": "0.5"},
+    {"side": "offer", "event_time": "2000-01-01T00:00:11.5Z", "price_level": "100.5", "new_quantity": "1.25"},
 ]}])
 UPDATE = msg("l2_data", 1, [{"type": "update", "product_id": "BTC-USD", "updates": [
-    {"side": "bid", "event_time": "2026-10-11T03:00:12.1Z", "price_level": "83012", "new_quantity": "0"},
-    {"side": "offer", "event_time": "2026-10-11T03:00:12.1Z", "price_level": "83013", "new_quantity": "0.2"},
+    {"side": "bid", "event_time": "2000-01-01T00:00:12.1Z", "price_level": "100", "new_quantity": "0"},
+    {"side": "offer", "event_time": "2000-01-01T00:00:12.1Z", "price_level": "101", "new_quantity": "0.2"},
 ]}])
 TRADES_SNAPSHOT = msg("market_trades", 2, [{"type": "snapshot", "trades": [
-    {"product_id": "BTC-USD", "trade_id": "1104632112", "price": "83012.01", "size": "0.00035778", "time": "2026-10-11T03:00:11.00225Z", "side": "SELL"},
-    {"product_id": "BTC-USD", "trade_id": "1104632111", "price": "83012.01", "size": "0.00011926", "time": "2026-10-11T03:00:10.758894Z", "side": "SELL"},
+    {"product_id": "BTC-USD", "trade_id": "1002", "price": "100.01", "size": "0.25", "time": "2000-01-01T00:00:11.25Z", "side": "SELL"},
+    {"product_id": "BTC-USD", "trade_id": "1001", "price": "100.01", "size": "0.75", "time": "2000-01-01T00:00:10.75Z", "side": "SELL"},
 ]}])
-HEARTBEAT = msg("heartbeats", 3, [{"current_time": "2026-10-11 03:00:12.584636631 +0000 UTC m=+359251.267558137", "heartbeat_counter": 359251}])
+HEARTBEAT = msg("heartbeats", 3, [{"current_time": "2000-01-01 00:00:12.5 +0000 UTC m=+1.000000000", "heartbeat_counter": 1}])
 
 
 def trades_update(seq, ids):
-    trades = [{"product_id": "BTC-USD", "trade_id": str(i), "price": "83012.01", "size": "0.001",
-               "time": "2026-10-11T03:00:12.05Z", "side": "SELL"} for i in ids]
+    trades = [{"product_id": "BTC-USD", "trade_id": str(i), "price": "100.01", "size": "0.001",
+               "time": "2000-01-01T00:00:12.05Z", "side": "SELL"} for i in ids]
     return msg("market_trades", seq, [{"type": "update", "trades": trades}])
 
 
@@ -53,9 +53,9 @@ def test_subscribe_messages_are_public_channels_only():
 def test_snapshot_parses_levels_and_envelope_time():
     [ev] = fresh().parse(SNAPSHOT, 1000, 1)
     assert isinstance(ev, BookSnapshot)
-    assert ev.bids == [(83012.0, 0.10374745), (83011.98, 0.00002053)]
-    assert ev.asks == [(83012.01, 0.5), (83012.5, 1.25)]
-    assert iso(ev.exch_ms) == "2026-10-11T03:00:12.113Z"
+    assert ev.bids == [(100.0, 1.5), (99.99, 0.25)]
+    assert ev.asks == [(100.01, 0.5), (100.5, 1.25)]
+    assert iso(ev.exch_ms) == "2000-01-01T00:00:12.123Z"
     assert ev.recv_ms == 1000 and ev.conn_id == 1
 
 
@@ -64,7 +64,7 @@ def test_update_maps_sides_and_zero_quantity():
     adapter.parse(SNAPSHOT, 1000, 1)
     [ev] = adapter.parse(UPDATE, 1001, 1)
     assert isinstance(ev, BookDelta)
-    assert ev.changes == [(BID, 83012.0, 0.0), (ASK, 83013.0, 0.2)]
+    assert ev.changes == [(BID, 100.0, 0.0), (ASK, 101.0, 0.2)]
 
 
 def test_sequence_jump_reports_a_gap_before_the_message_events():
@@ -95,18 +95,18 @@ def test_new_connection_resets_sequence_expectation():
 def test_trade_snapshot_only_sets_the_cursor():
     adapter = fresh()
     assert adapter.parse(TRADES_SNAPSHOT.replace('"sequence_num": 2', '"sequence_num": 0'), 1000, 1) == []
-    events = adapter.parse(trades_update(1, [1104632114, 1104632113]), 1001, 1)  # newest first, like the feed
-    assert [e.trade_id for e in events] == [1104632113, 1104632114]
-    assert all(isinstance(e, Trade) and e.price == 83012.01 and e.size == 0.001 for e in events)
+    events = adapter.parse(trades_update(1, [1004, 1003]), 1001, 1)  # newest first, like the feed
+    assert [e.trade_id for e in events] == [1003, 1004]
+    assert all(isinstance(e, Trade) and e.price == 100.01 and e.size == 0.001 for e in events)
 
 
 def test_duplicate_trades_are_skipped_and_missing_ids_reported():
     adapter = fresh()
     adapter.parse(TRADES_SNAPSHOT.replace('"sequence_num": 2', '"sequence_num": 0'), 1000, 1)
-    events = adapter.parse(trades_update(1, [1104632112, 1104632115]), 1001, 1)
+    events = adapter.parse(trades_update(1, [1002, 1005]), 1001, 1)
     assert [type(e).__name__ for e in events] == ["FeedNotice", "Trade"]
-    assert events[0].kind == "trade_gap" and "1104632113 to 1104632114" in events[0].detail
-    assert events[1].trade_id == 1104632115
+    assert events[0].kind == "trade_gap" and "1003 to 1004" in events[0].detail
+    assert events[1].trade_id == 1005
 
 
 def test_other_products_are_ignored():
@@ -131,5 +131,5 @@ def test_decode_turns_lifecycle_lines_into_notices():
 def test_trades_for_other_products_are_ignored():
     adapter = fresh()
     adapter.parse(TRADES_SNAPSHOT.replace('"sequence_num": 2', '"sequence_num": 0'), 1000, 1)
-    other = trades_update(1, [1104632113]).replace("BTC-USD", "ETH-USD")
+    other = trades_update(1, [1003]).replace("BTC-USD", "ETH-USD")
     assert adapter.parse(other, 1001, 1) == []

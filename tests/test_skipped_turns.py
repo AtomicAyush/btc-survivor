@@ -177,9 +177,9 @@ def run_d_case(folder):
     run.trade(1, 1, "short", hm(16, 0, 1.25), hm(24, 0, 1.25))
     run.trade(2, 3, "long", hm(16, 0, 1.3), hm(24, 0, 1.3))
     run.event(hm(10), "healthy", "a full clean minute")
-    run.event(hm(19, 44, 20), "clock_skew", "median 2043 ms")
+    run.event(hm(19, 44, 20), "clock_skew", "median 2000 ms")
     run.event(hm(19, 44, 20), "recovering", "clock skew")
-    run.event(hm(19, 44, 52), "clock_skew", "cleared, median 35 ms")
+    run.event(hm(19, 44, 52), "clock_skew", "cleared, median 40 ms")
     run.event(hm(19, 46), "healthy", "a full clean minute")
     run.checkpoint(hm(24, 30, 30))
     return run.done()
@@ -238,7 +238,7 @@ def test_run_d_case_is_one_skipped_turn_with_its_cause_and_what_it_kept(tmp_path
     assert skip.cause == "inputs" and not skip.pruned
     assert skip.reason == ("the feed was healthy but the features were incomplete, the 15 minute return starts at "
                            "2026-10-13T19:45:00.000Z, which was not healthy, as the feed went recovering at "
-                           "2026-10-13T19:44:20.000Z on clock_skew median 2043 ms")
+                           "2026-10-13T19:44:20.000Z on clock_skew median 2000 ms")
     assert [w["window"] for w in skip.windows] == ["15 minute return"]  # every other window was complete
     assert skip.position == {"side": "short", "trade_id": 1, "opened_at": "2026-10-13T16:00:01.250Z",
                              "entry_price": 80_000.0, "closed_at": "2026-10-14T00:00:01.250Z",

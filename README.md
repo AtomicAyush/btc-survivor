@@ -7,14 +7,14 @@
   <img alt="Tests" src="https://img.shields.io/badge/Tests-47%20files-2EA44F">
 </p>
 
-> **Can tiny neural networks learn to predict a market live, well enough to pay real costs? Populations of online learners trade on paper against coin-flip twins. Version 1 has run live on Bitcoin around the clock since 11 October 2026. Version 2, on its own branch and scheduled for 19 October 2026, will trade seven large tech stocks and QQQ and test whether news scored by language models helps. Paper trading only.**
+> **Can tiny neural networks learn to predict a market live, well enough to pay real costs? Populations of online learners trade on paper against coin flip twins. Version 1 has run live on Bitcoin around the clock since 11 October 2026. Version 2, on [its own branch](https://github.com/AtomicAyush/btc-survivor/tree/feat/v2-stocks) and scheduled for 19 October 2026, will trade seven large tech stocks and QQQ and test whether news scored by language models helps. Paper trading only.**
 
 ### Highlights
-- **Online learning on a live stream:** each bot is a NumPy network (11 → 16 → 1) trained one minute at a time on features computed from Coinbase's public order-book websocket. Nothing is fit to past data.
-- **Evolution with controls:** bots die when fees drain them, survivors reproduce through tournament selection and mutation, and a **coin-flip twin** for every bot separates skill from timing luck. Expected outcomes were written down before launch.
-- **Production-style operations:** checkpoints every 5 minutes in a single SQLite transaction, crash-safe resume, a feed health monitor for stalls and clock skew, a systemd unit, and a live dashboard. Six runs operate 24/7 on a Linux server.
-- **Six live runs, settings fixed in advance:** live on Bitcoin since 11–13 October 2026, each answering one question with its settings fixed before its own launch, and one confirmatory test written down before launch. [Version 2](https://github.com/AtomicAyush/btc-survivor/tree/feat/v2-stocks) adds two stock runs that differ only in whether they see scored news.
-- **~6.5k lines of Python** with a 47-file test suite that needs no network.
+- **Online learning on a live stream.** Each bot is a NumPy network (11 → 16 → 1) trained one minute at a time on features computed from Coinbase's public order book websocket. Nothing is fit to past data.
+- **Evolution with controls.** Bots die when fees drain them, survivors reproduce through tournament selection and mutation, and a **coin flip twin** for every bot separates skill from timing luck. Expected outcomes were written down before launch.
+- **Production style operations.** Checkpoints every 5 minutes in a single SQLite transaction, crash safe resume, a feed health monitor for stalls and clock skew, a systemd unit, and a live dashboard. Six runs operate 24/7 on a Linux server.
+- **Six live runs, settings fixed in advance.** Live on Bitcoin since 11 to 13 October 2026, each answering one question with its settings fixed before its own launch, and one confirmatory test written down before launch. [Version 2](https://github.com/AtomicAyush/btc-survivor/tree/feat/v2-stocks) adds two stock runs that differ only in whether they see scored news.
+- **~6.5k lines of Python** with a 47 file test suite that needs no network.
 
 ```mermaid
 flowchart LR
@@ -35,22 +35,22 @@ BTC Survivor is a population of 20 tiny neural networks that paper trade Bitcoin
 
 ## The experiments
 
-Version 1 runs six pre-registered experiments on Bitcoin. Each has 20 learners and 20 coin-flip twins that trade at the same moments as their learner but pick their side by coin flip, and each run's settings were fixed before its own launch. Only run A's test is confirmatory; runs D, D2 and E were added after the first three started and are exploratory.
+Version 1 runs six preregistered experiments on Bitcoin. Each has 20 learners and 20 coin flip twins that trade at the same moments as their learner but pick their side by coin flip, and each run's settings were fixed before its own launch. Only run A's test is confirmatory. Runs D, D2 and E were added after the first three started and are exploratory.
 
 | Run | Question it answers | Status, 15 October 2026 |
 | --- | --- | --- |
-| A, main | the one confirmatory test: does the population's 30-minute forecast correlate with the real move, after 28 days of healthy data? | live since 11 October |
+| A, main | the one confirmatory test. Does the population's 30 minute forecast correlate with the real move, after 28 days of healthy data? | live since 11 October |
 | B, low fee | the same forced schedule at a 5 bps fee instead of 90, with its survival and cost split | live since 11 October |
-| C, machinery | starting at 500 dollars so bots die: do death, tournament replacement, mutation and lineage work live? It does not test whether evolution helps | live since 11 October |
-| D, long horizon | exploratory: does a 4-hour horizon, with larger moves, let real predictions clear the cost gate? | live since 11 October |
-| D2, stall tolerance | exploratory: what does the strict feed-stall rule cost a 4-hour run? | live since 13 October |
+| C, machinery | starting at 500 dollars so bots die, do death, tournament replacement, mutation and lineage work live? It does not test whether evolution helps | live since 11 October |
+| D, long horizon | exploratory. Does a 4 hour horizon, with larger moves, let real predictions clear the cost gate? | live since 11 October |
+| D2, stall tolerance | exploratory. What does the strict feed stall rule cost a 4 hour run? | live since 13 October |
 | E, hypothetical frictionless | with fees, slippage and short charges set to zero (rent, spread and the walk through the book remain), do the bots' own calls make money against their twins and cash? | live since 12 October |
 
-As of 12 October, when run E was added, no learner prediction in runs A to D had cleared its trading gate: the largest was about 8 bps, against a required edge of about 190 bps in runs A and C and 20 to 24 bps in runs B and D, so every open in those runs was forced. No run has reached its scored day yet; run A's comes no earlier than about 8 November. On 12 October, the day after runs A to D launched, the engine passed a soak test on the Mac of 132 replayed hours with 61,680 invariant checks and no failures, plus kill and pause drills. The full design of each run is in [The six runs](#the-six-runs) below.
+As of 12 October, when run E was added, no learner prediction in runs A to D had cleared its trading gate. The largest was about 8 bps, against a required edge of about 190 bps in runs A and C and 20 to 24 bps in runs B and D, so every open in those runs was forced. No run has reached its scored day yet, and run A's comes no earlier than about 8 November. On 12 October, the day after runs A to D launched, the engine passed a soak test on the Mac of 132 replayed hours with 61,680 invariant checks and no failures, plus kill and pause drills. The full design of each run is in [The six runs](#the-six-runs) below.
 
-### Version 2: stocks and news
+### Version 2, stocks and news
 
-Version 2 lives on the [`feat/v2-stocks`](https://github.com/AtomicAyush/btc-survivor/tree/feat/v2-stocks) branch, with [its own README](https://github.com/AtomicAyush/btc-survivor/tree/feat/v2-stocks#readme). It is scheduled to launch on 19 October 2026 if its 15–16 October rehearsal passes, and will paper trade seven large US technology stocks and the QQQ fund from Finnhub's free trade feed, asking whether news scored by Claude Haiku, with FinBERT as fallback, predicts the next 30-minute return. Its two runs, S1 on prices and S2 on prices plus news, start as exact copies of each other, so any difference between them comes from news. It changes no version 1 module, config or run.
+Version 2 lives on the [`feat/v2-stocks`](https://github.com/AtomicAyush/btc-survivor/tree/feat/v2-stocks) branch, with [its own README](https://github.com/AtomicAyush/btc-survivor/tree/feat/v2-stocks#readme). It is scheduled to launch on 19 October 2026 if its 15 and 16 October rehearsal passes, and will paper trade seven large US technology stocks and the QQQ fund from Finnhub's free trade feed, asking whether news scored by Claude Haiku, with FinBERT as fallback, predicts the next 30 minute return. Its two runs, S1 on prices and S2 on prices plus news, start as exact copies of each other, so any difference between them comes from news. It changes no version 1 module, config or run.
 
 ## What it is and what it is not
 
